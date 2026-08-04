@@ -1,0 +1,54 @@
+// Name: Entra ID Privilege Escalation via Office 365 Exchange Online SP
+// Author: detections.ai
+// Date: 2025-08-06
+// References:
+// - https://securitylabs.datadoghq.com/articles/i-spy-escalating-to-entra-id-global-admin/
+// Description: Detects a privilege escalation technique where an attacker with application management permissions adds a credential to the 'Office 365 Exchange Online' service principal (SP).
+// The attacker then leverages the SP's 'Domain.ReadWrite.All' permission to add or modify a federated domain, allowing them to forge tokens for any hybrid user.
+// False Positives: This activity is highly suspicious. False positives may occur if an administrator legitimately adds a credential to this specific SP and immediately performs domain management tasks. Such scenarios are expected to be rare.
+// Consider excluding known administrative service principals if they cause noise.
+// Tags: T1098.001, T1484.002
+
+let Office365ExchangeOnlineAppId = "00000002-0000-0ff1-ce00-000000000000";
+let lookback = 1h; // Time window between credential addition and domain modification
+
+// Find domain federation activities performed by the Office 365 Exchange Online SP
+let DomainFederationEvents = AuditLogs
+    | where TimeGenerated > ago(1d)
+    | where Category == "DirectoryManagement"
+    | where OperationName in ("Add unverified domain", "Verify domain", "Set federation settings on domain", "Set domain authentication")
+    // Key indicator: The actor is the Office 365 Exchange Online SP
+    | where InitiatedBy.app.appId == Office365ExchangeOnlineAppId
+    | project FederationTime = TimeGenerated, FederationActivity = OperationName, ActorAppId = InitiatedBy.app.appId, ActorDisplayName = InitiatedBy.app.displayName, TargetDomain = tostring(TargetResources[0].displayName), TenantId;
+
+// Find recent credential additions to the Office 365 Exchange Online SP by another SP
+let CredentialAddEvents = AuditLogs
+    | where TimeGenerated > ago(1d)
+    | where Category == "ApplicationManagement" and OperationName == "Add service principal credentials"
+    // Key indicator: The actor must be a Service Principal, as described in the research
+    | where isnotempty(InitiatedBy.app.appId)
+    // Key indicator: The target is the Office 365 Exchange Online SP
+    | where TargetResources has Office365ExchangeOnlineAppId
+    | mv-expand TargetResource = todynamic(TargetResources)
+    | where TargetResource.type == "ServicePrincipal" and TargetResource.id == Office365ExchangeOnlineAppId
+    | project CredentialAddTime = TimeGenerated, CredentialAdderAppId = InitiatedBy.app.appId, CredentialAdderDisplayName = InitiatedBy.app.displayName, TargetSPId = tostring(TargetResource.id), TenantId;
+
+// Join the two event types to find the full attack chain
+DomainFederationEvents
+| join kind=inner (
+    CredentialAddEvents
+) on TenantId
+// Correlate the two stages by ensuring the domain modification happens shortly after the credential addition
+| where FederationTime > CredentialAddTime and FederationTime - CredentialAddTime <= lookback
+| project
+    TimeGenerated = FederationTime,
+    AttackChainStage1_Time = CredentialAddTime,
+    AttackChainStage1_Activity = "Credential added to Service Principal",
+    Attacker_ServicePrincipalId = CredentialAdderAppId,
+    Attacker_ServicePrincipalName = CredentialAdderDisplayName,
+    Hijacked_ServicePrincipalId = ActorAppId,
+    Hijacked_ServicePrincipalName = ActorDisplayName,
+    AttackChainStage2_Time = FederationTime,
+    AttackChainStage2_Activity = FederationActivity,
+    TargetDomain
+| extend timestamp = TimeGenerated
