@@ -1,0 +1,49 @@
+// Rule Name: Detect Uncommon or Suspicious WSL Child Process
+// Author: Arnold Chan
+// Date: 2025-10-20
+// Description: Detects uncommon or suspicious child processes spawning from a WSL process. This could indicate an attempt to evade parent/child relationship detections or persistence attempts via cron using WSL.
+// References:
+// - https://lolbas-project.github.io/lolbas/OtherMSBinaries/Wsl/
+// - https://twitter.com/nas_bench/status/1535431474429808642
+let suspicious_children = dynamic([
+    "calc.exe",
+    "cmd.exe",
+    "cscript.exe",
+    "mshta.exe",
+    "powershell.exe",
+    "pwsh.exe",
+    "regsvr32.exe",
+    "rundll32.exe",
+    "wscript.exe"
+]);
+let suspicious_paths = dynamic([
+    "\\AppData\\Local\\Temp\\",
+    "C:\\Users\\Public\\",
+    "C:\\Windows\\Temp\\",
+    "C:\\Temp\\",
+    "\\Downloads\\",
+    "\\Desktop\\"
+]);
+DeviceProcessEvents
+| where Timestamp > ago(1d)
+// Filter for child processes of wsl.exe or wslhost.exe
+| where InitiatingProcessFileName in~ ("wsl.exe", "wslhost.exe")
+// Exclude common, legitimate child processes of WSL to reduce noise
+| where not(ProcessVersionInfoInternalFileName in~ ("wslhost.exe", "wslservice.exe"))
+// Apply detection logic: child is a suspicious binary OR runs from a suspicious path
+| where FileName has_any (suspicious_children) or FolderPath has_any (suspicious_paths)
+// False Positive Tuning: Spawning cmd.exe or powershell.exe can be legitimate for Windows/Linux interop.
+// Consider adding more specific command-line filters or excluding known developer machines if this is noisy in your environment.
+| project
+    Timestamp,
+    DeviceName,
+    AccountName,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    FileName,
+    FolderPath,
+    ProcessCommandLine,
+    SHA256,
+    ReportId,
+    InitiatingProcessId,
+    ProcessId
