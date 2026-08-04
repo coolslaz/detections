@@ -1,0 +1,33 @@
+// Rule Name: Detect Suspicious Usage of Windows Subsystem for Linux (WSL)
+// Author: Arnold Chan
+// Date: 2025-10-20
+// Rule Description: Detects suspicious activity related to the Windows Subsystem for Linux (WSL), such as installing new distributions (especially penetration testing ones like Kali), importing custom images, or executing commands non-interactively. Attackers may use WSL to run malicious Linux binaries, hide artifacts and evade defenses.
+// References:
+//  - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack/tree/master/TA0005-Defense%20Evasion/T1564-Hide%20artifacts
+//  - https://learn.microsoft.com/en-us/windows/wsl/install-manual
+//  - https://learn.microsoft.com/en-us/windows/wsl/install
+//  - https://lolbas-project.github.io/lolbas/OtherMSBinaries/Wsl/
+//  - https://blog.f-secure.com/hunting-for-windows-subsystem-for-linux/
+//  - https://blog.lumen.com/no-longer-just-theory-black-l
+
+DeviceProcessEvents
+| where FileName =~ "wsl.exe"
+// Look for suspicious command-line arguments associated with WSL.
+| where ProcessCommandLine has_any ("--install", "--import", "--exec", "-e", "--mount")
+    // The installation of specific penetration testing distributions is highly suspicious.
+    or (ProcessCommandLine has "--install" and ProcessCommandLine has "kali-linux")
+| extend
+    // Extract the suspicious command for easier analysis.
+    SuspiciousFlag = extract("(-[a-z]|--[a-z-]+)", 0, ProcessCommandLine)
+// False Positives: Legitimate use of WSL by developers or system administrators can trigger this alert, especially the '--install' flag.
+// Tuning: Consider excluding known developer user accounts or device groups if this generates noise in your environment.
+// For example: | where AccountUpn !in ("developer1@contoso.com", "admin_user@contoso.com")
+| project-reorder
+    Timestamp,
+    DeviceName,
+    AccountName,
+    FileName,
+    ProcessCommandLine,
+    SuspiciousFlag,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine
