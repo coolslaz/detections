@@ -1,0 +1,56 @@
+// Name: UNC5142 Cloudflare Pages Lure leading to Command Execution
+// Author: Arnold Chan
+// Date: 2025-10-20
+// Description: Detects a sequence of events where a user visits a Cloudflare Pages URL (*.pages.dev) and shortly after, a suspicious command (mshta, powershell, or curl) is executed. This pattern is consistent with the UNC5142 threat actor's TTP of using social engineering lures hosted on Cloudflare Pages to trick users into running malicious commands.
+// False Positive Sensitivity: Medium
+// References: https://cloud.google.com/blog/topics/threat-intelligence/unc5142-etherhiding-distribute-malware/
+// MITRE TTPs: T1566.002, T1204.002, T1059.001, T1059.004
+
+let timeframe = 5m; // Define the correlation window between the network event and process execution.
+
+// Find network connections to Cloudflare Pages, a legitimate service abused by UNC5142 to host lures.
+let pages_dev_visits =
+    DeviceNetworkEvents
+    | where Timestamp > ago(timeframe)
+    | where RemoteUrl has ".pages.dev"
+    // Potential for FPs if .pages.dev is used legitimately for developer projects or documentation.
+    // The correlation with a suspicious process helps reduce this, but further tuning might be needed.
+    | project NetTimestamp = Timestamp, DeviceId, RemoteUrl;
+
+// Find suspicious command executions often used in the next stage of the attack, as described for UNC5142.
+let suspicious_procs =
+    DeviceProcessEvents
+    | where Timestamp > ago(timeframe)
+    | where
+        // mshta is used to execute remote HTA files, a common technique for this actor.
+        (ProcessCommandLine has "mshta.exe" and ProcessCommandLine has "http") or
+        // PowerShell is used for downloading or executing in-memory payloads.
+        (ProcessCommandLine has "powershell.exe" and (ProcessCommandLine has_any ("-enc", "-w 1", "IEX", "Invoke-Expression", "DownloadString", ".DownloadFile"))) or
+        // curl is used on macOS to download the next stage script or payload.
+        (ProcessCommandLine has "curl" and ProcessCommandLine has_any ("-fsSL", "-o /tmp/"))
+    // This logic may trigger on legitimate admin or developer activity.
+    // Consider excluding known safe scripts, parent processes (e.g., specific admin tools), or user accounts if noise occurs.
+    | project ProcTimestamp = Timestamp, DeviceId, ProcessCommandLine, InitiatingProcessCommandLine, AccountName, FolderPath, FileName;
+
+// Join network visits with subsequent suspicious process executions on the same device within the timeframe.
+pages_dev_visits
+| join kind=inner (
+    suspicious_procs
+) on DeviceId
+| where ProcTimestamp between (NetTimestamp .. (NetTimestamp + timeframe))
+| project
+    Timestamp = ProcTimestamp,
+    DeviceId,
+    AccountName,
+    LureUrl = RemoteUrl,
+    SuspiciousProcess = FileName,
+    SuspiciousProcessPath = FolderPath,
+    CommandLine = ProcessCommandLine,
+    ParentProcessCommandLine = InitiatingProcessCommandLine
+| summarize
+    StartTime = min(Timestamp),
+    EndTime = max(Timestamp),
+    make_set(LureUrl, 10),
+    make_set(CommandLine, 10),
+    make_set(ParentProcessCommandLine, 10)
+    by bin(Timestamp, 30m), DeviceId, AccountName, SuspiciousProcess, SuspiciousProcessPath
