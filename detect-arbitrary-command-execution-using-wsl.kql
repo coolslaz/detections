@@ -1,0 +1,30 @@
+// Rule Name: Detect WSL Arbitrary Command Execution
+// Author: Arnold Chan
+// Date: 2025-10-20
+// Description: This rule detects the execution of arbitrary commands via the Windows Subsystem for Linux (WSL) by monitoring process creation events where 'wsl.exe' is the executable. It specifically looks for command lines that include flags like '--exec' or '-e', or common shell commands and downloaders such as 'curl', 'wget', 'bash -c', 'sh -c', 'nc ', or 'ncat '. This activity can indicate an adversary leveraging WSL to execute malicious code or bypass security controls.
+// References:
+// - https://lolbas-project.github.io/lolbas/OtherMSBinaries/Wsl/
+// - https://twitter.com/nas_bench/status/1535431474429808642
+DeviceProcessEvents
+// Look for process creation events where wsl.exe is the executable.
+| where FileName =~ "wsl.exe"
+// Filter for command lines that indicate a command is being passed for execution.
+// This includes the '--exec' or '-e' flags, as well as common shells or downloaders.
+| where InitiatingProcessCommandLine has_any ("-e", "--exec", "curl", "wget", "bash -c", "sh -c", "nc ", "ncat ")
+// --- False Positive Tuning ---
+// Legitimate use of WSL by developers or administrators might trigger this rule.
+// Consider filtering out known safe parent processes, user accounts, or command line patterns.
+// For example:
+// | where InitiatingProcessFileName !in ("KnownAdminTool.exe")
+// | where AccountName !in ("admin_user1", "dev_user2")
+// ---
+| project
+    Timestamp,
+    DeviceName,
+    AccountName,
+    FileName,
+    ProcessCommandLine,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    ReportId,
+    SHA256
