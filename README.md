@@ -459,6 +459,12 @@ If you find a detection useful:
 
 ## License
 
-CC BY-NC-SA 4.0
+CC0 1.0 Universal
 
-This work is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License.
+This project is dedicated to the public domain under the Creative Commons CC0 1.0 Universal (CC0 1.0) Public Domain Dedication.
+
+To the extent possible under law, the author(s) have waived all copyright and related or neighbouring rights to this work.
+You may copy, modify, distribute, and use this work, including for commercial purposes, without asking permission.
+
+For more information, see the full CC0 1.0 Universal legal terms:
+https://creativecommons.org/publicdomain/zero/1.0/
