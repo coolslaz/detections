@@ -1,0 +1,72 @@
+// Name: Abnormal Active Directory Certificate Request
+// Description: Detects several potentially malicious activities related to Active Directory Certificate Services (AD CS). This includes high volumes of failed requests (potential enumeration), requests for sensitive templates (privilege escalation), and potential impersonation attempts using Subject Alternative Names (SANs). These activities are associated with AD CS abuse techniques.
+// Author: Arnold Chan
+// Date: 2025-09-10
+// Tactic: Privilege Escalation, Persistence, Credential Access
+// Technique: T1222
+// False Positive Sensitivity: Medium
+// References:
+// - https://posts.specterops.io/certified-pre-owned-d95910965cd2
+// - https://www.mandiant.com/resources/blog/detecting-active-directory-certificate-services-abuse
+
+let timeframe = 1h;
+// Define a threshold for a spike in denied certificate requests from a single source.
+// This could indicate an attacker attempting to enumerate templates or guess parameters.
+let denied_request_threshold = 20;
+// Define a list of sensitive certificate templates that grant high privileges.
+// An attacker requesting these could be attempting privilege escalation.
+// This list should be customized for your environment.
+let sensitive_templates = dynamic([
+    "DomainController",
+    "DomainControllerAuthentication",
+    "KerberosAuthentication",
+    "Administrator",
+    "SubCA",
+    "Machine" // The default Machine template can sometimes be misconfigured to allow abuse.
+]);
+
+// Collect and parse all AD CS request events within the timeframe.
+let adcs_events = SecurityEvent
+| where TimeGenerated > ago(timeframe)
+| where EventID in (4886, 4887) // 4886 = Approved, 4887 = Denied
+| parse kind=relaxed EventData with * '<Data Name="RequesterName">' RequesterName '</Data>' *
+| parse kind=relaxed EventData with * '<Data Name="TemplateName">' TemplateName '</Data>' *
+| parse kind=relaxed EventData with * '<Data Name="SubjectAlternativeName">' SubjectAlternativeName '</Data>' *
+| extend
+    EventStatus = iff(EventID == 4886, "Approved", "Denied"),
+    RequesterAccount = tostring(split(RequesterName, '\\')[1]);
+
+// Detection 1: High volume of denied requests from a single requester.
+let high_volume_denied = adcs_events
+| where EventStatus == "Denied"
+| summarize StartTime = min(TimeGenerated), EndTime = max(TimeGenerated), RequestCount = count(), Computer = any(Computer) by RequesterName, TemplateName, bin(TimeGenerated, 10m)
+| where RequestCount > denied_request_threshold
+| extend Reason = strcat("High Volume of Denied Certificate Requests: ", RequestCount, " in 10 minutes.");
+
+// Detection 2: Request for a sensitive certificate template.
+let sensitive_template_request = adcs_events
+| where TemplateName in~ (sensitive_templates)
+// To reduce false positives, consider excluding legitimate requesters for these templates,
+// such as Domain Controllers or specific service accounts.
+// Example: | where RequesterAccount !in~ ('DC01$', 'DC02$')
+| summarize StartTime = min(TimeGenerated), EndTime = max(TimeGenerated), RequestCount = count(), Computer = any(Computer) by RequesterName, TemplateName, EventStatus
+| extend Reason = strcat("Sensitive Certificate Template Requested: '", TemplateName, "' (Status: ", EventStatus, ")");
+
+// Detection 3: Potential impersonation using Subject Alternative Name (SAN).
+let san_impersonation = adcs_events
+| where EventStatus == "Approved" and isnotempty(SubjectAlternativeName) and SubjectAlternativeName contains "dNSName"
+| extend
+    // Normalize account names for comparison (lowercase and remove trailing '$').
+    RequesterShortName = tolower(replace_string(RequesterAccount, '$', '')),
+    SAN_DNS_Name = tolower(extract(@"dNSName:\s*([^<]+)", 1, SubjectAlternativeName)),
+    SAN_ShortName = tolower(tostring(split(SAN_DNS_Name, '.')[0]))
+| where isnotempty(SAN_ShortName) and RequesterShortName != SAN_ShortName
+// Some services, like SCCM or load balancers, may legitimately request certificates on behalf of other systems.
+// Exclude known good requesters to reduce noise.
+// Example: | where RequesterShortName !in~ ('sccm_server')
+| summarize StartTime = min(TimeGenerated), EndTime = max(TimeGenerated), RequestCount = count(), Computer = any(Computer) by RequesterName, TemplateName, SAN_DNS_Name
+| extend Reason = strcat("Potential Impersonation via SAN. Requester '", RequesterName, "' obtained cert for '", SAN_DNS_Name, "'");
+
+// Union all detection results for alerting.
+union high_volume_denied, sensitive_template_request, san_impersonation
+| project StartTime, EndTime, Computer, RequesterName, TemplateName, RequestCount, Reason
