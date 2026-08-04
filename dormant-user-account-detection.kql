@@ -1,0 +1,33 @@
+// Name: Dormant Account Detected
+// Description: This detection identifies enabled user accounts that have not had a successful sign-in for the last 90 days. Dormant accounts can be a security risk as they are often unmonitored and can be used by attackers if compromised.
+// Data Source: IdentityInfo, SigninLogs
+// False Positive Sensitivity: Medium
+// References:
+//   - https://learn.microsoft.com/azure/active-directory/reports-monitoring/howto-manage-inactive-user-accounts
+let dormancy_period = 90d; // Define the time period to check for inactivity.
+// Get a distinct list of users who have successfully signed in within the dormancy period.
+let active_users =
+    SigninLogs
+    | where TimeGenerated > ago(dormancy_period)
+    | where ResultType == 0 // A result type of 0 indicates a successful sign-in.
+    | summarize by UserPrincipalName;
+// Get the latest snapshot of user account information from IdentityInfo.
+IdentityInfo
+| summarize arg_max(TimeGenerated, *) by AccountObjectId
+// Filter for active, regular user accounts.
+| where AccountEnabled == true
+| where UserType == "User" // Excludes guests and other non-user account types.
+// Find users from the master list who are NOT in the active users list.
+| where AccountUPN !in (active_users)
+// Potential False Positive: Service accounts or other non-interactive accounts may be flagged.
+// Consider filtering them out based on naming conventions or known account lists.
+// Example: | where AccountUPN !startswith "svc_"
+| project
+    TimeGenerated,
+    DisplayName,
+    AccountUPN,
+    AccountObjectId,
+    CreatedDateTime,
+    Mail,
+    Manager,
+    IsAccountEnabled = AccountEnabled
