@@ -456,3 +456,9 @@ If you find a detection useful:
 - share defensive lessons learned.
 
 **Better detections come from continuous testing, collaboration, and refinement.**
+
+## License
+
+CC BY-NC-SA 4.0
+
+This work is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License.
