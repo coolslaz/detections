@@ -1,0 +1,18 @@
+// Detects reuse of an authenticated Microsoft 365 session cookie shortly after MFA-satisfied sign-in
+// from a different IP/device/user agent without a corresponding fresh MFA challenge - consistent with
+// NovaCookies AiTM session cookie theft and 'Purchase Cookie Link' resale of harvested sessions
+let mfaSignIns = SigninLogs
+| where ResultType == 0
+| where AuthenticationRequirement == "multiFactorAuthentication"
+| project MfaTime = TimeGenerated, UserPrincipalName, MfaIPAddress = IPAddress, MfaUserAgent = UserAgent, MfaDeviceId = tostring(DeviceDetail.deviceId), SessionId = tostring(AuthenticationProcessingDetails), CorrelationId;
+let reuseSignIns = SigninLogs
+| where ResultType == 0
+| where AuthenticationRequirement != "multiFactorAuthentication"
+| project ReuseTime = TimeGenerated, UserPrincipalName, ReuseIPAddress = IPAddress, ReuseUserAgent = UserAgent, ReuseDeviceId = tostring(DeviceDetail.deviceId), ReuseAppDisplayName = AppDisplayName;
+mfaSignIns
+| join kind=inner (reuseSignIns) on UserPrincipalName
+| where ReuseTime > MfaTime and ReuseTime - MfaTime <= 2h
+| where ReuseIPAddress != MfaIPAddress or ReuseUserAgent != MfaUserAgent or ReuseDeviceId != MfaDeviceId
+| project UserPrincipalName, MfaTime, MfaIPAddress, MfaUserAgent, MfaDeviceId, ReuseTime, ReuseIPAddress, ReuseUserAgent, ReuseDeviceId, ReuseAppDisplayName
+| extend TimeDeltaMinutes = datetime_diff('minute', ReuseTime, MfaTime)
+| sort by TimeDeltaMinutes asc
