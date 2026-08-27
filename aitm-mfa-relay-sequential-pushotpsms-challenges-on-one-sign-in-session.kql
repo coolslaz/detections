@@ -1,0 +1,24 @@
+// Detects AiTM phishing kits that sequentially relay Microsoft authentication methods
+// (Authenticator push, OATH/TOTP code, SMS) within a single sign-in session/correlation,
+// interspersed with distinct rejected-password/rejected-code/rejected-SMS error states.
+SigninLogs
+| where TimeGenerated > ago(1d)
+| mv-expand AuthDetail = AuthenticationDetails
+| extend AuthMethod = tostring(AuthDetail.authenticationMethod),
+         AuthStepResult = tostring(AuthDetail.authenticationStepResultDetail),
+         AuthStepStatus = tostring(AuthDetail.succeeded)
+| where isnotempty(AuthMethod)
+| where AuthMethod has_any ("Mobile app notification", "Mobile app verification code", "Text message", "Phone call", "OATH verification code")
+   or AuthStepResult has_any ("MFA denied; user declined the authentication", "Invalid code entered", "Invalid password entered", "Bad password entered", "Incorrect challenge response provided", "SMS was rejected")
+| summarize DistinctMethods = make_set(AuthMethod, 10),
+            MethodCount = dcount(AuthMethod),
+            RejectedStates = make_set(AuthStepResult, 10),
+            RejectedCount = countif(AuthStepResult has_any ("MFA denied; user declined the authentication", "Invalid code entered", "Invalid password entered", "Bad password entered", "Incorrect challenge response provided", "SMS was rejected")),
+            FirstSeen = min(TimeGenerated),
+            LastSeen = max(TimeGenerated),
+            IPAddresses = make_set(IPAddress, 5)
+  by CorrelationId, UserPrincipalName
+| where MethodCount >= 2 and RejectedCount >= 1
+| where LastSeen - FirstSeen <= 10m
+| project UserPrincipalName, CorrelationId, DistinctMethods, MethodCount, RejectedStates, RejectedCount, IPAddresses, FirstSeen, LastSeen
+| sort by MethodCount desc
