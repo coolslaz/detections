@@ -1,0 +1,26 @@
+title: Entra ID Valid Account Abuse Indicators
+id: d2a6b2c4-4e92-4f91-8e58-693240e53a1a
+status: experimental
+description: Detects indicators of valid account abuse in Entra ID sign-in logs including MFA failures, impossible travel, and off-hours access.
+logsource:
+  product: azure
+  service: entra_id
+  category: signin_logs
+detection:
+  selection_mfa:
+    ResultType: 0
+    AuthenticationRequirement: 'multiFactorAuthentication'
+  selection_travel:
+    ResultType: 0
+    LocationDetails_countryOrRegion|exists: true
+  selection_hour:
+    ResultType: 0
+    TimeGenerated|hour: [0, 1, 2, 3, 4, 5]
+  selection_risk:
+    RiskLevelDuringSignIn: ['medium', 'high']
+    RiskState: ['atRisk', 'confirmedCompromised']
+  condition: 2 of selection_*
+level: high
+tags:
+  - attack.t1078
+  - attack.t1078.004
