@@ -1,0 +1,12 @@
+// Detects GoCaracal extended-profile keylogging: known extended-build hash or staging path combined with low-level keyboard hook installation
+let GoCaracalExtendedHashes = dynamic(["8c03d072df2e1bf14b0c00a8ab99834138c8b69f301849bf09cb44394e916015"]);
+let GoCaracalStagingPaths = dynamic(["AppData\\Roaming\\d30547514515\\91ed375e.exe","AppData\\Roaming\\e1d58f51c58a\\5c0416e4.exe"]);
+DeviceProcessEvents
+| where SHA256 in~ (GoCaracalExtendedHashes) or FolderPath has_any (GoCaracalStagingPaths)
+| join kind=inner (
+    DeviceEvents
+    | where ActionType in ("SetWindowsHookExApiCall", "KeyboardHookInstalled")
+       or AdditionalFields has "SetWindowsHookEx"
+) on DeviceId, ProcessId
+| project TimeGenerated, DeviceId, ProcessId, FileName, FolderPath, SHA256, ActionType, AdditionalFields
+| summarize count(), Hooks = make_set(ActionType) by DeviceId, FileName, FolderPath, SHA256
