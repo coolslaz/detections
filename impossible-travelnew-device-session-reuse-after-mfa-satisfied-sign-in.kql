@@ -1,0 +1,31 @@
+// Detects anomalous session activity shortly after a legitimate MFA-satisfied Microsoft 365 sign-in
+// consistent with replay of a stolen AiTM session cookie (new device/IP/ASN or UA mismatch)
+let lookback = 1d;
+let replayWindow = 30m;
+let MfaSignIns = SigninLogs
+| where TimeGenerated > ago(lookback)
+| where ResultType == "0"
+| where AuthenticationRequirement == "multiFactorAuthentication"
+| extend OrigIP = IPAddress,
+         OrigASN = tostring(AutonomousSystemNumber),
+         OrigUA = UserAgent,
+         OrigDeviceId = tostring(DeviceDetail.deviceId),
+         OrigTime = TimeGenerated
+| project UserPrincipalName, OrigTime, OrigIP, OrigASN, OrigUA, OrigDeviceId, OrigCorrelationId = CorrelationId;
+let SubsequentSignIns = SigninLogs
+| where TimeGenerated > ago(lookback)
+| where ResultType == "0"
+| extend NewIP = IPAddress,
+         NewASN = tostring(AutonomousSystemNumber),
+         NewUA = UserAgent,
+         NewDeviceId = tostring(DeviceDetail.deviceId),
+         NewTime = TimeGenerated
+| project UserPrincipalName, NewTime, NewIP, NewASN, NewUA, NewDeviceId, NewCorrelationId = CorrelationId;
+MfaSignIns
+| join kind=inner (SubsequentSignIns) on UserPrincipalName
+| where NewTime > OrigTime
+| where NewTime - OrigTime <= replayWindow
+| where NewCorrelationId != OrigCorrelationId
+| where (NewIP != OrigIP and NewASN != OrigASN) or NewUA != OrigUA or (isnotempty(NewDeviceId) and isnotempty(OrigDeviceId) and NewDeviceId != OrigDeviceId)
+| project UserPrincipalName, OrigTime, OrigIP, OrigASN, OrigUA, OrigDeviceId, NewTime, NewIP, NewASN, NewUA, NewDeviceId, OrigCorrelationId, NewCorrelationId
+| sort by UserPrincipalName, OrigTime asc
