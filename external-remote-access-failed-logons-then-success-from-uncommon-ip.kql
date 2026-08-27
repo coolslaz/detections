@@ -1,0 +1,25 @@
+// Detect brute-force-then-success pattern on external-facing remote access (VPN/RDP/Citrix) authentication
+// Based on Windows Security logon events 4624/4625/4776
+let lookback = 1d;
+let failThreshold = 5;
+SecurityEvent
+| where TimeGenerated > ago(lookback)
+| where EventID in (4624, 4625, 4776)
+| where LogonType in (10, 3) or EventID == 4776 // RemoteInteractive (RDP) and Network (VPN/gateway) logons, or NTLM auth (4776)
+| where isnotempty(IpAddress)
+| where not(ipv4_is_private(IpAddress))
+| extend IsFailure = EventID == 4625, IsSuccess = EventID in (4624, 4776)
+| summarize 
+    FailCount = countif(IsFailure), 
+    SuccessCount = countif(IsSuccess), 
+    FirstFail = minif(TimeGenerated, IsFailure), 
+    SuccessTime = maxif(TimeGenerated, IsSuccess), 
+    SuccessHour = maxif(hourofday(TimeGenerated), IsSuccess), 
+    Computers = make_set(Computer, 10) 
+    by Account, IpAddress
+| where FailCount >= failThreshold and SuccessCount > 0
+| where SuccessTime > FirstFail
+| extend OutsideBusinessHours = SuccessHour < 6 or SuccessHour > 20
+| where OutsideBusinessHours
+| project Account, IpAddress, FailCount, SuccessCount, FirstFail, SuccessTime, OutsideBusinessHours, Computers
+| sort by SuccessTime desc
