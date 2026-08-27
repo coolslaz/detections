@@ -1,0 +1,27 @@
+// T1598 - Phishing for Information via email elicitation
+// Combines auth failures, display-name spoofing, urgent/credential-harvesting language,
+// suspicious link domains, and single-sender fan-out to many internal recipients
+let urgentTerms = dynamic(["urgent","immediate action","verify your account","password expire","confirm your credentials","account suspended","click here to verify","reset your password","login required","security alert"]);
+let execTitles = dynamic(["ceo","cfo","coo","president","help desk","helpdesk","it support","it department","it admin"]);
+let SuspiciousLinks = EmailUrlInfo
+| where UrlDomain != ""
+| where isnotempty(UrlDomain)
+| join kind=inner (
+    ThreatIntelligenceIndicator
+    | where isnotempty(DomainName)
+    | project DomainName
+) on $left.UrlDomain == $right.DomainName
+| distinct NetworkMessageId;
+EmailEvents
+| where EmailDirection == "Inbound"
+| where AuthenticationDetails has "SPF: fail" or AuthenticationDetails has "DKIM: fail" or AuthenticationDetails has "DMARC: fail" or AuthenticationDetails has "compauth: fail"
+| extend SenderDisplayNameLower = tolower(SenderDisplayName)
+| where SenderDisplayNameLower has_any (execTitles)
+| extend SubjectLower = tolower(Subject)
+| where SubjectLower has_any (urgentTerms)
+| join kind=inner (SuspiciousLinks) on NetworkMessageId
+| summarize RecipientCount = dcount(RecipientEmailAddress), Recipients = make_set(RecipientEmailAddress, 50), Subjects = make_set(Subject, 20), FirstSeen = min(Timestamp), LastSeen = max(Timestamp) by SenderFromAddress, SenderDisplayName, SenderIPv4
+| where RecipientCount >= 5
+| where LastSeen - FirstSeen <= 30m
+| project SenderFromAddress, SenderDisplayName, SenderIPv4, RecipientCount, Recipients, Subjects, FirstSeen, LastSeen
+| sort by RecipientCount desc
