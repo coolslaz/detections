@@ -1,0 +1,23 @@
+// T1595 - Active Scanning: single external source IP hitting many distinct ports/hosts (network) or many distinct URI paths/404s (web) in a short window
+let TimeWindow = 15m;
+let PortHostThreshold = 50;
+let WebPathThreshold = 50;
+let KnownScannerIPs = dynamic([]); // watchlist-style exclusion placeholder - populate with authorized internal/external vulnerability scanner IPs
+let NetworkScan = CommonSecurityLog
+| where TimeGenerated > ago(1h)
+| where isnotempty(SourceIP)
+| where SourceIP !in (KnownScannerIPs)
+| summarize DistinctDestPorts = dcount(DestinationPort), DistinctDestHosts = dcount(DestinationIP), TotalEvents = count(), TimeGenerated = max(TimeGenerated) by SourceIP, bin(TimeGenerated, TimeWindow)
+| where DistinctDestPorts >= PortHostThreshold or DistinctDestHosts >= PortHostThreshold
+| extend DetectionType = "NetworkPortScan", MatchedValue = strcat("Ports:", DistinctDestPorts, " Hosts:", DistinctDestHosts)
+| project TimeGenerated, SourceIP, DetectionType, DistinctDestPorts, DistinctDestHosts, TotalEvents, MatchedValue;
+let WebScan = W3CIISLog
+| where TimeGenerated > ago(1h)
+| where isnotempty(cIP)
+| where cIP !in (KnownScannerIPs)
+| summarize DistinctURIPaths = dcount(csUriStem), NotFoundCount = countif(scStatus == 404), TotalEvents = count(), TimeGenerated = max(TimeGenerated) by cIP, bin(TimeGenerated, TimeWindow)
+| where DistinctURIPaths >= WebPathThreshold or NotFoundCount >= WebPathThreshold
+| extend DetectionType = "WebContentScan", SourceIP = cIP, MatchedValue = strcat("URIPaths:", DistinctURIPaths, " 404s:", NotFoundCount)
+| project TimeGenerated, SourceIP, DetectionType, DistinctURIPaths, NotFoundCount, TotalEvents, MatchedValue;
+union NetworkScan, WebScan
+| sort by TotalEvents desc
