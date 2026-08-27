@@ -1,0 +1,16 @@
+// Detects GoCaracal lightweight implant performing shellcode loading and injection
+// Behavior: allocate remote memory, write shellcode buffer, execute via remote thread
+let InjectionEvents = DeviceEvents
+| where ActionType in ("VirtualAllocRemoteApiCall", "WriteProcessMemoryRemoteApiCall", "CreateRemoteThreadApiCall", "ProcessInjection")
+| extend ParsedFields = parse_json(AdditionalFields)
+| extend TargetProcess = tostring(ParsedFields.TargetProcessFileName), SourceProcess = tostring(ParsedFields.CallerProcessName)
+| where InitiatingProcessFileName in~ ("tf-oficina004a9.exe", "VRJDL_21812.exe") or SourceProcess in~ ("tf-oficina004a9.exe", "VRJDL_21812.exe")
+| summarize AllocCount = countif(ActionType == "VirtualAllocRemoteApiCall"), WriteCount = countif(ActionType == "WriteProcessMemoryRemoteApiCall"), ThreadCount = countif(ActionType == "CreateRemoteThreadApiCall"), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by DeviceId, InitiatingProcessFileName, InitiatingProcessId, TargetProcess
+| where AllocCount > 0 and WriteCount > 0
+| project DeviceId, InitiatingProcessFileName, InitiatingProcessId, TargetProcess, AllocCount, WriteCount, ThreadCount, FirstSeen, LastSeen;
+let ProcessCommands = DeviceProcessEvents
+| where FileName in~ ("tf-oficina004a9.exe", "VRJDL_21812.exe")
+| where ProcessCommandLine has_any ("main.InjectShellcode", "main.injectShellcodeWoW64", "main.runModule")
+| project DeviceId, InitiatingProcessFileName = FileName, InitiatingProcessId = ProcessId, TargetProcess = ProcessCommandLine, AllocCount = 0, WriteCount = 0, ThreadCount = 0, FirstSeen = TimeGenerated, LastSeen = TimeGenerated;
+InjectionEvents
+| union ProcessCommands
