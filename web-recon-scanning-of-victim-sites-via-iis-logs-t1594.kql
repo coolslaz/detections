@@ -1,0 +1,33 @@
+let distinctUriThreshold = 150;
+let notFoundRatioThreshold = 0.75;
+let minRequestThreshold = 30;
+let scannerUserAgents = dynamic(["nikto","sqlmap","nmap","masscan","gobuster","dirbuster","wpscan","zgrab","acunetix","nessus"]);
+let knownGoodCrawlerUserAgents = dynamic(["googlebot","bingbot","slurp","duckduckbot","baiduspider","yandexbot","facebookexternalhit","applebot"]);
+W3CIISLog
+| where isnotempty(cIP)
+| where not(csUserAgent has_any (knownGoodCrawlerUserAgents))
+| extend Bin = bin(TimeGenerated, 15m)
+| extend IsScannerUA = csUserAgent has_any (scannerUserAgents)
+| extend Is404 = scStatus == 404
+| summarize
+    DistinctUriCount = dcount(csUriStem),
+    TotalRequests = count(),
+    NotFoundCount = countif(Is404),
+    ScannerUACount = countif(IsScannerUA),
+    UserAgents = make_set(csUserAgent, 20),
+    Sites = make_set(sSiteName, 10),
+    SampleUris = make_set(csUriStem, 20),
+    Methods = make_set(csMethod, 10)
+    by cIP, Bin
+| extend NotFoundRatio = todouble(NotFoundCount) / todouble(TotalRequests)
+| where (DistinctUriCount > distinctUriThreshold and TotalRequests >= minRequestThreshold)
+    or ScannerUACount > 0
+    or (NotFoundRatio > notFoundRatioThreshold and TotalRequests >= minRequestThreshold)
+| extend DetectionReason = case(
+    ScannerUACount > 0, "Known scanner user-agent",
+    DistinctUriCount > distinctUriThreshold and TotalRequests >= minRequestThreshold, "High distinct URI count (crawling)",
+    NotFoundRatio > notFoundRatioThreshold and TotalRequests >= minRequestThreshold, "High 404 ratio (path brute-forcing)",
+    "Unknown"
+  )
+| sort by DistinctUriCount desc, NotFoundRatio desc
+| project Bin, cIP, Sites, DetectionReason, DistinctUriCount, TotalRequests, NotFoundCount, NotFoundRatio, ScannerUACount, UserAgents, SampleUris, Methods
