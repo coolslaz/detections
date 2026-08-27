@@ -1,0 +1,48 @@
+// Detects indicators of T1078 valid account abuse in Entra ID sign-in logs:
+// risky sign-in scoring, impossible travel across countries, repeated MFA
+// failures followed by a success, and off-hours logons for the account.
+let lookback = 14d;
+let MfaFailThenSuccess = 
+    SigninLogs
+    | where TimeGenerated > ago(lookback)
+    | extend AuthDetails = parse_json(AuthenticationDetails)
+    | mv-expand AuthDetails
+    | extend AuthMethod = tostring(AuthDetails.authenticationMethod),
+              AuthSucceeded = tobool(AuthDetails.succeeded)
+    | where AuthMethod has_any ("MFA", "Multi-factor", "PhoneAppNotification", "OneWaySMS", "Voice")
+    | summarize FailedMfaCount = countif(AuthSucceeded == false),
+                SucceededMfaCount = countif(AuthSucceeded == true),
+                LastAttempt = max(TimeGenerated)
+              by UserPrincipalName, CorrelationId
+    | where FailedMfaCount >= 2 and SucceededMfaCount >= 1
+    | project UserPrincipalName, CorrelationId, FailedMfaCount, SucceededMfaCount, LastAttempt;
+let ImpossibleTravel = 
+    SigninLogs
+    | where TimeGenerated > ago(lookback)
+    | where ResultType == 0
+    | extend LocationDetails = parse_json(LocationDetails)
+    | extend Country = tostring(LocationDetails.countryOrRegion)
+    | where isnotempty(Country)
+    | summarize DistinctCountries = dcount(Country), Countries = make_set(Country, 10) by UserPrincipalName, bin(TimeGenerated, 1h)
+    | where DistinctCountries >= 2
+    | project UserPrincipalName, TimeGenerated, DistinctCountries, Countries;
+let UnusualHourLogons = 
+    SigninLogs
+    | where TimeGenerated > ago(lookback)
+    | where ResultType == 0
+    | extend HourOfDay = datetime_part("hour", TimeGenerated)
+    | where HourOfDay between (0 .. 5)
+    | project UserPrincipalName, TimeGenerated, HourOfDay, IPAddress, AppDisplayName;
+let RiskySignins = 
+    SigninLogs
+    | where TimeGenerated > ago(lookback)
+    | where RiskLevelDuringSignIn in ("medium", "high") or RiskState =~ "atRisk" or RiskState =~ "confirmedCompromised"
+    | project UserPrincipalName, TimeGenerated, RiskLevelDuringSignIn, RiskState, IPAddress, AppDisplayName;
+union
+    (MfaFailThenSuccess | extend Indicator = "MFAFailThenSuccess"),
+    (ImpossibleTravel | extend Indicator = "ImpossibleTravel"),
+    (UnusualHourLogons | extend Indicator = "UnusualHourLogon"),
+    (RiskySignins | extend Indicator = "RiskySignIn")
+| summarize Indicators = make_set(Indicator), IndicatorCount = dcount(Indicator), Details = make_list(pack_all(), 20) by UserPrincipalName
+| where IndicatorCount >= 2
+| sort by IndicatorCount desc
