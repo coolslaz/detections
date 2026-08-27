@@ -1,0 +1,5 @@
+EmailEvents
+| where Subject has "Accounting Department shared a PDF via DocuSign secure Remittance Advice.pdf" or EmailBody has "Accounting Department shared a PDF via DocuSign secure Remittance Advice.pdf"
+| where EmailBody has "Tap here to view document" or Subject has "Tap here to view document"
+| where Subject has "DocuSign" or EmailBody has "DocuSign" or SenderDisplayName has "DocuSign"
+| project TimeGenerated, SenderFromAddress, SenderDisplayName, RecipientEmailAddress, Subject, EmailBody
