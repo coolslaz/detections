@@ -1,0 +1,29 @@
+let phishWindow = 30m;
+let highRiskExt = dynamic([".exe",".js",".vbs",".scr",".docm",".xlsm",".pptm",".dotm"]);
+let SuspiciousEmails = EmailEvents
+| where DeliveryAction != "Blocked"
+| extend AuthDetails = parse_json(AuthenticationDetails)
+| extend SPFResult = tostring(AuthDetails.SPF), DKIMResult = tostring(AuthDetails.DKIM), DMARCResult = tostring(AuthDetails.DMARC)
+| where SPFResult =~ "Fail" or DKIMResult =~ "Fail" or DMARCResult =~ "Fail"
+ or ThreatTypes has "Phish" or ThreatTypes has "Malware"
+| join kind=leftouter (
+ EmailAttachmentInfo
+ | where FileName has_any (".exe",".js",".vbs",".scr",".docm",".xlsm",".pptm",".dotm")
+ | project NetworkMessageId, AttachmentFileName = FileName, TimeGenerated
+) on NetworkMessageId
+| join kind=leftouter (
+ EmailUrlInfo
+ | where UrlDomain has_any ("uncategorized") or Url has_any ("malicious")
+ | project NetworkMessageId, SuspiciousUrl = Url, TimeGenerated
+) on NetworkMessageId
+| where isnotempty(AttachmentFileName) or isnotempty(SuspiciousUrl) or SPFResult =~ "Fail" or DKIMResult =~ "Fail" or DMARCResult =~ "Fail"
+| project NetworkMessageId, TimeGenerated, SenderFromAddress, SenderDisplayName, RecipientEmailAddress, SPFResult, DKIMResult, DMARCResult, ThreatTypes, AttachmentFileName, SuspiciousUrl
+| extend MailTime = TimeGenerated;
+SuspiciousEmails
+| join kind=inner (
+ DeviceProcessEvents
+ | project ProcessTimestamp = TimeGenerated, DeviceName, AccountUpn, FileName, ProcessCommandLine, InitiatingProcessFileName
+) on $left.RecipientEmailAddress == $right.AccountUpn
+| where ProcessTimestamp between (MailTime .. (MailTime + phishWindow))
+| project MailTime, SenderFromAddress, SenderDisplayName, RecipientEmailAddress, SPFResult, DKIMResult, DMARCResult, ThreatTypes, AttachmentFileName, SuspiciousUrl, ProcessTimestamp, DeviceName, FileName, ProcessCommandLine, InitiatingProcessFileName
+| sort by MailTime desc
