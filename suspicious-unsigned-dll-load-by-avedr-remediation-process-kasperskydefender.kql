@@ -1,0 +1,21 @@
+DeviceImageLoadEvents
+| where InitiatingProcessFileName in~ ("avp.exe", "MsMpEng.exe")
+| where FileName endswith ".dll"
+| where InitiatingProcessFolderPath !startswith_cs @"c:\program files" and InitiatingProcessFolderPath !startswith_cs @"c:\program files (x86)" and InitiatingProcessFolderPath !startswith_cs @"c:\programdata\kaspersky lab" and InitiatingProcessFolderPath !startswith_cs @"c:\programdata\microsoft\windows defender"
+| where FolderPath !startswith_cs @"c:\program files" and FolderPath !startswith_cs @"c:\program files (x86)" and FolderPath !startswith_cs @"c:\windows\system32" and FolderPath !startswith_cs @"c:\windows\syswow64" and FolderPath !startswith_cs @"c:\programdata\kaspersky lab" and FolderPath !startswith_cs @"c:\programdata\microsoft\windows defender"
+| where isnotempty(FileName)
+| extend SuspiciousDLL = FileName in~ ("phoneinfo.dll", "MY_SNAKE_IS_SOLID.dll")
+| extend UnsignedOrUntrusted = (isnotnull(ImageSigned) and ImageSigned == false) or (isnotnull(ImageSignatureStatus) and ImageSignatureStatus != "Valid")
+| where SuspiciousDLL or UnsignedOrUntrusted
+| where SuspiciousDLL or (InitiatingProcessFileName =~ "avp.exe" and FolderPath !startswith_cs @"c:\program files") or (InitiatingProcessFileName =~ "MsMpEng.exe" and FolderPath !startswith_cs @"c:\program files")
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessAccountName, FileName, FolderPath, SHA256, SuspiciousDLL, UnsignedOrUntrusted
+| union (
+    DeviceFileEvents
+    | where FolderPath in~ (@"c:\windows\system32\phoneinfo.dll", @"c:\windows\system32\my_snake_is_solid.dll")
+    | where InitiatingProcessFileName in~ ("avp.exe", "MsMpEng.exe")
+    | extend SuspiciousDLL = true, UnsignedOrUntrusted = true
+    | project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessAccountName, FileName, FolderPath, SHA256, SuspiciousDLL, UnsignedOrUntrusted
+  )
+| sort by TimeGenerated desc
+// description: Detects DLLs loaded or dropped by AV/EDR remediation processes (avp.exe, MsMpEng.exe) from outside legitimate vendor directories (Program Files, System32/SysWOW64, and legitimate ProgramData vendor paths for Kaspersky Lab and Microsoft Windows Defender). Flags DLLs that are unsigned or fail signature validation, consistent with the FalconFlank-style DLL sideloading technique abusing AV remediation workflows for privilege escalation (T1574.002, T1055.001, T1548, T1068). Retains matching against known PoC filenames (phoneinfo.dll, MY_SNAKE_IS_SOLID.dll) as an additional high-confidence detection branch, but no longer relies on it as the primary indicator since filenames are low-durability IOCs.
+// false_positives: Legitimate AV components loading signed DLLs from vendor-specific ProgramData directories not covered by these exclusions (e.g., other AV/EDR ProgramData subfolders), signed third-party plugins or shell extensions loaded into avp.exe/MsMpEng.exe from non-standard but legitimate paths, and transient signature validation failures due to network/catalog signing lookups (e.g., WHQL catalog-signed drivers not resolving SignatureStatus correctly).
