@@ -1,0 +1,14 @@
+DeviceFileEvents
+| where FolderPath has @"\Windows\System32\"
+| where InitiatingProcessFileName in~ ("TieringEngineService.exe", "MsMpEng.exe")
+| where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+| where FileName endswith ".exe" or FileName endswith ".dll" or FileName endswith ".sys"
+| project FileTime = TimeGenerated, DeviceId, InitiatingProcessId, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, FolderPath, ActionType
+| join kind=inner (
+    DeviceProcessEvents
+    | where FileName =~ "TieringEngineService.exe"
+    | project ProcessTime = TimeGenerated, DeviceId, InitiatingProcessId = ProcessId
+) on DeviceId, InitiatingProcessId
+| where abs(datetime_diff('second', FileTime, ProcessTime)) <= 300
+| project FileTime, ProcessTime, DeviceId, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, FolderPath, ActionType
+| sort by FileTime desc
