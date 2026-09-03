@@ -1,0 +1,20 @@
+let LookbackWindow = 5m;
+let SuspiciousArgs = dynamic(["whoami", "nt authority\\system", "/c whoami", "-nop", "-enc", "downloadstring", "iex", "reg add", "net user"]);
+let FalconProcessNames = dynamic(["CSFalconService", "CSFalconContainer", "falcon-sensor", "CSFalconSensor"]);
+let SuspiciousDllLoads = DeviceImageLoadEvents
+| where TimeGenerated > ago(1d)
+| where InitiatingProcessFileName in~ (FalconProcessNames) or InitiatingProcessFolderPath has "CrowdStrike"
+| where Signature == "Unsigned" or SignatureStatus != "Verified"
+| project DeviceId, LoadTime = TimeGenerated, LoadedDllFileName = FileName, InitiatingProcessFileName, InitiatingProcessFolderPath, Signature, SignatureStatus;
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where FileName in~ ("cmd.exe", "conhost.exe")
+| where InitiatingProcessAccountName has "system" or AccountName has "system"
+| where InitiatingProcessFileName in~ (FalconProcessNames) or InitiatingProcessFolderPath has "CrowdStrike"
+| extend HasAnomalousArgs = ProcessCommandLine has_any (SuspiciousArgs)
+| join kind=leftouter (SuspiciousDllLoads) on DeviceId
+| where HasAnomalousArgs or (isnotnull(LoadTime) and TimeGenerated - LoadTime between (0s .. LookbackWindow))
+| extend SuspiciousWhoamiFollowUp = ProcessCommandLine has "whoami"
+| extend PrecededByUnsignedDllLoad = isnotnull(LoadTime) and (TimeGenerated - LoadTime between (0s .. LookbackWindow))
+| project TimeGenerated, DeviceName, FileName, ProcessCommandLine, AccountName, AccountDomain, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessAccountName, HasAnomalousArgs, PrecededByUnsignedDllLoad, LoadedDllFileName, LoadTime, SuspiciousWhoamiFollowUp
+| sort by TimeGenerated desc
