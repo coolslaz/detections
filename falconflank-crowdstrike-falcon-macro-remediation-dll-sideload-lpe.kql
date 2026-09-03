@@ -1,0 +1,30 @@
+// Detects FalconFlank 0day: CrowdStrike Falcon/CSFalconService remediation process loading an unsigned/untrusted DLL from a user-writable path correlated with a subsequent SYSTEM-context shell spawn from the same remediation process on the same device within 15 minutes, or direct execution of the known PoC binary/commandline.
+let FalconRemediationProcesses = dynamic(["CSFalconService.exe", "CSFalconContainer.exe", "CSFalconAgent.exe", "falcon-sensor.exe"]);
+let UserWritablePaths = dynamic(["c:\\users\\", "c:\\programdata\\", "c:\\windows\\temp\\", "\\appdata\\"]);
+let AdminTooling = dynamic(["CcmExec.exe", "PSEXESVC.exe", "TeamViewer.exe", "AnyDesk.exe", "ScreenConnect.exe"]);
+let DirectPoc = DeviceProcessEvents
+    | where FileName =~ "FalconFlank.exe" or ProcessCommandLine has "FalconFlank"
+    | where InitiatingProcessParentFileName !in~ (AdminTooling)
+    | extend DetectionType = "Direct PoC execution"
+    | project TimeGenerated, DeviceId, DeviceName, FileName, FolderPath, ProcessCommandLine, AccountName, InitiatingProcessFileName, InitiatingProcessParentFileName, SHA256, DetectionType;
+let ImageLoadSignal = DeviceImageLoadEvents
+    | where InitiatingProcessFileName in~ (FalconRemediationProcesses)
+    | where isnotempty(FolderPath)
+    | where FolderPath has_any (UserWritablePaths)
+    | where IsSigned == false or SignatureStatus != "Valid"
+    | where InitiatingProcessParentFileName !in~ (AdminTooling)
+    | project LoadTime = TimeGenerated, DeviceId, DeviceName, LoadedFile = FileName, LoadedFolderPath = FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName, IsSigned, SignatureStatus, AccountName = InitiatingProcessAccountName;
+let SystemShellSignal = DeviceProcessEvents
+    | where InitiatingProcessFileName in~ (FalconRemediationProcesses)
+    | where FileName in~ ("cmd.exe", "conhost.exe", "powershell.exe", "cmd")
+    | where InitiatingProcessAccountName =~ "system"
+    | where InitiatingProcessParentFileName !in~ (AdminTooling)
+    | project ShellTime = TimeGenerated, DeviceId, DeviceName, ShellFileName = FileName, ShellFolderPath = FolderPath, ShellCommandLine = ProcessCommandLine, AccountName, InitiatingProcessFileName, InitiatingProcessParentFileName;
+let CorrelatedSignal = ImageLoadSignal
+    | join kind=inner (SystemShellSignal) on DeviceId
+    | where ShellTime between (LoadTime .. (LoadTime + 15m))
+    | extend DetectionType = "Correlated unsigned DLL sideload + SYSTEM shell spawn"
+    | project TimeGenerated = LoadTime, DeviceId, DeviceName, FileName = LoadedFile, FolderPath = LoadedFolderPath, ProcessCommandLine = ShellCommandLine, AccountName, InitiatingProcessFileName, InitiatingProcessParentFileName, IsSigned, SignatureStatus, ShellTime, DetectionType;
+union DirectPoc, CorrelatedSignal
+| sort by TimeGenerated desc
+// false_positives: Excludes remediation activity where the immediate process ancestry includes known remote-admin/patch-management tooling (CcmExec.exe, PSEXESVC.exe, TeamViewer.exe, AnyDesk.exe, ScreenConnect.exe). Excludes CrowdStrike/Microsoft-signed DLLs (IsSigned == true and SignatureStatus == 'Valid') temporarily staged in user-writable paths during legitimate sensor updates/installs. The unsigned-DLL-load and SYSTEM-shell-spawn signals must now co-occur on the same device within 15 minutes to reduce noise from unrelated benign remediation events; only the direct FalconFlank.exe/PoC-commandline match remains an independent high-confidence detection.
