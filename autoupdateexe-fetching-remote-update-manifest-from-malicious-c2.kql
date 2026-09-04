@@ -1,0 +1,15 @@
+DeviceProcessEvents
+| where FileName =~ "AutoUpdate.exe" or FileName =~ "au.exe"
+| where ProcessCommandLine has "AutoUpdater.Config" or ProcessCommandLine has "AutoUpdateRemote.Config"
+| join kind=inner (
+    DeviceNetworkEvents
+    | where RemoteUrl has "herokuapp.com" and RemoteUrl has "AutoUpdateRemote.Config"
+) on DeviceId
+| project TimeGenerated, DeviceId, FileName, ProcessCommandLine, RemoteUrl, InitiatingProcessAccountName
+// Correlate with subsequent file writes replacing application binaries listed in the update manifest
+| join kind=inner (
+    DeviceFileEvents
+    | where FileName in ("InstaTime.exe", "ffmpegsumo.dll", "icudtl.dat", "nw.pak")
+    | where ActionType == "FileCreated" or ActionType == "FileModified"
+) on DeviceId
+| project TimeGenerated, DeviceId, FileName1=FileName, ProcessCommandLine, RemoteUrl, FolderPath, ActionType
