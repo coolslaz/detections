@@ -1,0 +1,6 @@
+DeviceProcessEvents
+| where FileName =~ "powershell.exe"
+| where InitiatingProcessFileName =~ "cplsupport.exe"
+| where ProcessCommandLine has "-NonInteractive" and ProcessCommandLine has "-NoProfile" and ProcessCommandLine has "-Command"
+| where ProcessCommandLine has_any ("-WindowStyle Hidden", "-w hidden", "-window hidden", "-WindowStyle H")
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, AccountName
