@@ -1,0 +1,5 @@
+DeviceProcessEvents
+| where (FileName =~ "cplsupport.exe" and ProcessCommandLine has "--install")
+ or (FileName =~ "wtass.exe" and ProcessCommandLine has "install")
+ or (FileName =~ "sc.exe" and ProcessCommandLine has "create" and (ProcessCommandLine has "cplsupport" or ProcessCommandLine has "wtas"))
+| project TimeGenerated, DeviceName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName
