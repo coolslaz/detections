@@ -1,0 +1,16 @@
+// Detects unauthorized modification of default search engine settings
+// via registry keys, consistent with remote input-injection engines
+// hijacking browser search providers (NinjaMare-style campaigns)
+DeviceRegistryEvents
+| where ActionType in ("RegistryValueSet", "RegistryKeyCreated")
+| where RegistryKey has_any (
+    @"SOFTWARE\Policies\Google\Chrome\DefaultSearchProviderEnabled",
+    @"SOFTWARE\Policies\Google\Chrome\DefaultSearchProviderSearchURL",
+    @"SOFTWARE\Policies\Microsoft\Edge\DefaultSearchProviderEnabled",
+    @"SOFTWARE\Policies\Microsoft\Edge\DefaultSearchProviderSearchURL",
+    @"SearchScopes"
+)
+// Exclude legitimate browser update/installer processes performing policy changes
+| where InitiatingProcessFileName !in~ ("msedge_installer.exe", "GoogleUpdate.exe", "chrome_installer.exe", "setup.exe")
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, RegistryKey, RegistryValueName, RegistryValueData, ActionType
+| sort by TimeGenerated desc
