@@ -1,0 +1,7 @@
+DeviceProcessEvents
+| where FileName =~ "wsmprovhost.exe"
+| join kind=inner (DeviceFileEvents | where FileName =~ "config.toml" or FileName has_any ("cplsupport.exe", "wtass.exe")) on DeviceId
+| where Timestamp1 between ((Timestamp - 5m) .. (Timestamp + 30m))
+| project Timestamp = Timestamp1, DeviceId, DeviceName, InitiatingProcessFileName = FileName, FolderPath, FileName = FileName1, SHA256, AccountName = InitiatingProcessAccountName
+| summarize FileEvents = make_set(FileName, 10), FilePaths = make_set(FolderPath, 10) by DeviceId, DeviceName, bin(Timestamp, 1h)
+| where array_length(FileEvents) > 0
