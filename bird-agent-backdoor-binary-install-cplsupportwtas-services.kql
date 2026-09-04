@@ -1,0 +1,8 @@
+DeviceProcessEvents
+| where FileName in~ ("cplsupport.exe", "wtass.exe")
+ or SHA256 in~ ("BFADBEEE63A4F0BF19EC9DEB8FA58F58", "7916C33688385525078BEE504C90F359")
+ or MD5 in~ ("BFADBEEE63A4F0BF19EC9DEB8FA58F58", "7916C33688385525078BEE504C90F359")
+ or ProcessCommandLine has_any ("cplsupport.exe --install", "wtass.exe install")
+| extend ServiceInstall = (ProcessCommandLine has "sc.exe" and ProcessCommandLine has_any ("create cplsupport", "create wtas"))
+| where FileName in~ ("cplsupport.exe", "wtass.exe") or ServiceInstall
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, SHA256, MD5, AccountName
