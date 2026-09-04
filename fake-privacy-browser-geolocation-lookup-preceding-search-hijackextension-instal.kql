@@ -1,0 +1,23 @@
+// Detects a fake NW.js-based 'privacy browser' process performing an IP geolocation/country lookup
+// immediately before executing Tier-1-gated payload behavior (default search engine hijack or
+// browser extension installation), consistent with NinjaMare's country-gated conditional logic.
+let FakeBrowserProcs = dynamic(["tenbrowser.exe", "fireflybrowser.exe", "zenbrowser.exe", "gptbrowser.exe", "stealthguard.exe", "instatime.exe", "whatsapptime.exe"]);
+let Tier1Countries = dynamic(["US", "CA", "GB", "DE", "FR", "IT", "ES", "SE", "NL", "AU"]);
+let GeoLookupEvents = DeviceNetworkEvents
+| where InitiatingProcessFileName has_any (FakeBrowserProcs)
+| where RemoteUrl has_any ("ip-api.com", "ipinfo.io", "geoplugin.net", "ipapi.co", "freegeoip.app", "geolocation-db.com")
+| project GeoTime = Timestamp, DeviceId, GeoInitProcess = InitiatingProcessFileName, GeoUrl = RemoteUrl;
+let PayloadEvents = union
+    (DeviceRegistryEvents
+    | where InitiatingProcessFileName has_any (FakeBrowserProcs)
+    | where RegistryKey has_any ("SearchScopes", "DefaultScope", "SearchAssistant", "Extensions")
+    | project PayloadTime = Timestamp, DeviceId, PayloadProcess = InitiatingProcessFileName, PayloadAction = ActionType, PayloadDetail = RegistryKey),
+    (DeviceFileEvents
+    | where InitiatingProcessFileName has_any (FakeBrowserProcs)
+    | where FolderPath has_any ("Extensions", "Extension Settings")
+    | project PayloadTime = Timestamp, DeviceId, PayloadProcess = InitiatingProcessFileName, PayloadAction = ActionType, PayloadDetail = FolderPath);
+GeoLookupEvents
+| join kind=inner (PayloadEvents) on DeviceId
+| where PayloadTime between (GeoTime .. (GeoTime + 5m))
+| project GeoTime, PayloadTime, DeviceId, GeoInitProcess, GeoUrl, PayloadProcess, PayloadAction, PayloadDetail
+| sort by GeoTime desc
