@@ -1,0 +1,10 @@
+DeviceProcessEvents
+| where FileName =~ "report.bin" or ProcessCommandLine has "report.bin"
+| project TimeGenerated, DeviceId, DeviceName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, ProcessId, AccountName
+| join kind=leftouter (
+    DeviceNetworkEvents
+    | where InitiatingProcessFileName =~ "report.bin"
+    | project TimeGenerated, DeviceId, InitiatingProcessId, RemoteUrl, RemoteIP, RemotePort, InitiatingProcessFileName
+) on DeviceId
+| where isnotempty(RemoteUrl) or isnotempty(RemoteIP)
+| project TimeGenerated, DeviceId, DeviceName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, RemoteUrl, RemoteIP, RemotePort, AccountName
