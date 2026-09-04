@@ -1,0 +1,1 @@
+alert tcp any any -> $HOME_NET [443,541,8443,10443] (msg:"Fire Ant Reverse-Tunneling Implant Activation Magic String"; flow:to_server; content:"sxcdewqaz!@#"; fast_pattern; metadata: author detections.ai, mitre_tactic_id TA0011, mitre_technique_id T1572, mitre_technique_id T1090, actor Fire_Ant, actor UNC3886; classtype:trojan-activity; sid:1000201; rev:1;)
