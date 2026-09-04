@@ -1,0 +1,2 @@
+alert tcp any any -> any [443,541,8443,10443] (msg:"Fire Ant Packet-Triggered Backdoor TCP Magic String Trigger"; flow:to_server; content:"sxcdewqaz!@#"; fast_pattern; metadata: author detections.ai, attack_id T1205.002, attack_id T1095; classtype:trojan-activity; sid:1000001; rev:1;)
+alert udp any 40443 -> any 500 (msg:"Fire Ant Packet-Triggered Backdoor UDP Magic String Trigger"; content:"sxcdewqaz!@#"; fast_pattern; metadata: author detections.ai, attack_id T1205.002, attack_id T1095; classtype:trojan-activity; sid:1000002; rev:1;)
