@@ -1,0 +1,10 @@
+// Detects browser extension installation events occurring while the user session is idle,
+// consistent with remote-driven synthetic input injection (NinjaMare-style privacy browser malware)
+DeviceEvents
+| where ActionType in ("BrowserExtensionInstallEvent", "BrowserExtensionInstall")
+| extend IdleSeconds = todouble(parse_json(AdditionalFields).IdleTimeSeconds)
+| extend InstallSource = tostring(parse_json(AdditionalFields).InstallSource)
+| where isnotnull(IdleSeconds) and IdleSeconds > 420 // matches the 7+ minute idle-time trigger threshold observed in this campaign
+| where isempty(InstallSource) or InstallSource !in~ ("user_initiated", "UserInitiated")
+| project TimeGenerated, DeviceId, DeviceName, ActionType, InitiatingProcessFileName, InitiatingProcessCommandLine, IdleSeconds, InstallSource, AdditionalFields
+| sort by TimeGenerated desc
