@@ -1,0 +1,15 @@
+DeviceRegistryEvents
+| where ActionType == "RegistryValueSet"
+| where RegistryKey has_any (
+    @"HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+    @"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+)
+| where RegistryValueData has_any ("nw.exe", "nw.pak", "InstaTime.exe", "WhatsappTime", "WhatsAppTime")
+| join kind=leftouter (
+    DeviceProcessEvents
+    | where FileName has_any ("nsis", "Setup.exe", "Installer.exe")
+       or ProcessCommandLine has_any ("nw.pak", "nw.exe", "jquery.min.js", "main.js")
+    | project InitiatingProcessFileName = FileName, InstallDeviceId = DeviceId, InstallTime = TimeGenerated
+) on $left.DeviceId == $right.InstallDeviceId
+| project TimeGenerated, DeviceId, RegistryKey, RegistryValueName, RegistryValueData, InitiatingProcessFileName, InitiatingProcessCommandLine, InstallTime
+| sort by TimeGenerated desc
