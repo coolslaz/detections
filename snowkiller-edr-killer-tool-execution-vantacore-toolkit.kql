@@ -1,0 +1,3 @@
+DeviceProcessEvents
+| where FileName has "SnowKiller" or ProcessCommandLine has "SnowKiller" or FolderPath has "SnowKiller"
+| project TimeGenerated, DeviceName, FileName, ProcessCommandLine, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName
