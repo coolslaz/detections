@@ -1,0 +1,13 @@
+// Detects the NinjaMare fake privacy-browser evasion pattern: the process waits at least 7 minutes (420s) of machine idle time before acting, then repositions its window to off-screen coordinates during synthetic keystroke/mouse injection and restores it afterward
+DeviceEvents
+| where ActionType in ("ProcessWindowPositionChanged", "WindowStateChanged", "BrowserWindowMoved")
+| extend IdleSeconds = toint(parse_json(AdditionalFields).IdleTimeSeconds)
+| extend WindowX = toint(parse_json(AdditionalFields).WindowPositionX)
+| extend WindowY = toint(parse_json(AdditionalFields).WindowPositionY)
+| extend PriorWindowX = toint(parse_json(AdditionalFields).PreviousWindowPositionX)
+| extend PriorWindowY = toint(parse_json(AdditionalFields).PreviousWindowPositionY)
+| where IdleSeconds >= 420
+| where WindowX < 0 or WindowY < 0
+| extend RestoredToOriginalPosition = (PriorWindowX == WindowX) or (PriorWindowY == WindowY)
+| project TimeGenerated, DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, IdleSeconds, WindowX, WindowY, PriorWindowX, PriorWindowY, RestoredToOriginalPosition, ActionType
+| sort by TimeGenerated desc
