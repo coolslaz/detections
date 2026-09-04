@@ -1,0 +1,7 @@
+DeviceProcessEvents
+| where FileName has_any ("AppInstaller.exe", "InstallerService.exe")
+ or ProcessCommandLine has ".msix"
+| where ProcessCommandLine has_any ("StealthGuard.Msix", ".msix")
+| where ProcessCommandLine has_any ("ms-appinstaller", ".msix")
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
+| sort by TimeGenerated desc
