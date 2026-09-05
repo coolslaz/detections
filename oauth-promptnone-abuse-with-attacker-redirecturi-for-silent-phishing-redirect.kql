@@ -1,0 +1,17 @@
+UrlClickEvents
+| where Url has "login.microsoftonline.com/common/oauth2/v2.0/authorize" or Url has "accounts.google.com"
+| where Url has "prompt=none"
+| extend RedirectUri = tostring(extract(@"redirect_uri=([^&]+)", 1, Url))
+| extend RedirectUriDecoded = url_decode(RedirectUri)
+| where isnotempty(RedirectUriDecoded)
+| where RedirectUriDecoded !has "login.microsoftonline.com"
+    and RedirectUriDecoded !has "microsoft.com"
+    and RedirectUriDecoded !has "microsoftonline.com"
+    and RedirectUriDecoded !has "office.com"
+    and RedirectUriDecoded !has "office365.com"
+    and RedirectUriDecoded !has "live.com"
+    and RedirectUriDecoded !has "google.com"
+    and RedirectUriDecoded !has "accounts.google.com"
+| extend ClientId = tostring(extract(@"client_id=([^&]+)", 1, Url))
+| project TimeGenerated, AccountUpn, Url, ClientId, RedirectUriDecoded, ActionType
+| sort by TimeGenerated desc
