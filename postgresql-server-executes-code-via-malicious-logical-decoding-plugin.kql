@@ -1,0 +1,18 @@
+// Detect arbitrary code execution as the PostgreSQL OS account resulting from a
+// malicious logical decoding plugin loaded via dlopen (CVE-2026-6471)
+let postgresProcs = dynamic(["postgres", "postgres.exe", "postmaster", "postmaster.exe"]);
+let suspiciousChildren = dynamic(["cmd.exe", "powershell.exe", "sh", "bash", "/bin/sh", "/bin/bash"]);
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where InitiatingProcessFileName in~ (postgresProcs)
+| where FileName in~ (suspiciousChildren)
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessId, FileName, ProcessCommandLine, InitiatingProcessAccountName
+| union (
+    DeviceFileEvents
+    | where TimeGenerated > ago(1d)
+    | where InitiatingProcessFileName in~ (postgresProcs)
+    | where FileName endswith ".so" or FileName endswith ".dll"
+    | where not(FolderPath has "$libdir") and not(FolderPath has "/plugins/") and not(FolderPath has "\\plugins\\")
+    | project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessId, FileName, FolderPath, InitiatingProcessAccountName
+)
+| sort by TimeGenerated desc
