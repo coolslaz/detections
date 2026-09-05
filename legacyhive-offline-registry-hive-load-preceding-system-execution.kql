@@ -1,0 +1,9 @@
+// Detects offline registry hive manipulation via 'reg load' followed by SYSTEM-context execution spawned from the same reg.exe process
+// LegacyHive weaponizes offline registry hive manipulation and the NT Object Manager namespace
+// Tightened: requires parent/child process linkage (InitiatingProcessId) rather than device-wide time correlation, restricts follow-up to a narrow set of process names relevant to this technique, and excludes common legitimate hive-load callers
+let regLoadEvents = DeviceProcessEvents
+| where FileName =~ "reg.exe"
+| where ProcessCommandLine has "load"
+| where ProcessCommandLine !has "unload"
+| where isnotempty(InitiatingProcessFileName);
+regLoadEvents
