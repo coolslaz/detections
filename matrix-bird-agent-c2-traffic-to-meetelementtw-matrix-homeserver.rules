@@ -1,0 +1,11 @@
+alert tls $HOME_NET any -> $EXTERNAL_NET any (msg:"Toy Ghouls matrix-bird-agent TLS SNI to meet.element.tw C2"; flow:to_server,established; tls.sni; content:"meet.element.tw"; nocase; sid:1000201; rev:1; classtype:trojan-activity; metadata: attack_id T1102.002, attack_id T1071.001;)
+
+alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"Toy Ghouls matrix-bird-agent HTTP Host header meet.element.tw C2"; flow:to_server,established; http.host; content:"meet.element.tw"; nocase; sid:1000202; rev:1; classtype:trojan-activity; metadata: attack_id T1102.002, attack_id T1071.001;)
+
+alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"Toy Ghouls matrix-bird-agent Matrix event type m.bird.status C2"; flow:to_server,established; http.request_body; content:"m.bird.status"; nocase; sid:1000203; rev:1; classtype:trojan-activity; metadata: attack_id T1102.002, attack_id T1071.001;)
+
+alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"Toy Ghouls matrix-bird-agent Matrix event type m.bird.metrics C2"; flow:to_server,established; http.request_body; content:"m.bird.metrics"; nocase; sid:1000204; rev:1; classtype:trojan-activity; metadata: attack_id T1102.002, attack_id T1071.001;)
+
+alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"Toy Ghouls matrix-bird-agent Matrix event type m.bird.cmd_response C2"; flow:to_server,established; http.request_body; content:"m.bird.cmd_response"; nocase; sid:1000205; rev:1; classtype:trojan-activity; metadata: attack_id T1102.002, attack_id T1071.001;)
+
+alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"Toy Ghouls matrix-bird-agent panel-bot account reference in Matrix traffic"; flow:to_server,established; http.request_body; content:"panel-bot"; nocase; sid:1000206; rev:1; classtype:trojan-activity; metadata: attack_id T1102.002, attack_id T1071.001;)
