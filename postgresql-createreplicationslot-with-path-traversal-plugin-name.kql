@@ -1,0 +1,15 @@
+// Detects CVE-2026-6471 (PostGREShell) exploitation attempts where a CREATE_REPLICATION_SLOT command
+// specifies a logical decoding plugin name containing path separators, traversal sequences, or UNC paths
+let PluginPathIndicators = dynamic(["../", "..\\", "\\\\", "/", "\\"]);
+let KnownGoodPlugins = dynamic(["pgoutput", "test_decoding", "wal2json", "decoderbufs"]);
+Syslog
+| where SyslogMessage has "CREATE_REPLICATION_SLOT"
+| where SyslogMessage has "LOGICAL"
+| extend PluginName = extract(@'LOGICAL\s+"?([^"\s]+)"?', 1, SyslogMessage)
+| where isnotempty(PluginName)
+| where not(tolower(PluginName) in (KnownGoodPlugins))
+| where PluginName has_any ("../", "..\\", "\\\\", "/", "\\")
+| extend TraversalDetected = PluginName has ".."
+| extend UNCPathDetected = PluginName startswith "\\\\"
+| project TimeGenerated, Computer, ProcessName, SyslogMessage, PluginName, TraversalDetected, UNCPathDetected
+| sort by TimeGenerated desc
