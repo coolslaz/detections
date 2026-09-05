@@ -1,0 +1,13 @@
+let tedC2Domains = dynamic(["img.monderhouse.space","img.smartnords.site","img.darklights.store","img.responsive.pstatic.autos","img.socialteams.store","img.worksongo.store"]);
+let DnsEventsBase = DnsEvents
+| where Name has_any (tedC2Domains)
+| extend MatchedDomain = tedC2Domains[array_index_of(tedC2Domains, extract(strcat("(", strcat_array(tedC2Domains, "|"), ")"), 1, Name))]
+| project TimeGenerated, Computer, ClientIP, Name;
+let CommonSecurityLogBase = CommonSecurityLog
+| where DestinationHostName has_any (tedC2Domains) or RequestURL has_any (tedC2Domains)
+| project TimeGenerated, Computer, SourceIP, DestinationIP, DestinationHostName, RequestURL;
+let DeviceNetworkEventsBase = DeviceNetworkEvents
+| where RemoteUrl has_any (tedC2Domains)
+| project TimeGenerated, DeviceName, RemoteUrl, RemoteIP, InitiatingProcessFileName, InitiatingProcessCommandLine;
+DnsEventsBase
+| union CommonSecurityLogBase, DeviceNetworkEventsBase
