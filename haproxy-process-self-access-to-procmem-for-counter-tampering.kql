@@ -1,0 +1,15 @@
+// Detect the ted backdoor manipulating HAProxy's internal connection counters
+// by having the haproxy process open/write its own process memory
+// (/proc/[pid]/mem or /proc/self/mem) to zero out active-connection stats
+// via hardcoded HAProxy 2.8.12 struct offsets, evading backend logs and stats
+let ProcessEvents = DeviceProcessEvents
+| where FileName =~ "haproxy"
+| where ProcessCommandLine has "/proc/" and (ProcessCommandLine has "/mem" or ProcessCommandLine has "self/mem")
+| project TimeGenerated, DeviceName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName;
+let FileEvents = DeviceFileEvents
+| where InitiatingProcessFileName =~ "haproxy"
+| where FileName has_any ("mem") and FolderPath has "/proc/"
+| project TimeGenerated, DeviceName, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName = RequestAccountName;
+ProcessEvents
+| union FileEvents
+| sort by TimeGenerated desc
