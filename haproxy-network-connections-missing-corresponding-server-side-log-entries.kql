@@ -1,0 +1,24 @@
+// Detect discrepancy between observed network connections through a HAProxy process
+// and the presence of corresponding entries in HAProxy's own server-side logs.
+// This gap is consistent with backdoors compiled directly into HAProxy (e.g. ted)
+// that erase or never generate log records for C2 traffic while still traversing the network.
+let lookback = 1h;
+let haproxyConnections =
+    DeviceNetworkEvents
+    | where TimeGenerated > ago(lookback)
+    | where InitiatingProcessFileName =~ "haproxy"
+    | where ActionType in ("ConnectionSuccess", "InboundConnectionAccepted", "ConnectionAccepted")
+    | project ConnTime = TimeGenerated, DeviceId, DeviceName, RemoteIP, RemotePort, LocalIP, LocalPort, InitiatingProcessFileName;
+let haproxyLogs =
+    Syslog
+    | where TimeGenerated > ago(lookback)
+    | where ProcessName =~ "haproxy"
+    | project LogTime = TimeGenerated, HostName, SyslogMessage;
+haproxyConnections
+| join kind=leftouter (haproxyLogs) on $left.DeviceName == $right.HostName
+| where isnull(LogTime) or datetime_diff('second', ConnTime, LogTime) > 300 or datetime_diff('second', ConnTime, LogTime) < -300
+| where isnull(SyslogMessage) or not(SyslogMessage has_any (tostring(RemoteIP), tostring(RemotePort)))
+| project ConnTime, DeviceId, DeviceName, RemoteIP, RemotePort, LocalIP, LocalPort, InitiatingProcessFileName, MatchedLogTime = LogTime, MatchedLogMessage = SyslogMessage
+| summarize UnmatchedConnections = count(), SampleRemoteIPs = make_set(RemoteIP, 20) by DeviceName, bin(ConnTime, 15m)
+| where UnmatchedConnections > 5
+| sort by UnmatchedConnections desc
