@@ -1,0 +1,21 @@
+// Detects a Linux stager sequence: enumerate for haproxy/cron processes, verify root privileges, and profile the OS (hostname, distro, kernel, arch) prior to dropping a trojanized crond payload
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where FileName in~ ("ps", "pgrep", "grep", "id", "whoami", "uname", "hostname", "cat")
+| where (FileName in~ ("ps", "pgrep", "grep") and (ProcessCommandLine has "haproxy" or ProcessCommandLine has "cron"))
+    or (FileName in~ ("id", "whoami") and (ProcessCommandLine has "-u" or ProcessCommandLine has "root" or ProcessCommandLine == "whoami"))
+    or (FileName =~ "uname" and (ProcessCommandLine has "-a" or ProcessCommandLine has "-r" or ProcessCommandLine has "-v" or ProcessCommandLine has "-m"))
+    or (FileName =~ "hostname")
+    or (FileName =~ "cat" and ProcessCommandLine has "/etc/os-release")
+| summarize
+    ProcessEnumHaproxyCron = countif(FileName in~ ("ps", "pgrep", "grep") and (ProcessCommandLine has "haproxy" or ProcessCommandLine has "cron")),
+    RootCheck = countif(FileName in~ ("id", "whoami") and (ProcessCommandLine has "-u" or ProcessCommandLine has "root" or ProcessCommandLine == "whoami")),
+    UnameCheck = countif(FileName =~ "uname"),
+    HostnameCheck = countif(FileName =~ "hostname"),
+    OsReleaseCheck = countif(FileName =~ "cat" and ProcessCommandLine has "/etc/os-release"),
+    Commands = make_set(ProcessCommandLine, 20),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated)
+    by DeviceId, InitiatingProcessId, InitiatingProcessFileName, InitiatingProcessAccountName
+| where ProcessEnumHaproxyCron > 0 and RootCheck > 0 and (UnameCheck > 0 or HostnameCheck > 0 or OsReleaseCheck > 0)
+| project DeviceId, InitiatingProcessId, InitiatingProcessFileName, InitiatingProcessAccountName, ProcessEnumHaproxyCron, RootCheck, UnameCheck, HostnameCheck, OsReleaseCheck, Commands, FirstSeen, LastSeen
