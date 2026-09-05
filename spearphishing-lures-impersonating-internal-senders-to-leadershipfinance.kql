@@ -1,0 +1,21 @@
+EmailEvents
+| where EmailDirection =~ "Inbound"
+| where isempty(SenderMailFromAddress) or SenderMailFromAddress == "<>"
+| extend SenderDomain = tostring(split(SenderFromAddress, "@")[1])
+| extend RecipientDomain = tostring(split(RecipientEmailAddress, "@")[1])
+| where SenderDomain =~ RecipientDomain
+| where SenderDisplayName has_any ("IT Support", "Finance", "Accounts Payable", "Procurement", "Help Desk")
+| where Subject has_any ("invoice", "remittance", "shared a file", "shared document", "document sharing", "file share", "bid", "payment instructions", "payment request", "wire transfer", "procurement", "investment opportunity", "loan offer", "meeting invitation")
+| extend AuthDetails = parse_json(AuthenticationDetails)
+| extend SPFResult = tostring(AuthDetails.SPF), DKIMResult = tostring(AuthDetails.DKIM), DMARCResult = tostring(AuthDetails.DMARC), CompAuthResult = tostring(AuthDetails.CompAuth)
+| where CompAuthResult =~ "fail" or (SPFResult in ("fail", "none") and DKIMResult in ("fail", "none") and DMARCResult in ("fail", "none"))
+| where DeliveryAction in ("Delivered", "DeliveredToJunk")
+| extend RecipientKey = tolower(RecipientEmailAddress)
+| join kind=inner (
+    IdentityInfo
+    | where JobTitle has_any ("Chief", "President", "Director", "VP", "Vice President", "Manager", "Finance", "Procurement", "Accounts Payable", "Treasury")
+    | extend RecipientKey = tolower(AccountUPN)
+    | project RecipientKey
+) on RecipientKey
+| project TimeGenerated, NetworkMessageId, SenderFromAddress, SenderDisplayName, RecipientEmailAddress, Subject, SPFResult, DKIMResult, DMARCResult, CompAuthResult
+| sort by TimeGenerated desc
