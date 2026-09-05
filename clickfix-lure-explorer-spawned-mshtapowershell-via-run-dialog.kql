@@ -1,0 +1,8 @@
+DeviceProcessEvents
+| where InitiatingProcessFileName =~ "explorer.exe"
+| where FileName in~ ("powershell.exe", "mshta.exe")
+| where ProcessCommandLine contains "timelevel12.com" or ProcessCommandLine contains "timelevel12[.]com"
+ or (FileName =~ "mshta.exe" and ProcessCommandLine has "http")
+ or (FileName =~ "powershell.exe" and (ProcessCommandLine has "-enc" or ProcessCommandLine has "-EncodedCommand" or ProcessCommandLine has "-nop" or ProcessCommandLine has "-w hidden" or ProcessCommandLine has "-windowstyle hidden"))
+| project TimeGenerated, DeviceName, AccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, ProcessId, InitiatingProcessId
+| order by TimeGenerated desc
