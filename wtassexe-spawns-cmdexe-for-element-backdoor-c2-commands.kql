@@ -1,0 +1,4 @@
+DeviceProcessEvents
+| where InitiatingProcessFileName =~ "wtass.exe"
+| where FileName =~ "cmd.exe"
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, InitiatingProcessFolderPath, FolderPath, AccountName
