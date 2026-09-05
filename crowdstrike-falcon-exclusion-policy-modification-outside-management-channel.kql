@@ -1,0 +1,27 @@
+// Detects local modification of CrowdStrike Falcon Sensor exclusion policy or attempts to alter a payload's DLL loading method, consistent with evasion prep for FalconFlank exploitation.
+// Excludes known CrowdStrike/IT management-channel activity (Falcon RTR/CSFalconService, SCCM CcmExec.exe) and routine service-account activity to reduce false positives from legitimate exclusion management.
+let exclusionTerms = dynamic(["exclusion", "exclusions"]);
+let knownManagementProcesses = dynamic(["csfalconservice.exe", "csagent.exe", "csshell.exe", "csrtr.exe", "ccmexec.exe"]);
+union
+(
+    DeviceRegistryEvents
+    | where RegistryKey has "CrowdStrike" or RegistryKey has "Falcon"
+    | where RegistryKey has_any (exclusionTerms)
+    | project TimeGenerated, DeviceName, ActionType, RegistryKey, RegistryValueName, RegistryValueData, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName
+),
+(
+    DeviceProcessEvents
+    | where ProcessCommandLine has_any ("Falcon", "CrowdStrike") and ProcessCommandLine has_any (exclusionTerms)
+    | project TimeGenerated, DeviceName, ActionType, RegistryKey="", RegistryValueName="", RegistryValueData="", InitiatingProcessFileName=FileName, InitiatingProcessCommandLine=ProcessCommandLine, InitiatingProcessAccountName=AccountName
+),
+(
+    DeviceProcessEvents
+    | where ProcessCommandLine has_any ("DLL loading method", "dll load technique", "dll loading technique")
+    | project TimeGenerated, DeviceName, ActionType, RegistryKey="", RegistryValueName="", RegistryValueData="", InitiatingProcessFileName=FileName, InitiatingProcessCommandLine=ProcessCommandLine, InitiatingProcessAccountName=AccountName
+)
+// Exclude known CrowdStrike/IT management-channel processes (Falcon RTR, CSFalconService, SCCM) performing routine exclusion management
+| where InitiatingProcessFileName !in~ (knownManagementProcesses)
+// Exclude routine system/service-account activity (SYSTEM, NETWORK SERVICE, LOCAL SERVICE, machine/computer accounts) which typically drives sanctioned exclusion pushes
+| where InitiatingProcessAccountName !in~ ("system", "local service", "network service")
+| where InitiatingProcessAccountName !endswith "$"
+| sort by TimeGenerated desc
