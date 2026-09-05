@@ -1,0 +1,6 @@
+DeviceProcessEvents
+| where InitiatingProcessFileName has_any ("php-fpm", "php-fpm7", "php-fpm8", "apache2", "httpd", "nginx", "www-data")
+| where FileName has_any ("sh", "bash", "dash", "cmd.exe", "powershell.exe", "perl", "python", "python3", "curl", "wget", "nc", "ncat", "socat")
+| where ProcessCommandLine has_any ("system(", "passthru(", "shell_exec(", "exec(", "proc_open(", "popen(") or InitiatingProcessCommandLine has_any ("system(", "passthru(", "shell_exec(", "exec(", "proc_open(", "popen(")
+| project TimeGenerated, DeviceName, InitiatingProcessAccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, InitiatingProcessFolderPath, FolderPath
+| order by TimeGenerated desc
