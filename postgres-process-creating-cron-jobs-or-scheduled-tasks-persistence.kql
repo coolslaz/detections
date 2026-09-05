@@ -1,0 +1,19 @@
+let PostgresUsers = dynamic(["postgres"]);
+let CronPaths = dynamic(["/etc/cron.d/", "/etc/cron.daily/", "/etc/cron.hourly/", "/etc/crontab", "/var/spool/cron/"]);
+let SystemdPaths = dynamic(["/etc/systemd/system/", "/lib/systemd/system/"]);
+// Detect the postgres service account or postgres.exe/postgres process creating scheduled persistence
+let ProcessEvents = DeviceProcessEvents
+| where InitiatingProcessFileName in~ ("postgres", "postgres.exe", "postmaster") or AccountName in~ (PostgresUsers)
+| where FileName in~ ("crontab", "schtasks.exe", "at.exe", "systemctl")
+ or ProcessCommandLine has_any ("crontab -e", "crontab -l", "schtasks", "/etc/cron", "systemctl enable", "systemctl start")
+| project TimeGenerated, DeviceName, AccountName, InitiatingProcessFileName, FileName, ProcessCommandLine, InitiatingProcessCommandLine;
+let FileEvents = DeviceFileEvents
+| where InitiatingProcessFileName in~ ("postgres", "postgres.exe", "postmaster") or InitiatingProcessAccountName in~ (PostgresUsers)
+| where (FolderPath has_any (CronPaths) or FolderPath has_any (SystemdPaths))
+ or (FolderPath contains "extension" and FileName endswith ".so")
+ or FolderPath contains "/etc/init.d/"
+ or FolderPath contains "Startup\\Programs"
+| project TimeGenerated, DeviceName, AccountName=InitiatingProcessAccountName, InitiatingProcessFileName, FileName, FolderPath, ProcessCommandLine="", InitiatingProcessCommandLine="";
+ProcessEvents
+| union FileEvents
+| sort by TimeGenerated desc
