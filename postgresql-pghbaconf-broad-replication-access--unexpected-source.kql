@@ -1,0 +1,26 @@
+// Detect pg_hba.conf edits permitting replication from broad address ranges, and replication connections from source IPs not seen previously in that context
+let BroadHbaEdits =
+    DeviceFileEvents
+    | where FileName =~ "pg_hba.conf"
+    | where ActionType in ("FileModified", "FileCreated")
+    | extend Reason = "pg_hba.conf modified";
+let ReplicationConnections =
+    Syslog
+    | where ProcessName has_any ("postgres", "postmaster")
+    | where SyslogMessage has "replication"
+    | where SyslogMessage has_any ("connection authorized", "replication connection authorized", "LOG:  connection received")
+    | extend SourceIP = extract(@"host=([0-9.]+)", 1, SyslogMessage)
+    | where isnotempty(SourceIP);
+let KnownReplicationSources =
+    ReplicationConnections
+    | where TimeGenerated < ago(7d)
+    | summarize by SourceIP;
+let UnexpectedReplicationConnections =
+    ReplicationConnections
+    | where TimeGenerated >= ago(7d)
+    | where SourceIP !in (KnownReplicationSources)
+    | extend Reason = strcat("Replication connection from unexpected source IP: ", SourceIP);
+BroadHbaEdits
+| project TimeGenerated, DeviceName, FileName, ActionType, Reason
+| union (UnexpectedReplicationConnections | project TimeGenerated, Computer, SourceIP, Reason)
+| sort by TimeGenerated desc
