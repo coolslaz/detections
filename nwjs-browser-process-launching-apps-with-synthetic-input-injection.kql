@@ -1,0 +1,9 @@
+DeviceProcessEvents
+| where InitiatingProcessFileName in~ ("nw.exe", "node.exe")
+| where FileName in~ ("cmd.exe", "powershell.exe", "powershell_ise.exe", "mshta.exe", "wscript.exe", "cscript.exe", "rundll32.exe")
+| where InitiatingProcessCommandLine has_any ("nw.pak", "main.js", "jquery.min.js")
+| project TimeGenerated, DeviceName, AccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, InitiatingProcessParentFileName
+// Companion signal: correlate with synthetic HID input events reported while the NW.js browser process is running and system is otherwise idle
+// DeviceEvents
+// | where ActionType has_any ("SyntheticMouseEvent", "SyntheticKeyboardEvent")
+// | where InitiatingProcessFileName in~ ("nw.exe", "node.exe")
