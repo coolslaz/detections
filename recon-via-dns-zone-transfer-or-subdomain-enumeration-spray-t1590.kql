@@ -1,0 +1,23 @@
+let bin_window = 15m;
+// Authorized secondary DNS servers / zone-transfer partners -- update with your real secondary NS IPs
+let trustedSecondaryDNS = dynamic(["203.0.113.10", "203.0.113.11"]);
+// Known internal/contracted vulnerability-scanning or DNS-monitoring sources that legitimately generate high-volume lookups
+let trustedReconSources = dynamic(["203.0.113.20"]);
+let axfr_attempts =
+    DnsEvents
+    | where QueryType in ("AXFR", "IXFR")
+    | where isnotempty(ClientIP) and not(ipv4_is_private(ClientIP))
+    | where ClientIP !in (trustedSecondaryDNS)
+    | extend Severity = "High", DetectionType = "DNS Zone Transfer Attempt"
+    | summarize QueryCount = count(), SampleQueryNames = make_set(Name, 10) by ClientIP, QueryType, Severity, DetectionType, TimeGenerated = bin(TimeGenerated, bin_window);
+let subdomain_enum =
+    DnsEvents
+    | where isnotempty(ClientIP) and not(ipv4_is_private(ClientIP))
+    | where ClientIP !in (trustedReconSources)
+    | where QueryType !in ("AXFR", "IXFR")
+    | summarize DistinctSubdomains = dcount(Name), NXDomainCount = countif(SubType == "NXDOMAIN" or ResultCode == "NXDOMAIN"), SampleQueryNames = make_set(Name, 10) by ClientIP, TimeGenerated = bin(TimeGenerated, bin_window)
+    | where DistinctSubdomains >= 50
+    | extend QueryType = "MIXED", Severity = "Medium", DetectionType = "Subdomain Enumeration / Brute Force";
+union axfr_attempts, subdomain_enum
+| project TimeGenerated, ClientIP, QueryType, DetectionType, Severity, QueryCount, DistinctSubdomains, NXDomainCount, SampleQueryNames
+| sort by Severity asc, TimeGenerated desc
