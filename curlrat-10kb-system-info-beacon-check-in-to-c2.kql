@@ -1,0 +1,10 @@
+// Detect CurlRAT beacon mode: populates a 10KB system-info structure and transmits it as a check-in beacon
+DeviceNetworkEvents
+| where RemoteUrl has "writeservice_info" or InitiatingProcessCommandLine has "writeservice_info"
+| where InitiatingProcessCommandLine has_any ("atd_get_system_info", "writeservice_info")
+    or InitiatingProcessCommandLine has_any ("atd_get_system_info", "writeservice_info")
+| extend PayloadSizeBytes = tolong(column_ifexists("AdditionalFields", ""))
+| where isnotnull(RemotePort)
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteUrl, RemoteIP, RemotePort
+// Correlate with beacon body size close to 10KB (~10240 bytes) when payload length telemetry is available
+| where isnotempty(RemoteUrl) or isnotempty(RemoteIP)
