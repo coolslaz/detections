@@ -1,0 +1,8 @@
+DeviceProcessEvents
+| where FileName in~ ("agetty", "atd", "polkitd", "crond")
+| join kind=inner (
+    DeviceNetworkEvents
+    | where RemoteUrl has_any ("img.worksongo.store", "img.socialteams.store")
+) on DeviceId, ProcessId
+| project TimeGenerated, DeviceId, FileName, FolderPath, ProcessId, InitiatingProcessAccountName, RemoteUrl, RemoteIP, ReportId
+| summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), ConnectionCount = count() by DeviceId, FileName, FolderPath, RemoteUrl
