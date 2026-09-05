@@ -1,0 +1,15 @@
+DeviceProcessEvents
+| where ActionType == "ProcessCreated"
+| where InitiatingProcessFileName has_any ("chrome.exe", "msedge.exe", "firefox.exe", "explorer.exe")
+| where FileName has_any ("WhatsappTime", "InstaTime", "WhatsAppTime", "WhatsAppTime.exe", "InstaTime.exe")
+ or ProcessCommandLine has_any ("WhatsappTime", "InstaTime")
+| extend ImpersonatedApp = case(
+ ProcessCommandLine has_any ("WhatsappTime", "WhatsAppTime"), "WhatsApp companion app",
+ ProcessCommandLine has "InstaTime", "Instagram companion app",
+ "Unknown"
+ )
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, FileName, ProcessCommandLine, ImpersonatedApp, FolderPath, InitiatingProcessAccountName
+| union (DeviceNetworkEvents
+ | where RemoteUrl has_any ("whatsapptime.herokuapp.com", "InstaTime", "WhatsappTime")
+ | project TimeGenerated, DeviceName, RemoteUrl, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteIP)
+| sort by TimeGenerated desc
