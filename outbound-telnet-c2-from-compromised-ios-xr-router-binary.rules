@@ -1,0 +1,1 @@
+alert tcp $HOME_NET any -> $EXTERNAL_NET 23 (msg:"Possible Fire Ant dhcpd_show_issu_status Telnet-based C2 to external host"; flow:to_server,established; content:"|FF FB|"; depth:2; metadata: author detections.ai, created_at 2026-01-01, mitre_technique_id T1071, mitre_technique_id T1205, mitre_technique_id T1036; classtype:trojan-activity; sid:1000101; rev:1;)
