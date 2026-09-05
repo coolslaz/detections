@@ -1,0 +1,15 @@
+let runKeyMods = DeviceRegistryEvents
+| where ActionType in ("RegistryValueSet", "RegistryKeyCreated")
+| where RegistryKey has_any (
+    @"\Software\Microsoft\Windows\CurrentVersion\Run",
+    @"\Software\Microsoft\Windows\CurrentVersion\RunOnce"
+)
+| project TimeGenerated, DeviceId, DeviceName, ActionType, RegistryKey, RegistryValueName, RegistryValueData, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName;
+let ntuserManDrops = DeviceFileEvents
+| where ActionType == "FileCreated"
+| where FileName =~ "NTUSER.MAN"
+| project TimeGenerated, DeviceId, DeviceName, ActionType, FolderPath, FileName, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName;
+ntuserManDrops
+| join kind=inner (runKeyMods) on DeviceId
+| where abs(datetime_diff('minute', TimeGenerated, TimeGenerated1)) <= 60
+| project TimeGenerated, TimeGenerated1, DeviceId, DeviceName, FolderPath, FileName, RegistryKey, RegistryValueName, RegistryValueData, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName
