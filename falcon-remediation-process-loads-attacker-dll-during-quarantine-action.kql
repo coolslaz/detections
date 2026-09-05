@@ -1,0 +1,25 @@
+// Detects a CrowdStrike Falcon remediation-related process (e.g., CSFalconService) performing a quarantine/delete/modify/restore file operation on a protected path and then loading an unsigned/non-standard DLL, or spawning an elevated SYSTEM child process from a non-SYSTEM parent within the same short time window as a file-op event — consistent with FalconFlank-style remediation-engine LPE abuse.
+let remediationProcs = dynamic(["CSFalconService.exe", "CSFalconContainer.exe", "CSFalconAppRemediation.exe"]);
+let fileOpEvents = DeviceFileEvents
+| where InitiatingProcessFileName has_any (remediationProcs)
+| where ActionType in ("FileDeleted", "FileModified", "FileRenamed") or ActionType has_any ("Quarantine", "Restore")
+| project FileOpTime = TimeGenerated, DeviceId, InitiatingProcessFileName, InitiatingProcessId, FolderPath, FileName, ActionType;
+let dllLoadEvents = DeviceImageLoadEvents
+| where InitiatingProcessFileName has_any (remediationProcs)
+| where isnotempty(FolderPath)
+| where not(FolderPath has_any ("\\Program Files\\CrowdStrike", "\\Windows\\System32", "\\Windows\\SysWOW64"))
+| project DllLoadTime = TimeGenerated, DeviceId, InitiatingProcessFileName, InitiatingProcessId, DllFolderPath = FolderPath, DllFileName = FileName, SHA256;
+let dllBranch = fileOpEvents
+| join kind=inner (dllLoadEvents) on DeviceId, InitiatingProcessId
+| where DllLoadTime between (FileOpTime .. (FileOpTime + 2m))
+| project DeviceId, InitiatingProcessFileName, FileOpTime, FolderPath, FileName, ActionType, DllLoadTime, DllFolderPath, DllFileName, SHA256, TimeGenerated = datetime(null), ProcessCommandLine = "", AccountName = "", InitiatingProcessAccountName = "";
+let sysChildBranch = DeviceProcessEvents
+| where InitiatingProcessFileName has_any (remediationProcs)
+| where AccountName has "SYSTEM" and InitiatingProcessAccountName !has "SYSTEM"
+| project TimeGenerated, DeviceId, InitiatingProcessFileName, FileName, ProcessCommandLine, AccountName, InitiatingProcessAccountName
+| join kind=inner (fileOpEvents) on DeviceId
+| where abs(datetime_diff('second', TimeGenerated, FileOpTime)) <= 120
+| project DeviceId, InitiatingProcessFileName, FileOpTime, FolderPath, FileName, ActionType, DllLoadTime = datetime(null), DllFolderPath = "", DllFileName = "", SHA256 = "", TimeGenerated, ProcessCommandLine, AccountName, InitiatingProcessAccountName;
+dllBranch
+| union sysChildBranch
+| project-reorder DeviceId, InitiatingProcessFileName, FileOpTime, FolderPath, FileName, ActionType, DllLoadTime, DllFolderPath, DllFileName, SHA256, TimeGenerated, ProcessCommandLine, AccountName, InitiatingProcessAccountName
