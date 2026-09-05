@@ -1,0 +1,15 @@
+let ApprovedDirectSendIPs = dynamic([]); // populate with your org's known Direct Send relay IPs (e.g. scan-to-email devices, ERP/notification systems) to suppress expected legitimate traffic
+EmailEvents
+| where EmailDirection =~ "Inbound"
+| extend SenderDomain = tostring(split(SenderFromAddress, "@")[1])
+| extend RecipientDomain = tostring(split(RecipientEmailAddress, "@")[1])
+| where isempty(SenderMailFromAddress) or SenderMailFromAddress == "<>"
+| where SenderDomain =~ RecipientDomain
+| where SenderIPv4 !in (ApprovedDirectSendIPs) and SenderIPv6 !in (ApprovedDirectSendIPs)
+| extend AuthDetails = parse_json(AuthenticationDetails)
+| extend SPFResult = tostring(AuthDetails.SPF), DKIMResult = tostring(AuthDetails.DKIM), DMARCResult = tostring(AuthDetails.DMARC), CompAuthResult = tostring(AuthDetails.CompAuth)
+| where CompAuthResult =~ "fail" or (SPFResult in ("fail", "none") and DKIMResult in ("fail", "none") and DMARCResult in ("fail", "none"))
+| where DeliveryAction in ("Delivered", "DeliveredToJunk")
+| where isempty(BulkComplaintLevel) or BulkComplaintLevel < 4
+| project TimeGenerated, SenderFromAddress, SenderDisplayName, SenderDomain, SenderIPv4, RecipientEmailAddress, RecipientDomain, SenderMailFromAddress, SPFResult, DKIMResult, DMARCResult, CompAuthResult, BulkComplaintLevel, DeliveryAction, NetworkMessageId
+| sort by TimeGenerated desc
