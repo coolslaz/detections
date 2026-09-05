@@ -1,0 +1,20 @@
+// Detects deployment of vendor-signed/distributed software binaries matching known backdoored ted/HAProxy build hashes
+// tied to supply chain compromise of South Korean software vendors
+let knownBackdooredHashes = dynamic([
+ "72e70936f0dbe459142a1d867617c35f8d0cce5d18c6a49e1090a2a5adc8e558",
+ "4bb923eb040aa13ca8fd409c31ee4729c60ddff32e350efe1c5a4a9168a065f5",
+ "94630b96f628c96a6bff7904b40ffc9ad67c86f8a4ff6080c3b524831c93f402",
+ "feeea9d0bf6ae7396d28271baa51ae50df5169ce5d32a516865856f91abc50b3",
+ "5db1b6d52faf60b4f32d6fd0c7c938e4d05d29a14c32ded4a9668357c08b6a91"
+]);
+let FileProcessEvents = union DeviceFileEvents, DeviceProcessEvents;
+FileProcessEvents
+| where SHA256 in (knownBackdooredHashes) or InitiatingProcessSHA256 in (knownBackdooredHashes)
+| extend MatchedField = iff(SHA256 in (knownBackdooredHashes), "FileHash", "ProcessHash")
+| project TimeGenerated, DeviceName, FileName, FolderPath, SHA256, InitiatingProcessSHA256, MatchedField, ActionType, ReportId
+| union (
+ IdentityLogonEvents
+ | where isnotempty(DeviceName)
+ | join kind=inner (DeviceFileEvents | where SHA256 in (knownBackdooredHashes) | project DeviceName, FileName, SHA256, TimeGenerated) on DeviceName
+ | project TimeGenerated, DeviceName, FileName, SHA256, AccountName = AccountUpn, ReportId = tostring("")
+)
