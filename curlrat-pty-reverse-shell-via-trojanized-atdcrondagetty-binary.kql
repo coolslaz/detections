@@ -1,0 +1,8 @@
+// Detect CurlRAT interactive PTY shell mode: trojanized system daemons (atd, crond, agetty, polkitd)
+// spawning a shell with an attacker-supplied ip:port payload (atd_reverse_open_pty / atd_reverse_open_term)
+DeviceProcessEvents
+| where FileName in~ ("atd", "crond", "agetty", "polkitd")
+| where ProcessCommandLine matches regex @"\b\d{1,3}(\.\d{1,3}){3}:\d{1,5}\b"
+| where ProcessCommandLine has_any ("/bin/sh", "/bin/bash", "-i")
+| project TimeGenerated, DeviceName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName
+| order by TimeGenerated desc
