@@ -1,0 +1,17 @@
+let lookback = 7d;
+// WARNING: HttpEvents table not found in standard schema; defaulting to DeviceNetworkEvents based on context
+DeviceNetworkEvents
+| where TimeGenerated > ago(lookback)
+| where RequestHeaders has "User-token"
+| where RequestMethod =~ "POST"
+| where RequestBody has_all ("name=", "value=", "type=")
+| sort by SourceIP, DestinationIP, TimeGenerated asc
+| serialize
+| extend PrevTime = prev(TimeGenerated), PrevSrc = prev(SourceIP), PrevDst = prev(DestinationIP)
+| where SourceIP == PrevSrc and DestinationIP == PrevDst
+| extend IntervalSeconds = datetime_diff('second', TimeGenerated, PrevTime)
+// curlRAT default beacon interval is 43200s (12h); operator fast-poll flag drops it to 30s
+| where IntervalSeconds between (15 .. 45) or IntervalSeconds between (42900 .. 43500)
+| extend BeaconMode = iff(IntervalSeconds < 60, "fast-poll (30s)", "default (12h)")
+| project TimeGenerated, SourceIP, DestinationIP, IntervalSeconds, BeaconMode, RequestUrl, RequestBody, RequestHeaders
+| sort by TimeGenerated desc
