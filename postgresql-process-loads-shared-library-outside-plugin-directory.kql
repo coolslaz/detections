@@ -1,0 +1,10 @@
+// Detect postgres server process (postgres.exe / postgres / postmaster) loading a shared library (.dll/.so)
+// from a path outside the standard admin-controlled plugin directory, consistent with CVE-2026-6471
+// exploitation via unvalidated logical decoding plugin names passed directly to dlopen()/LoadLibrary().
+DeviceImageLoadEvents
+| where InitiatingProcessFileName in~ ("postgres.exe", "postgres", "postmaster", "postmaster.exe")
+| where FileName endswith ".dll" or FileName endswith ".so"
+| where not(FolderPath has_any ("\\lib\\postgresql\\", "/lib/postgresql/", "$libdir", "\\plugins\\", "/plugins/", "\\postgresql\\lib\\", "/usr/lib/postgresql/"))
+| where FolderPath has_any ("\\Temp\\", "/tmp/", "\\AppData\\", "\\Users\\", "/home/", "\\ProgramData\\", "/var/tmp/", "\\\\", "..")
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessId, InitiatingProcessAccountName, FileName, FolderPath, InitiatingProcessCommandLine
+| sort by TimeGenerated desc
