@@ -1,0 +1,13 @@
+let FileEvents = DeviceFileEvents
+| where FileName in~ ("postgresql.conf") or FileName endswith ".so" or FileName endswith ".dll"
+| where InitiatingProcessFileName in~ ("postgres.exe", "postgres", "postmaster", "postmaster.exe")
+| where (FileName in~ ("postgresql.conf") and (ActionType == "FileModified" or ActionType == "FileCreated"))
+    or ((FileName endswith ".so" or FileName endswith ".dll") and ActionType == "FileCreated" and FolderPath !contains "/usr/lib/postgresql" and FolderPath !contains "\\PostgreSQL\\" )
+| project Timestamp = TimeGenerated, DeviceName, FileName, FolderPath, ActionType, InitiatingProcessFileName, InitiatingProcessAccountName;
+let ProcessEvents = DeviceProcessEvents
+| where InitiatingProcessFileName in~ ("postgres.exe", "postgres", "postmaster", "postmaster.exe")
+| where ProcessCommandLine has "shared_preload_libraries"
+| project Timestamp = TimeGenerated, DeviceName, FileName = ProcessCommandLine, FolderPath = FolderPath, ActionType = "ConfigReference", InitiatingProcessFileName, InitiatingProcessAccountName;
+FileEvents
+| union ProcessEvents
+| sort by Timestamp desc
