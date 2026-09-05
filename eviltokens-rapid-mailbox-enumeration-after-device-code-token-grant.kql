@@ -1,0 +1,20 @@
+// Detects device code OAuth grants followed by rapid automated mailbox rule creation and/or bulk contact/thread enumeration via Graph API, consistent with EvilTokens post-compromise AI-driven inbox analysis and stakeholder mapping
+let DeviceCodeSignins = SigninLogs
+| where AuthenticationProtocol =~ "deviceCode" or AuthenticationRequirement has "deviceCode" or ResultType == 0
+| where AuthenticationProtocol =~ "deviceCode"
+| project SigninTime = TimeGenerated, UserPrincipalName, IPAddress, AppId, AppDisplayName, CorrelationId;
+let SuspiciousMailboxRules = OfficeActivity
+| where Operation in ("New-InboxRule", "Set-InboxRule", "UpdateInboxRules")
+| project RuleTime = TimeGenerated, UserId, Operation, ClientIP, Parameters;
+let GraphEnumeration = CloudAppEvents
+| where ApplicationId == "00000003-0000-0000-c000-000000000000" // Microsoft Graph
+| where ActionType in ("ListContacts", "ListMailFolders", "ListMessages", "ListThreads", "ListPeople")
+| summarize GraphCallCount = count(), GraphActions = make_set(ActionType, 10) by AccountObjectId, bin(Timestamp, 15m), IPAddress
+| where GraphCallCount > 20;
+DeviceCodeSignins
+| join kind=inner (SuspiciousMailboxRules) on $left.UserPrincipalName == $right.UserId
+| where RuleTime between (SigninTime .. (SigninTime + 2h))
+| join kind=inner (GraphEnumeration) on $left.UserPrincipalName == $right.AccountObjectId
+| where Timestamp between (SigninTime .. (SigninTime + 2h))
+| project SigninTime, UserPrincipalName, IPAddress, AppDisplayName, RuleTime, Operation, ClientIP, GraphCallCount, GraphActions, Timestamp
+| sort by SigninTime desc
