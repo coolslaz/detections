@@ -1,0 +1,11 @@
+DeviceProcessEvents
+| where FileName in~ ("sed", "grep", "awk", "bash", "sh")
+| where ProcessCommandLine has "/tmp/jasper-log"
+ or (ProcessCommandLine has_any (".bash_history", "/var/log/messages", "audit/audit.log", "secure", "syslog", "auth.log")
+ and ProcessCommandLine has_any ("tmp", "wget", "cron", "crond")
+ and ProcessCommandLine has_any ("-i", "-v", "sed -i", "grep -v"))
+| project TimeGenerated, DeviceName, InitiatingProcessAccountName, FileName, ProcessCommandLine, InitiatingProcessCommandLine
+// Complementary file-integrity signal: modifications to targeted log/history files without corresponding legitimate admin activity
+// DeviceFileEvents
+// | where FolderPath has_any ("/root/.bash_history", "/var/log/messages", "/var/log/audit/audit.log", "/var/log/secure", "/var/log/syslog", "/var/log/auth.log")
+// | where ActionType in ("FileModified", "FileCreated")
