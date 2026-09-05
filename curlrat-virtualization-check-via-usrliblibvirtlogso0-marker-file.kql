@@ -1,0 +1,11 @@
+DeviceFileEvents
+| where FileName == "libvirtlog.so.0" and FolderPath has "/usr/lib/"
+| where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+| join kind=leftouter (
+    DeviceProcessEvents
+    | where FileName in~ ("atd", "agetty", "polkitd", "crond")
+    | where ProcessCommandLine has_any ("atd_", "reverse", "pty")
+) on DeviceId
+| project TimeGenerated, DeviceId, FileName, FolderPath, ActionType, InitiatingProcessFileName, InitiatingProcessCommandLine
+// Presence or manipulation of the virtualization marker file used by curlRAT to gate execution
+// before entering its monitoring loop; absence causes a 6-minute sleep-then-abort behavior.
