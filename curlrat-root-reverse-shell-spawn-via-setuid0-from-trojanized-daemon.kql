@@ -1,0 +1,17 @@
+// Detects CurlRAT's reverse shell dispatch pattern: a trojanized Linux daemon (crond, atd, agetty, polkitd)
+// establishes an outbound connection, forces root via setuid(0)/setreuid(0,0), then spawns an interactive shell
+let TrojanizedDaemons = dynamic(["crond","atd","agetty","polkitd"]);
+let ShellProcs = dynamic(["sh","bash","dash"]);
+DeviceNetworkEvents
+| where InitiatingProcessFileName in~ (TrojanizedDaemons)
+| project ConnectTime = TimeGenerated, DeviceId, InitiatingProcessFileName, InitiatingProcessId, RemoteIP, RemotePort
+| join kind=inner (
+    DeviceProcessEvents
+    | where FileName in~ (ShellProcs)
+    | where InitiatingProcessFileName in~ (TrojanizedDaemons)
+    | project ShellSpawnTime = TimeGenerated, DeviceId, ShellFileName = FileName, ShellCommandLine = ProcessCommandLine, InitiatingProcessId, InitiatingProcessFileName, AccountName
+) on DeviceId, InitiatingProcessId
+| where ShellSpawnTime between (ConnectTime .. (ConnectTime + 5m))
+| where AccountName =~ "root"
+| project ConnectTime, ShellSpawnTime, DeviceId, InitiatingProcessFileName, RemoteIP, RemotePort, ShellFileName, ShellCommandLine, AccountName
+| sort by ConnectTime desc
