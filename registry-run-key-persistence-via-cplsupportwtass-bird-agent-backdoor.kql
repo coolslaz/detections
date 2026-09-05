@@ -1,0 +1,12 @@
+DeviceRegistryEvents
+| where ActionType in ("RegistryValueSet", "RegistryKeyCreated")
+| where RegistryKey has_any (@"CurrentVersion\\Run", @"CurrentVersion\\RunOnce")
+| where RegistryValueData has_any ("cplsupport.exe", "wtass.exe") or RegistryValueName has_any ("cplsupport", "wtas")
+| project TimeGenerated, DeviceName, ActionType, RegistryKey, RegistryValueName, RegistryValueData, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName
+| union (
+    DeviceRegistryEvents
+    | where ActionType in ("RegistryValueSet", "RegistryKeyCreated")
+    | where RegistryKey has_any (@"Software\\synapse\\Config\\SealedConfig", @"Software\\SynapseAgent\\metrics_interval")
+    | project TimeGenerated, DeviceName, ActionType, RegistryKey, RegistryValueName, RegistryValueData, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName
+)
+| sort by TimeGenerated desc
