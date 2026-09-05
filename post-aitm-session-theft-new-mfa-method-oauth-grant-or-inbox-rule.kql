@@ -1,0 +1,9 @@
+// Detects account manipulation activity (new MFA method, new OAuth consent grant, or new mailbox forwarding/inbox rule) occurring shortly after a sign-in, consistent with post-AiTM session theft (NovaCookies)
+let lookback = 1d;
+let manipulationWindow = 2h;
+let SignIns = SigninLogs
+| where TimeGenerated > ago(lookback)
+| project SignInTime = TimeGenerated, UserPrincipalName, UserId, IPAddress, AppDisplayName;
+let MFAChanges = AuditLogs
+| where TimeGenerated > ago(lookback)
+| where OperationName in ("Add member to role", "Add user to role");
