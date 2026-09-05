@@ -1,0 +1,33 @@
+// Detection: Replication Through Removable Media (T1091)
+// Logic: USB/PnP drive mount -> file written to removable drive letter -> process executed from same path within short window
+// Tunable: drive letter allowlist below
+let DriveLetters = dynamic(["D:","E:","F:","G:","H:","I:"]); // guard-rail candidate letters only; the real match below requires the write's drive letter to equal the letter reported by the mount event itself
+let ExecWindow = 10m; // tunable execution time window after mount/write
+let RestrictParent = false; // tunable: set true to restrict to explorer.exe/powershell.exe initiators
+let AllowedParents = dynamic(["explorer.exe","powershell.exe"]);
+let MountEvents = DeviceEvents
+| where ActionType in ("UsbDriveMounted", "PnpDeviceConnected")
+| extend Fields = parse_json(AdditionalFields)
+| extend MountDriveLetter = toupper(tostring(coalesce(Fields.DriveLetter, Fields.Volume, Fields.DeviceDrive)))
+| extend DriveType = tostring(coalesce(Fields.DriveType, Fields.MediaType, ""))
+| where MountDriveLetter matches regex @"^[A-Z]:$"          // tightened: drop malformed/empty drive-letter extractions
+| where DriveType == "" or DriveType has_any ("Removable", "USB")   // tightened: when media type is reported, require it to genuinely be removable/USB
+| project DeviceName, MountTime = TimeGenerated, MountAccount = InitiatingProcessAccountName, ActionType, MountDriveLetter;
+let FileWrites = DeviceFileEvents
+| where ActionType == "FileCreated"
+| extend DriveLetter = toupper(tostring(split(FolderPath, "\\")[0]))
+| where DriveLetter matches regex @"^[A-Z]:$"   // tightened: enforce strict drive-letter shape before comparing
+| where DriveLetter in (DriveLetters)            // guard-rail: candidate removable letters only
+| project DeviceName, FileWriteTime = TimeGenerated, FileAccount = InitiatingProcessAccountName, FileName, FolderPath, SHA256, DriveLetter;
+MountEvents
+| join kind=inner (FileWrites) on DeviceName
+| where DriveLetter == MountDriveLetter   // tightened: file write must be on the SAME volume just mounted, not merely a drive sharing that letter (e.g. a fixed disk or mapped network share reusing D:/E:)
+| where FileWriteTime between (MountTime .. (MountTime + ExecWindow))
+| join kind=inner (
+    DeviceProcessEvents
+    | project DeviceName, ProcTime = TimeGenerated, ProcAccount = AccountName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, SHA256
+    ) on DeviceName, FolderPath, FileName
+| where ProcTime between (FileWriteTime .. (FileWriteTime + ExecWindow))
+| where not(tobool(RestrictParent)) or (InitiatingProcessFileName in~ (AllowedParents))
+| project DeviceName, AccountName = coalesce(ProcAccount, FileAccount, MountAccount), DriveLetter, MountTime, ActionType, FolderPath, FileName, FileWriteTime, ProcessCommandLine, InitiatingProcessFileName, ProcTime, SHA256
+| sort by ProcTime desc
