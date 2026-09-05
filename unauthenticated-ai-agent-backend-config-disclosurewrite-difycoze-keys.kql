@@ -1,0 +1,11 @@
+// Detects unauthenticated access to an AI agent management backend that discloses agent configurations
+// (including Dify application keys and Coze private keys) or accepts unauthenticated agent config creation
+AppServiceHTTPLogs
+| where CsUriStem has "agent" and CsUriStem has_any ("config", "configuration", "configs")
+| where isempty(CsUsername) or isempty(CsUriQuery) or not(CsUriStem has "auth")
+| where CsMethod in ("GET", "POST")
+| where ScStatus == 200
+| extend ResponseHasSecrets = iff(ResponseBody has_any ("dify", "application_key", "coze", "private_key"), true, false)
+| where ResponseHasSecrets == true or CsMethod == "POST"
+| project TimeGenerated, CIp, CsMethod, CsUriStem, CsUriQuery, ScStatus, ResponseHasSecrets
+| sort by TimeGenerated desc
