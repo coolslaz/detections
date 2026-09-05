@@ -1,0 +1,5 @@
+DeviceFileEvents
+| where FolderPath startswith "/tmp/"
+| where FileName has "jasper-log" or FileName matches regex @"^t[0-9]+_w\.pipe$"
+| where ActionType in ("FileCreated", "FileModified")
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, FolderPath, FileName, ActionType
