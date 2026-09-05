@@ -1,0 +1,13 @@
+// Detects base64-encoded PHP payloads disguised behind a data:image/gif;base64 MIME prefix
+// being decoded and written to disk as .php files (webshell drop via file upload bypass)
+DeviceProcessEvents
+| where ProcessCommandLine has "data:image/gif;base64"
+| where ProcessCommandLine has "PD9waHA"
+| extend DecodedPhpMarker = "PD9waHA" // base64 for '<?php'
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName
+| union (DeviceFileEvents
+| where FileName endswith ".php"
+| where InitiatingProcessFileName has_any ("php-fpm", "php", "httpd", "apache2", "nginx", "w3wp.exe")
+| where InitiatingProcessCommandLine has "data:image/gif;base64" or InitiatingProcessCommandLine has "PD9waHA"
+| project TimeGenerated, DeviceName, AccountName=InitiatingProcessAccountName, FileName, ProcessCommandLine=InitiatingProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName)
+| sort by TimeGenerated desc
