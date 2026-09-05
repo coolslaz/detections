@@ -1,0 +1,39 @@
+let trustedScannerIPs = dynamic(["203.0.113.30"]); // authorized internal vuln-scanner (Qualys/Tenable/Rapid7) or red-team egress IPs -- update per environment
+let knownGoodCrawlerUAs = dynamic(["googlebot","bingbot","uptimerobot","pingdom","statuscake","datadog"]); // legitimate monitoring/search crawlers to exclude
+// "python-requests"/"curl" removed from the primary scanner-UA list: too generic, matches legitimate internal health checks and CI/CD; fingerprintPaths below still catches abuse of those tools against sensitive paths
+let scannerUAs = dynamic(["shodan","censys","zoomeye","masscan","nmap scripting engine"]);
+let fingerprintPaths = dynamic(["/server-status","/.git/config","/actuator","phpinfo.php"]);
+let iisHits = W3CIISLog
+| where isnotempty(csUserAgent) or isnotempty(csUriStem)
+| extend UA = tolower(csUserAgent), Path = tolower(csUriStem), SourceIP = cIP, TargetHost = csHost
+| where UA !has_any (knownGoodCrawlerUAs)
+| where UA has_any (scannerUAs) or Path has_any (fingerprintPaths)
+| extend MatchedSignature = case(
+    UA has_any (scannerUAs), UA,
+    Path has_any (fingerprintPaths), Path,
+    "unknown")
+| project TimeGenerated, SourceIP, TargetHost, Path, MatchedSignature;
+let cefHits = CommonSecurityLog
+| where isnotempty(RequestURL) or isnotempty(RequestClientApplication)
+| extend UA = tolower(RequestClientApplication), Path = tolower(RequestURL), SourceIP = SourceIP, TargetHost = DestinationHostName
+| where UA !has_any (knownGoodCrawlerUAs)
+| where UA has_any (scannerUAs) or Path has_any (fingerprintPaths)
+| extend MatchedSignature = case(
+    UA has_any (scannerUAs), UA,
+    Path has_any (fingerprintPaths), Path,
+    "unknown")
+| project TimeGenerated, SourceIP, TargetHost, Path, MatchedSignature;
+let agwHits = AzureDiagnostics
+| where ResourceProvider == "MICROSOFT.NETWORK" and Category in ("ApplicationGatewayAccessLog", "ApplicationGatewayFirewallLog")
+| extend UA = tolower(tostring(userAgent_s)), Path = tolower(tostring(requestUri_s)), SourceIP = tostring(clientIP_s), TargetHost = tostring(host_s)
+| where UA !has_any (knownGoodCrawlerUAs)
+| where UA has_any (scannerUAs) or Path has_any (fingerprintPaths)
+| extend MatchedSignature = case(
+    UA has_any (scannerUAs), UA,
+    Path has_any (fingerprintPaths), Path,
+    "unknown")
+| project TimeGenerated, SourceIP, TargetHost, Path, MatchedSignature;
+union iisHits, cefHits, agwHits
+| where SourceIP !in (trustedScannerIPs)
+| summarize HitCount = count(), Paths = make_set(Path, 20), Hosts = make_set(TargetHost, 20) by SourceIP, MatchedSignature
+| sort by HitCount desc
