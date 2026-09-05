@@ -1,0 +1,8 @@
+// Detects bulk exfiltration of administrative and health-record attachments via the doc_helper.aspx file-management webshell, consistent with the Fengtai OA Data Collection stage that exfiltrated 949 attachments prior to SecBox deployment
+DeviceFileEvents
+| where FileName has "doc_helper.aspx" or FolderPath has "doc_helper.aspx"
+| where ActionType in ("FileAccessed", "FileRead", "FileModified")
+| summarize FileCount = dcount(FileName), Files = make_set(FileName, 20), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by DeviceId, InitiatingProcessAccountName, bin(TimeGenerated, 1h)
+| where FileCount > 100
+| extend DurationMinutes = datetime_diff('minute', LastSeen, FirstSeen)
+| project DeviceId, InitiatingProcessAccountName, FileCount, DurationMinutes, FirstSeen, LastSeen, Files
