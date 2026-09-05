@@ -1,0 +1,13 @@
+// Detect trojanization of critical Linux system daemons via unexpected file modification/replacement
+// followed by service restart, consistent with DPRK toolkit targeting crond, sshd, polkitd
+DeviceFileEvents
+| where FileName in~ ("crond", "sshd", "polkitd", "agetty", "atd")
+| where FolderPath has_any ("/usr/sbin/", "/usr/bin/", "/sbin/", "/bin/")
+| where ActionType in~ ("FileModified", "FileCreated", "FileRenamed")
+| join kind=inner (
+    DeviceProcessEvents
+    | where FileName in~ ("systemctl", "service", "init")
+    | where ProcessCommandLine has_any ("crond", "sshd", "polkitd", "restart", "start")
+) on DeviceId
+| where ProcessCreationTime between (Timestamp .. (Timestamp + 5m))
+| summarize Events = make_set(ActionType, 10), CommandLines = make_set(ProcessCommandLine, 10), Timestamps = make_list(Timestamp, 10) by DeviceId, FileName, FolderPath, SHA256, Timestamp, ProcessCommandLine, ProcessCreationTime
