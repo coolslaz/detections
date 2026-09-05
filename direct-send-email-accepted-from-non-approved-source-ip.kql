@@ -1,0 +1,17 @@
+// Detect unauthenticated Direct Send messages that reach the tenant mail host from a source IP not present on the approved/IP-restricted inbound connector allowlist
+let ApprovedDirectSendIPs = (_GetWatchlist('ApprovedDirectSendIPs') | project SearchKey);
+EmailEvents
+| where DeliveryLocation != "Failed"
+| where EmailDirection == "Inbound"
+| where AuthenticationDetails has "Anonymous"
+| extend SenderDomain = tostring(split(SenderFromAddress, "@")[1])
+| extend RecipientDomain = tostring(split(RecipientEmailAddress, "@")[1])
+| where SenderDomain =~ RecipientDomain
+| where isnotempty(SenderIPv4) or isnotempty(SenderIPv6)
+| extend SourceIP = iff(isnotempty(SenderIPv4), SenderIPv4, SenderIPv6)
+| where SourceIP !in (ApprovedDirectSendIPs)
+| extend AuthDetails = parse_json(AuthenticationDetails)
+| extend SPFResult = tostring(AuthDetails.SPF), DKIMResult = tostring(AuthDetails.DKIM), DMARCResult = tostring(AuthDetails.DMARC), CompAuthResult = tostring(AuthDetails.CompAuth)
+| where CompAuthResult =~ "fail" or (SPFResult in ("fail", "none") and DKIMResult in ("fail", "none") and DMARCResult in ("fail", "none"))
+| project TimeGenerated, NetworkMessageId, SourceIP, SenderFromAddress, RecipientEmailAddress, SenderDomain, RecipientDomain, SPFResult, DKIMResult, DMARCResult, CompAuthResult, Subject
+| sort by TimeGenerated desc
