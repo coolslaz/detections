@@ -1,0 +1,8 @@
+DeviceFileEvents
+| where TimeGenerated > ago(1d)
+| where FolderPath startswith "/tmp/"
+| where FileName matches regex @"^t[0-9]+_w\.pipe$"
+| where ActionType in ("FileCreated", "FileModified")
+| extend PossibleParent = tostring(InitiatingProcessFileName)
+| where PossibleParent =~ "haproxy" or InitiatingProcessFolderPath contains "haproxy"
+| project TimeGenerated, DeviceName, FileName, FolderPath, ActionType, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessId, ReportId
