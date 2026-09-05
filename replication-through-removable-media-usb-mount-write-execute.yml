@@ -1,0 +1,86 @@
+title: USB Drive Mount Event (Removable Media)
+id: 3a1b2c3d-4e5f-4071-8a9b-0c1d2e3f4a5b
+status: experimental
+description: |
+  Detects a removable/PnP drive-mount event. EventID 2101 is a placeholder and MUST be mapped to the environment's actual device-mount telemetry (e.g. Plug and Play / DeviceSetupManager event IDs) before this rule is used in production.
+name: t1091_drive_mount
+author: Security Expert
+logsource:
+  product: windows
+  service: system
+detection:
+  selection_mount:
+    EventID: 2101
+  condition: selection_mount
+fields:
+  - ComputerName
+---
+title: File Creation on Removable Drive Letter Path
+id: 4b2c3d4e-5f60-4182-9bac-1d2e3f4a5b6c
+status: experimental
+description: Detects file creation events where the target file path is on a removable drive letter (D: through I:).
+name: t1091_drive_file_write
+author: Security Expert
+logsource:
+  product: windows
+  category: file_event
+detection:
+  selection_file:
+    EventID: 11
+    TargetFilename|startswith:
+      - 'D:\'
+      - 'E:\'
+      - 'F:\'
+      - 'G:\'
+      - 'H:\'
+      - 'I:\'
+  condition: selection_file
+fields:
+  - ComputerName
+---
+title: Process Execution from Removable Drive Letter Path
+id: 5c3d4e5f-6071-4293-abcd-2e3f4a5b6c7d
+status: experimental
+description: Detects process creation events where the executed image path is on a removable drive letter (D: through I:).
+name: t1091_drive_process_exec
+author: Security Expert
+logsource:
+  product: windows
+  category: process_creation
+detection:
+  selection_process:
+    Image|startswith:
+      - 'D:\'
+      - 'E:\'
+      - 'F:\'
+      - 'G:\'
+      - 'H:\'
+      - 'I:\'
+  condition: selection_process
+fields:
+  - ComputerName
+---
+title: Replication Through Removable Media: USB Mount, Write, Execute
+id: d4f9c5a1-7e8e-4a6f-a5c2-1e9a2b5e9f8a
+status: experimental
+description: |
+  Correlates a removable/PnP drive mount, a file write on a removable drive letter, and a process execution from a removable drive letter occurring on the same host within a 10 minute window, in chronological order.
+
+  Known limitation: Sigma's group-by can only reference fields that are literally present and consistently named across all three logsources post field-mapping. There is no native Sigma expression to derive/extract a 'drive letter' substring from TargetFilename or Image and use it as a group-by key, so this correlation enforces same-host + chronological ordering but NOT same-drive-letter alignment across the three stages (e.g., a mount on E: followed by a write on F: on the same host within the window would still match). Getting drive-letter-level precision would require a backend/pipeline transform that normalizes a common 'Drive' field across all three logsources before group-by can use it.
+author: Security Expert
+level: high
+tags:
+  - attack.t1091
+  - attack.initial-access
+  - attack.lateral-movement
+falsepositives:
+  - Legitimate use of removable/USB media for software installation, data transfer, or portable applications by authorized personnel.
+correlation:
+  type: temporal_ordered
+  rules:
+    - t1091_drive_mount
+    - t1091_drive_file_write
+    - t1091_drive_process_exec
+  group-by:
+    - ComputerName
+  timespan: 10m
