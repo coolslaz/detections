@@ -1,0 +1,17 @@
+// Detect PostgreSQL replication-role accounts exhibiting anomalous usage:
+// execution of non-replication SQL, or CREATE_REPLICATION_SLOT with suspicious plugin names
+let ReplicationSourceEvents = Syslog
+| where ProcessName has_any ("postgres", "postmaster") or SyslogMessage has_any ("postgres", "postmaster")
+| where SyslogMessage has "replication" or SyslogMessage has "REPLICATION";
+let NonReplicationSQL = ReplicationSourceEvents
+| where not(SyslogMessage has_any ("CREATE_REPLICATION_SLOT", "START_REPLICATION", "IDENTIFY_SYSTEM", "DROP_REPLICATION_SLOT"))
+| where SyslogMessage has "statement:"
+| extend AnomalyType = "Replication account executing non-replication SQL";
+let SuspiciousReplicationSlot = ReplicationSourceEvents
+| where SyslogMessage has "CREATE_REPLICATION_SLOT"
+| where SyslogMessage has_any ("/", "\\", "..")
+| extend AnomalyType = "CREATE_REPLICATION_SLOT with suspicious plugin name";
+NonReplicationSQL
+| union SuspiciousReplicationSlot
+| project TimeGenerated, Computer, SyslogMessage, AnomalyType
+| sort by TimeGenerated desc
