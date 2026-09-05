@@ -1,0 +1,20 @@
+EmailEvents
+| where EmailDirection =~ "Inbound"
+| where isempty(SenderMailFromAddress) or SenderMailFromAddress == "<>"
+| extend SenderDomain = tostring(split(SenderFromAddress, "@")[1])
+| extend RecipientDomain = tostring(split(RecipientEmailAddress, "@")[1])
+| where SenderDomain =~ RecipientDomain
+| extend AuthDetails = parse_json(AuthenticationDetails)
+| extend SPFResult = tostring(AuthDetails.SPF), DKIMResult = tostring(AuthDetails.DKIM), DMARCResult = tostring(AuthDetails.DMARC), CompAuthResult = tostring(AuthDetails.CompAuth)
+| where CompAuthResult =~ "fail" or (SPFResult in ("fail", "none") and DKIMResult in ("fail", "none") and DMARCResult in ("fail", "none"))
+| where DeliveryAction in ("Delivered", "DeliveredToJunk")
+| where Subject has_any ("shared a document", "shared a file", "file share", "document sharing", "has shared", "shared with you", "file notification", "document notification", "shared folder")
+| extend RecipientKey = tolower(RecipientEmailAddress)
+| join kind=inner (
+    IdentityInfo
+    | where JobTitle has_any ("Chief", "President", "Director", "VP", "Vice President", "Executive", "CEO", "CFO", "COO", "CIO", "CISO", "Head of")
+    | extend RecipientKey = tolower(AccountUPN)
+    | project RecipientKey
+) on RecipientKey
+| project TimeGenerated, SenderFromAddress, SenderMailFromAddress, RecipientEmailAddress, Subject, SPFResult, DKIMResult, DMARCResult, CompAuthResult, NetworkMessageId
+| sort by TimeGenerated desc
