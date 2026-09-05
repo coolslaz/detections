@@ -1,0 +1,13 @@
+DeviceFileEvents
+| where FileName =~ "crond"
+| where FolderPath has "/usr/bin" or FolderPath has "/usr/sbin"
+| where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+| join kind=inner (
+    DeviceFileEvents
+    | where FileName =~ "ssh"
+    | where FolderPath == "/usr/bin/ssh"
+    | project SshCreationTime = Timestamp, DeviceId, SshLastFileHash = SHA256
+) on DeviceId
+| where Timestamp between ((SshCreationTime - 2s) .. (SshCreationTime + 2s))
+| project Timestamp, DeviceId, FileName, FolderPath, SHA256, SshCreationTime, ActionType
+| summarize arg_max(Timestamp, *) by DeviceId, FolderPath
