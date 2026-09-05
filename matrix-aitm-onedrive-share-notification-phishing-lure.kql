@@ -1,0 +1,11 @@
+EmailEvents
+| where isnotempty(SenderFromAddress)
+| where Subject has_any ("shared a document with you", "shared \"", "has shared a file with you", "OneDrive")
+| where Subject has "OneDrive"
+| where Subject has_any ("shared", "document", "file")
+| join kind=inner (
+    UrlClickEvents
+    | where isnotempty(Url)
+    | where Url !contains "onedrive.live.com" and Url !contains "1drv.ms" and Url !contains "sharepoint.com"
+) on NetworkMessageId
+| project TimeGenerated, SenderFromAddress, RecipientEmailAddress, Subject, Url, NetworkMessageId
