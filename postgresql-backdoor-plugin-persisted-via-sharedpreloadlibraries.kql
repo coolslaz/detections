@@ -1,0 +1,17 @@
+// Detects persistence of a malicious PostgreSQL output plugin: a shared library copied to a stable plugin directory, 
+// referenced in shared_preload_libraries so it reloads into every new backend, consistent with PostGREShell (CVE-2026-6471) post-exploitation behavior
+let suspiciousLibDrop = DeviceFileEvents
+| where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+| where FolderPath has_any ("/plugins", "\\plugins", "$libdir", "lib\\postgresql", "lib/postgresql")
+| where FileName endswith ".so" or FileName endswith ".dll"
+| project LibTime = TimeGenerated, DeviceId, DeviceName, LibFolderPath = FolderPath, LibFileName = FileName, LibInitiatingProcessFileName = InitiatingProcessFileName;
+let configRewrite = DeviceFileEvents
+| where ActionType in ("FileModified", "FileCreated")
+| where FileName has_any ("postgresql.conf", "postgresql.auto.conf")
+| project ConfTime = TimeGenerated, DeviceId, DeviceName, ConfFileName = FileName, ConfInitiatingProcessFileName = InitiatingProcessFileName;
+suspiciousLibDrop
+| join kind=inner (configRewrite) on DeviceId
+| where ConfTime between (LibTime .. (LibTime + 30m))
+| where LibInitiatingProcessFileName has_any ("postgres", "postmaster") or ConfInitiatingProcessFileName has_any ("postgres", "postmaster")
+| project DeviceId, DeviceName, LibTime, LibFolderPath, LibFileName, LibInitiatingProcessFileName, ConfTime, ConfFileName, ConfInitiatingProcessFileName
+| sort by LibTime desc
