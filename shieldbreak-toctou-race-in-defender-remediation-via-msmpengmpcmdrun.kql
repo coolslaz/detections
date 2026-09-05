@@ -1,0 +1,15 @@
+// Detects rapid repeated invocation of Windows Defender remediation binaries/APIs
+// (mpcmdrun.exe, MsMpEng.exe) combined with a near-simultaneous file write/rename
+// into a System32 path from a different, attacker-controlled process, consistent with
+// the ShieldBreak TOCTOU race between Defender's scan-vs-remediate timing gap.
+// Legitimate remediation performs its own file operations under its own process
+// identity; a write from a distinct process landing inside the race window is the
+// signal of interest.
+let lookback = 1h;
+let raceWindow = 5s;
+let minInvocations = 3;
+let RemediationActivity = 
+    DeviceProcessEvents
+    | where Timestamp > ago(lookback)
+    | where FileName in~ ("mpcmdrun.exe", "MsMpEng.exe");
+RemediationActivity
