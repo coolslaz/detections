@@ -1,0 +1,5 @@
+DeviceProcessEvents
+| where FileName =~ "driverquery.exe"
+| where ProcessCommandLine has "npf.sys" or ProcessCommandLine has "npf"
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName
+| where InitiatingProcessFileName has_any ("report.bin", "nw.exe")
