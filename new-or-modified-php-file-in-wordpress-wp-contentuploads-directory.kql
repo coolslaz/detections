@@ -1,0 +1,6 @@
+DeviceFileEvents
+| where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+| where FolderPath has "wp-content/uploads"
+| where FileName endswith ".php"
+| project TimeGenerated, DeviceName, ActionType, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName, SHA256
+| sort by TimeGenerated desc
