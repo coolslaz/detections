@@ -1,0 +1,15 @@
+// ShieldBreak-style escalation: WerFault.exe / WerMgr.exe runs as SYSTEM and loads a DLL that was just written to System32 by the same process
+let DllWrites = DeviceFileEvents
+| where ActionType == "FileCreated"
+| where FolderPath has "\\Windows\\System32\\"
+| where FileName endswith ".dll"
+| project DllFullPath = strcat(FolderPath, "\\", FileName), DllTimeCreated = TimeGenerated, DeviceId, ProcessId = InitiatingProcessId;
+DeviceImageLoadEvents
+| where InitiatingProcessFileName =~ "WerFault.exe" or InitiatingProcessFileName =~ "WerMgr.exe"
+| where InitiatingProcessAccountName has_any ("system", "SYSTEM")
+| extend LoadedFullPath = strcat(FolderPath, "\\", FileName)
+| join kind=inner (DllWrites) on DeviceId, ProcessId
+| where LoadedFullPath =~ DllFullPath
+| where DllTimeCreated between ((TimeGenerated - 10m) .. TimeGenerated)
+| project TimeGenerated, DeviceId, ProcessId, InitiatingProcessFileName, InitiatingProcessAccountName, LoadedFullPath, DllTimeCreated
+| sort by TimeGenerated desc
