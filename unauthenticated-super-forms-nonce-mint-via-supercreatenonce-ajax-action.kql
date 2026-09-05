@@ -1,0 +1,18 @@
+// Detects unauthenticated requests to WordPress admin-ajax.php using the super_create_nonce action
+// This nopriv AJAX action allows any visitor to mint a valid sf_nonce/session cookie,
+// bypassing the Super Forms plugin's only exploitation barrier prior to CVE-2026-14894 exploitation
+let WebRequests = union isfuzzy=true
+    W3CIISLog,
+    AWSCloudTrail,
+    Syslog;
+WebRequests
+| where TimeGenerated > ago(1d)
+| where (isnotempty(column_ifexists("csUriStem", "")) and csUriStem has "admin-ajax.php")
+    or (isnotempty(column_ifexists("RequestUrl", "")) and RequestUrl has "admin-ajax.php")
+    or (isnotempty(column_ifexists("SyslogMessage", "")) and SyslogMessage has "admin-ajax.php")
+| where (isnotempty(column_ifexists("csUriQuery", "")) and csUriQuery has "action=super_create_nonce")
+    or (isnotempty(column_ifexists("RequestUrl", "")) and RequestUrl has "action=super_create_nonce")
+    or (isnotempty(column_ifexists("SyslogMessage", "")) and SyslogMessage has "action=super_create_nonce")
+| extend SourceIP = column_ifexists("cIP", column_ifexists("SourceIP", ""))
+| summarize RequestCount = count(), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by SourceIP
+| where RequestCount >= 1
