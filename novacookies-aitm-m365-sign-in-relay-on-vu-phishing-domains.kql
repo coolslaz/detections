@@ -1,0 +1,15 @@
+// Detects successful Microsoft 365 sign-ins immediately preceded by navigation to NovaCookies AiTM phishing infrastructure hosted on .vu domains
+let novaCookiesDomains = dynamic(["solutionsecondsourcemedicalllcgroup.bentinsapbvs.vu"]);
+let suspiciousUrlPattern = "1DrV-OpEn-";
+UrlClickEvents
+| where Url has_any (novaCookiesDomains) or Url contains suspiciousUrlPattern
+| where Url endswith ".vu" or Url contains ".vu/"
+| project ClickTime = TimeGenerated, AccountUpn = AccountObjectId, Url, NetworkMessageId, DeviceName = DeviceId
+| join kind=inner (
+    SigninLogs
+    | where ResultType == 0
+    | project SigninTime = TimeGenerated, UserPrincipalName = UserPrincipalName, AppDisplayName, IPAddress, UserAgent, AuthenticationRequirement
+) on $left.AccountUpn == $right.UserPrincipalName
+| where SigninTime between (ClickTime .. (ClickTime + 15m))
+| where AuthenticationRequirement == "multiFactorAuthentication"
+| project ClickTime, SigninTime, AccountUpn, Url, IPAddress, UserAgent, AppDisplayName
