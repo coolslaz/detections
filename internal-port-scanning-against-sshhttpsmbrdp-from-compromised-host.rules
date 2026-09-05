@@ -1,0 +1,1 @@
+alert tcp $HOME_NET any -> $HOME_NET [22,80,443,445,3389] (msg:"Internal network scanning/connection attempts against SSH/HTTP/SMB/RDP ports observed (Fire Ant post-tunnel pivot)"; flow:to_server; flags:S; detection_filter:track by_src, count 20, seconds 60; metadata: attack_id T1046, attack_id T1021; classtype:attempted-recon; sid:1000101; rev:1;)
