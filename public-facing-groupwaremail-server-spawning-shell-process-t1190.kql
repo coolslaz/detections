@@ -1,0 +1,5 @@
+DeviceProcessEvents
+| where InitiatingProcessFileName has_any ("httpd", "httpd.exe", "tomcat", "tomcat.exe", "w3wp.exe", "java.exe", "java", "nginx", "nginx.exe")
+| where FileName has_any ("cmd.exe", "powershell.exe", "sh", "bash", "wget", "curl")
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, AccountName
+| sort by TimeGenerated desc
