@@ -1,0 +1,1 @@
+alert tcp $HOME_NET any -> $EXTERNAL_NET 21 (msg:"Possible PCAP Exfiltration via FTP STOR to External Server"; flow:to_server,established; content:"STOR"; nocase; content:".pcap"; distance:0; nocase; fast_pattern; metadata: author detections.ai, created_at 2026-01-01, attack_id T1560, attack_id T1041; classtype:trojan-activity; sid:1000201; rev:1;)
