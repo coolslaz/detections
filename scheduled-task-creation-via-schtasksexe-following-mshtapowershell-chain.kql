@@ -1,0 +1,5 @@
+DeviceProcessEvents
+| where FileName =~ "schtasks.exe"
+| where ProcessCommandLine has "/create"
+| where InitiatingProcessFileName has_any ("mshta.exe", "powershell.exe")
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName
