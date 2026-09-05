@@ -1,0 +1,10 @@
+DeviceRegistryEvents
+| where RegistryKey has @"Software\synapse\Config" and RegistryValueName =~ "SealedConfig"
+| where ActionType in ("RegistryValueSet", "RegistryKeyCreated")
+| join kind=leftouter (
+    DeviceFileEvents
+    | where ActionType == "FileDeleted"
+    | where FileName =~ "config.toml"
+    | project DeviceId, ConfigDeletedTime = Timestamp, DeletedFileName = FileName
+) on DeviceId
+| project-reorder Timestamp, DeviceId, RegistryKey, RegistryValueName, ActionType, InitiatingProcessFileName, InitiatingProcessCommandLine, ConfigDeletedTime, DeletedFileName
