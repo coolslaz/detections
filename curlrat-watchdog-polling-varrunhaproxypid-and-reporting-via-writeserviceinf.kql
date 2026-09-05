@@ -1,0 +1,12 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(7d)
+| where FolderPath has "/proc/" and ProcessCommandLine has "/var/run/haproxy.pid"
+| project TimeGenerated, DeviceName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName
+| join kind=inner (
+    DeviceNetworkEvents
+    | where TimeGenerated > ago(7d)
+    | where RemoteUrl has "writeservice_info" or AdditionalFields has "writeservice_info"
+    | project TimeGenerated, DeviceName, RemoteIP, RemoteUrl, InitiatingProcessFileName, InitiatingProcessCommandLine
+) on DeviceName
+| where abs(datetime_diff('minute', TimeGenerated, TimeGenerated1)) < 60
+| project TimeGenerated, DeviceName, ProcessCommandLine, RemoteUrl, RemoteIP, InitiatingProcessFileName, AccountName
