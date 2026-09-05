@@ -1,0 +1,14 @@
+let curlRatDomains = dynamic(["img.monderhouse.space","img.smartnords.site","img.darklights.store","img.responsive.pstatic.autos","img.socialteams.store","img.worksongo.store"]);
+// Process-based detection: curl invoked with a CurlRAT C2 domain
+let ProcessDetection = DeviceProcessEvents
+| where FileName in~ ("curl", "curl.exe")
+| where ProcessCommandLine has_any (curlRatDomains)
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, DetectionType = "CurlRAT-CurlProcessExecution";
+// Network-based detection: outbound connection to a CurlRAT C2 domain
+let NetworkDetection = DeviceNetworkEvents
+| where RemoteUrl has_any (curlRatDomains) or RemoteIP has_any (curlRatDomains)
+| project TimeGenerated, DeviceName, AccountName = "", FileName = "", ProcessCommandLine = "", InitiatingProcessFileName, DetectionType = "CurlRAT-NetworkBeacon"
+| project-away RemoteUrl, RemoteIP, RemotePort;
+ProcessDetection
+| union (NetworkDetection)
+| sort by TimeGenerated desc
