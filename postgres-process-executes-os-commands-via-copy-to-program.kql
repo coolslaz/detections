@@ -1,0 +1,20 @@
+let PostgresProcess = dynamic(["postgres.exe", "postgres", "postmaster.exe", "postmaster"]);
+let CommandExecEvents = DeviceProcessEvents
+| where InitiatingProcessFileName in~ (PostgresProcess)
+| where FileName in~ ("cmd.exe", "powershell.exe", "sh", "bash", "/bin/sh", "/bin/bash")
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, AccountName;
+// Correlate with sensitive file reads by the postgres process consistent with pg_read_file() abuse
+let SensitiveFileReads = DeviceFileEvents
+| where InitiatingProcessFileName in~ (PostgresProcess)
+| where FolderPath has_any ("/etc/shadow", "id_rsa", "id_dsa", ".pem", ".ppk", "private")
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, FileName = FolderPath, ProcessCommandLine = InitiatingProcessCommandLine, AccountName = InitiatingProcessAccountName;
+// Correlate with unexpected filesystem writes consistent with lo_export() abuse outside the postgres data directory
+let UnexpectedFileWrites = DeviceFileEvents
+| where InitiatingProcessFileName in~ (PostgresProcess)
+| where ActionType == "FileCreated"
+| where not(FolderPath has_any ("pgdata", "postgresql", "data\\base", "/var/lib/postgresql"))
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, FileName = FolderPath, ProcessCommandLine = InitiatingProcessCommandLine, AccountName = InitiatingProcessAccountName;
+CommandExecEvents
+| union SensitiveFileReads
+| union UnexpectedFileWrites
+| sort by TimeGenerated desc
