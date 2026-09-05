@@ -1,0 +1,21 @@
+EmailEvents
+| where TimeGenerated > ago(1d)
+| where EmailDirection =~ "Inbound"
+| extend SCL = toint(ConfidenceLevel)
+| where SCL == 9
+| where DeliveryLocation in ("Inbox", "Inbox/Folder")
+| where LatestDeliveryLocation !in ("Deleted", "Junk Folder", "Junk")
+| extend AuthDetails = parse_json(AuthenticationDetails)
+| extend SPFResult = tostring(AuthDetails.SPF), DKIMResult = tostring(AuthDetails.DKIM), DMARCResult = tostring(AuthDetails.DMARC), CompAuthResult = tostring(AuthDetails.CompAuth)
+| where CompAuthResult =~ "fail" or SPFResult in ("fail", "none") or DKIMResult in ("fail", "none") or DMARCResult in ("fail", "none")
+| extend _k = 1
+| join kind=leftouter (
+    CloudAppEvents
+    | where TimeGenerated > ago(7d)
+    | where ActionType in ("New-TransportRule", "Set-TransportRule", "New-TenantAllowBlockListItems", "Set-HostedContentFilterRule")
+    | extend _k = 1
+    | project _k, RuleTime = TimeGenerated, RuleActionType = ActionType, RawEventData
+) on _k
+| where isempty(RawEventData) or RawEventData has SenderFromAddress
+| project TimeGenerated, NetworkMessageId, SenderFromAddress, SenderDisplayName, RecipientEmailAddress, SCL, DeliveryLocation, LatestDeliveryLocation, SPFResult, DKIMResult, DMARCResult, CompAuthResult, RuleActionType, RuleTime
+| sort by TimeGenerated desc
