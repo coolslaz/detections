@@ -1,0 +1,13 @@
+DeviceFileEvents
+| where FileName =~ "crond"
+| where FolderPath has_any ("/usr/sbin/crond", "/usr/sbin/", "/sbin/crond")
+| where ActionType in ("FileModified", "FileCreated", "FileRenamed")
+| project FileModTime = TimeGenerated, DeviceId, DeviceName, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, SHA256
+| join kind=inner (
+    DeviceProcessEvents
+    | where FileName in~ ("systemctl", "service", "crond", "init.d")
+    | where ProcessCommandLine has "crond" and ProcessCommandLine has_any ("restart", "start")
+    | project RestartTime = TimeGenerated, DeviceId, RestartProcessCommandLine = ProcessCommandLine, RestartInitiatingProcess = InitiatingProcessFileName
+) on DeviceId
+| where RestartTime between (FileModTime .. (FileModTime + 5m))
+| project FileModTime, RestartTime, DeviceId, DeviceName, FileName, FolderPath, SHA256, InitiatingProcessFileName, InitiatingProcessCommandLine, RestartProcessCommandLine, RestartInitiatingProcess
