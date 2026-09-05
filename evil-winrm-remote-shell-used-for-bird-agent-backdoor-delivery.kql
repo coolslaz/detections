@@ -1,0 +1,5 @@
+DeviceProcessEvents
+| where FileName in~ ("wsmprovhost.exe", "powershell.exe")
+| where (FileName =~ "wsmprovhost.exe" and ProcessCommandLine has_any ("cplsupport", "wtass", "config.toml", "Evil-WinRM", "evil-winrm", "WinRM-fs"))
+ or (InitiatingProcessFileName =~ "wsmprovhost.exe" and FileName =~ "powershell.exe" and ProcessCommandLine has_any ("cplsupport", "wtass", "config.toml", "-enc", "-EncodedCommand", "IEX", "DownloadString", "FromBase64String"))
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
