@@ -1,0 +1,18 @@
+// Detects mcp-grafana (Grafana MCP Server) instances that returned a successful (200) response to a tools/call request without a preceding Authorization/Bearer header, consistent with a successful unauthenticated tool invocation (pre-v1.1.0, or v1.1.0+ deployed without --server-auth-token).
+// The process-launch-flag and non-loopback-binding checks were removed: those are static configuration/posture facts (most real deployments intentionally bind non-loopback to serve remote clients, and bearer auth is opt-in) rather than evidence of an actual unauthenticated call succeeding -- they previously fired continuously on any correctly-deployed, remotely-reachable server. tools/list is also excluded (normal, unauthenticated-by-design discovery).
+union isfuzzy=true
+    (CommonSecurityLog
+    | where DeviceProduct has "mcp-grafana" or Activity has "mcp-grafana"
+    | where RequestURL has "tools/call"
+    | where isnull(RequestClientApplication) or not(Message has "Authorization")
+    | where DeviceEventClassID == "200" or ResponseCode == "200"
+    | extend Reason = "tools/call returned HTTP 200 without an Authorization header", MatchType = "network"
+    | project TimeGenerated, DeviceName = DeviceHostName, ProcessCommandLine = RequestURL, Reason, MatchType),
+    (Syslog
+    | where ProcessName has "mcp-grafana"
+    | where SyslogMessage has "tools/call"
+    | where not(SyslogMessage has "Authorization")
+    | where SyslogMessage has "200"
+    | extend Reason = "mcp-grafana syslog shows tools/call succeeding without Authorization header", MatchType = "syslog"
+    | project TimeGenerated, DeviceName = Computer, ProcessCommandLine = SyslogMessage, Reason, MatchType)
+| sort by TimeGenerated desc
