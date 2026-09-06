@@ -1,0 +1,12 @@
+// Reference: https://detections.ai/inspirations/01a038d3-353b-751f-96a4-fe737792705c
+DeviceFileEvents
+| where InitiatingProcessFileName =~ "ERAAgent.exe"
+| where ActionType == "FileRenamed" or ActionType == "FileModified" or ActionType == "FileCreated"
+| where FolderPath !startswith @"C:\Program Files\ESET\" and FolderPath !startswith @"C:\ProgramData\ESET\"
+| join kind=inner (
+    DeviceProcessEvents
+    | where InitiatingProcessFileName =~ "ERAAgent.exe" or FileName =~ "ERAAgent.exe"
+) on DeviceId
+| project TimeGenerated, DeviceId, DeviceName, FolderPath, FileName, ActionType, InitiatingProcessFileName, InitiatingProcessCommandLine
+| summarize FileReadEvents = make_set(FolderPath, 25), EventCount = count() by DeviceId, DeviceName, bin(TimeGenerated, 1h)
+| where EventCount >= 1
