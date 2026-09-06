@@ -1,0 +1,6 @@
+DeviceRegistryEvents
+| where ActionType in ("RegistryValueSet", "RegistryKeyCreated")
+| where RegistryKey matches regex @"CLSID\\{[0-9A-Fa-f-]+\\\}\InprocServer32"
+| where InitiatingProcessFileName in~ ("mshta.exe", "powershell.exe")
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, ActionType, RegistryKey, RegistryValueName, RegistryValueData
+| sort by TimeGenerated desc
