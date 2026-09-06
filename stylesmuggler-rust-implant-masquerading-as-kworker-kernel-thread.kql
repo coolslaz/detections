@@ -1,0 +1,10 @@
+DeviceProcessEvents
+| where FileName has "kworker" and FileName startswith "[" and FileName endswith "]"
+| where InitiatingProcessFileName !has "kthreadd"
+| where AccountName !in~ ("root", "SYSTEM")
+| join kind=inner (
+    DeviceProcessEvents
+    | where FileName has "kworker" and FileName startswith "[" and FileName endswith "]"
+    | summarize by ProcessId, DeviceId
+) on ProcessId, DeviceId
+| project TimeGenerated, DeviceId, DeviceName, FileName, ProcessCommandLine, FolderPath, AccountName, InitiatingProcessFileName, ProcessId, InitiatingProcessId
