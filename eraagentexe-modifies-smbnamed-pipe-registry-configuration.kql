@@ -1,0 +1,12 @@
+// Reference: https://detections.ai/inspirations/01a038d3-353b-751f-96a4-fe737792705c
+DeviceRegistryEvents
+| where InitiatingProcessFileName =~ "ERAAgent.exe"
+| where ActionType in ("RegistryValueSet", "RegistryKeyCreated", "RegistryValueDeleted")
+| where RegistryKey has_any (
+    @"SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters",
+    @"SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters",
+    @"SYSTEM\CurrentControlSet\Control\Lsa"
+)
+| where RegistryValueName has_any ("NullSessionPipes", "NullSessionShares", "RestrictAnonymous", "RestrictNullSessAccess", "AutoShareServer", "AutoShareWks")
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath, ActionType, RegistryKey, RegistryValueName, RegistryValueData, InitiatingProcessAccountName
+| sort by TimeGenerated desc
