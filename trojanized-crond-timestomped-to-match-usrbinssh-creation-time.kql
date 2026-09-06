@@ -6,8 +6,8 @@ DeviceFileEvents
     DeviceFileEvents
     | where FileName =~ "ssh"
     | where FolderPath == "/usr/bin/ssh"
-    | project SshCreationTime = Timestamp, DeviceId, SshLastFileHash = SHA256
+    | project SshCreationTime = TimeGenerated, DeviceId, SshLastFileHash = SHA256
 ) on DeviceId
-| where Timestamp between ((SshCreationTime - 2s) .. (SshCreationTime + 2s))
-| project Timestamp, DeviceId, FileName, FolderPath, SHA256, SshCreationTime, ActionType
-| summarize arg_max(Timestamp, *) by DeviceId, FolderPath
+| where TimeGenerated between ((SshCreationTime - 2s) .. (SshCreationTime + 2s))
+| project TimeGenerated, DeviceId, FileName, FolderPath, SHA256, SshCreationTime, ActionType
+| summarize arg_max(TimeGenerated, *) by DeviceId, FolderPath
