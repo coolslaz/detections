@@ -1,0 +1,5 @@
+DeviceProcessEvents
+| where FileName has_any ("LockAppHost.exe", "LockAppHost14a02b.exe")
+ or InitiatingProcessFileName has_any ("LockAppHost.exe", "LockAppHost14a02b.exe")
+| where ProcessCommandLine has_any ("wuauserv", "UsoSvc", "WaaSMedicSvc", "BITS", "DoSvc", "schtasks", "Add-MpPreference", "Set-MpPreference", "-ExclusionPath", "-ExclusionExtension", "/Change", "/DISABLE", "Microsoft\\Windows\\WindowsUpdate", "Microsoft\\Windows\\ExploitGuard\\Malware")
+| project TimeGenerated, DeviceName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName
