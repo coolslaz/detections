@@ -1,0 +1,16 @@
+// Detects cron-based persistence tied to the StyleSmuggler implant (gvfsd-user / .kw_ variants)
+// Looks for process activity or file writes referencing the malicious crontab entries and dropped .gvfsd artifacts
+union DeviceProcessEvents, DeviceFileEvents
+| where TimeGenerated > ago(14d)
+| where (ProcessCommandLine has_any ("gvfsd-user", ".gvfsd", "/tmp/.kw_") or FolderPath has_any ("gvfsd-user", ".gvfsd", "/tmp/.kw_"))
+   or (ProcessCommandLine has "crontab" and ProcessCommandLine has_any ("gvfsd", ".gvfsd"))
+   or (FolderPath has "/var/spool/cron/crontabs/" and (ProcessCommandLine has_any ("gvfsd", ".gvfsd", "/tmp/.kw_") or FileName has_any ("gvfsd", ".gvfsd")))
+| extend MatchedIndicator = case(
+    ProcessCommandLine has "gvfsd-user", "gvfsd-user reference",
+    ProcessCommandLine has ".gvfsd", ".gvfsd path reference",
+    ProcessCommandLine has "/tmp/.kw_", "/tmp/.kw_ variant reference",
+    FolderPath has "/var/spool/cron/crontabs/", "crontab spool write",
+    "other"
+  )
+| project TimeGenerated, DeviceName, AccountName, ProcessCommandLine, FolderPath, FileName, MatchedIndicator
+| sort by TimeGenerated desc
