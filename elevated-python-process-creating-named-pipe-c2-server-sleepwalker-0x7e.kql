@@ -1,0 +1,6 @@
+// Reference: https://detections.ai/inspirations/01a038d3-353b-751f-96a4-fe737792705c
+DeviceProcessEvents
+| where FileName in~ ("python.exe", "pythonw.exe", "py.exe")
+| where ProcessCommandLine has_any ("win32pipe", "CreateNamedPipe", "--pipe")
+| where ProcessTokenElevation == "TokenElevationTypeFull" or ProcessIntegrityLevel in~ ("High", "System")
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, ProcessTokenElevation, ProcessIntegrityLevel, InitiatingProcessFileName
