@@ -1,0 +1,16 @@
+// Detect ProRAM technique: mode-0600 temporary dylib written under updated/instances path, then unlinked shortly after creation while presumably mapped via dlopen
+let lookback = 15m;
+DeviceFileEvents
+| where ActionType in ("FileCreated", "FileModified")
+| where FolderPath has "Library/Application Support/updated/instances/"
+| where FileName endswith ".dylib"
+| project CreationTime=TimeGenerated, DeviceId, DeviceName, FolderPath, FileName, InitiatingProcessFileName, InitiatingProcessCommandLine, SHA256
+| join kind=inner (
+    DeviceFileEvents
+    | where ActionType == "FileDeleted"
+    | where FolderPath has "Library/Application Support/updated/instances/"
+    | where FileName endswith ".dylib"
+    | project DeleteTime=TimeGenerated, DeviceId, FolderPath, FileName, InitiatingProcessFileName_Delete=InitiatingProcessFileName
+) on DeviceId, FolderPath, FileName
+| where DeleteTime - CreationTime between (0s .. lookback)
+| project DeviceId, DeviceName, FolderPath, FileName, CreationTime, DeleteTime, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessFileName_Delete, SHA256
