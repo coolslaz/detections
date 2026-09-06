@@ -1,0 +1,14 @@
+// Detects the X_TRACE_ marker used by StyleSmuggler to poison Magento report or system.log files for later execution
+let targetPaths = dynamic(["var/report/", "var/log/system.log"]);
+union isfuzzy=true
+    (DeviceFileEvents
+    | where ActionType in ("FileCreated", "FileModified")
+    | where FolderPath has_any (targetPaths) or FileName has_any (targetPaths)
+    | extend PreviewContent = tostring(AdditionalFields.FileContent)
+    | where isnotempty(PreviewContent) and PreviewContent contains "X_TRACE_"
+    | project TimeGenerated, DeviceName, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, ActionType, PreviewContent),
+    (Syslog
+    | where SyslogMessage has_any (targetPaths)
+    | where SyslogMessage contains "X_TRACE_"
+    | project TimeGenerated, DeviceName=Computer, FileName="", FolderPath="", InitiatingProcessFileName=ProcessName, InitiatingProcessCommandLine=SyslogMessage, ActionType="LogEntry", PreviewContent=SyslogMessage)
+| sort by TimeGenerated desc
