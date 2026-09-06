@@ -1,0 +1,20 @@
+// Detects unauthenticated invocation of PRIVILEGED MCP tools (tools/call, grafana_api_request) using a session identifier that was never issued via an authenticated handshake (pre-v1.1.0 Grafana MCP session spoofing). tools/list is intentionally excluded: it is a normal, unauthenticated-by-design discovery call in the MCP protocol.
+// NOTE: previously queried a fictional 'MCCEventLogs' table that does not exist in this environment's schema. Rewritten against CommonSecurityLog, extracting the MCP-specific fields (session id, tool name) from its Message/RequestURL columns, consistent with the fix already applied to sibling rules in this set.
+let ToolEvents = CommonSecurityLog
+| where DeviceProduct has "mcp-grafana" or DeviceProduct has "Grafana MCP Server"
+| where RequestURL has "tools/call" or RequestURL has "grafana_api_request" or Message has "tools/call" or Message has "grafana_api_request"
+| extend SessionId = extract(@"(mcp-session-[0-9a-fA-F-]+)", 1, tostring(coalesce(RequestURL, Message)))
+| where isnotempty(SessionId)
+| where not(Message has "Authorization" or Message has "Bearer" or RequestURL has "Authorization")
+| extend ToolName = case(RequestURL has "grafana_api_request" or Message has "grafana_api_request", "grafana_api_request", "tools/call");
+ToolEvents
+| join kind=leftanti (
+    CommonSecurityLog
+    | where DeviceProduct has "mcp-grafana" or DeviceProduct has "Grafana MCP Server"
+    | where Message has "AuthenticationHandshake" or Message has "AuthenticationEvent"
+    | extend SessionId = extract(@"(mcp-session-[0-9a-fA-F-]+)", 1, tostring(Message))
+    | where isnotempty(SessionId)
+    | project SessionId, HandshakeTime = TimeGenerated
+) on SessionId
+| project TimeGenerated, SessionId, ToolName, SourceIP
+| sort by TimeGenerated desc
