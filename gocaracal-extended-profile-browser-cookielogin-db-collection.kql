@@ -3,4 +3,4 @@ DeviceFileEvents
 | where FolderPath has_any ("\\Google\\Chrome\\User Data\\", "\\BraveSoftware\\Brave-Browser\\User Data\\", "\\Mozilla\\Firefox\\Profiles\\")
 | where FileName has_any ("Cookies", "Login Data")
 | where not(InitiatingProcessFileName has_any ("chrome.exe", "brave.exe", "firefox.exe"))
-| project Timestamp, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessFolderPath, FileName, FolderPath, ActionType
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessFolderPath, FileName, FolderPath, ActionType
