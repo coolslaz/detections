@@ -1,0 +1,13 @@
+// Detects discrepancy between the SHA256 hash of a running process image (/proc/<pid>/exe) and the SHA256 hash of the same binary path on disk.
+// StyleSmuggler implant: binary running in memory observed to differ from the file on disk at one store.
+DeviceFileEvents
+| where ActionType == "FileModified" or ActionType == "FileCreated"
+| where FolderPath has "/proc/" and FolderPath has "/exe"
+| extend RunningExeHash = SHA256
+| join kind=inner (
+ DeviceProcessEvents
+ | project DeviceId, InitiatingProcessId = ProcessId, OnDiskPath = FolderPath, OnDiskFileName = FileName, OnDiskHash = SHA256, ProcessCreationTime = TimeGenerated
+) on DeviceId
+| where RunningExeHash != OnDiskHash and isnotempty(RunningExeHash) and isnotempty(OnDiskHash)
+| project TimeGenerated, DeviceId, InitiatingProcessId, OnDiskPath, OnDiskFileName, OnDiskHash, RunningExeHash, ProcessCreationTime
+| summarize arg_max(TimeGenerated, *) by DeviceId, InitiatingProcessId, OnDiskPath
