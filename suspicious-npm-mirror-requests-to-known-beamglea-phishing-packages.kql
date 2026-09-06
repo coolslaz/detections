@@ -1,0 +1,15 @@
+// Detects outbound requests to unpkg.com/npm mirror URLs referencing known malicious package names
+// used by the Beamglea/ClickFix campaign to host fake Cloudflare CAPTCHA phishing pages
+let SuspiciousPackageNames = dynamic(["bgzxcuite2", "prezdentkxheiw", "egair0810", "mnteckets", "airdzticket", "ndmxchdjxn2", "@worrisome/reutil", "mjsdqwocvn"]);
+union isfuzzy=true
+  (CommonSecurityLog),
+  (Event),
+  (AWSCloudTrail),
+  (DeviceNetworkEvents)
+| extend RequestUrl = column_ifexists("RequestURL", column_ifexists("Url", column_ifexists("RemoteUrl", "")))
+| where isnotempty(RequestUrl)
+| where RequestUrl has_any ("unpkg.com", "npmmirror.com", "yarnpkg.com", "cdn.jsdelivr.net")
+| where RequestUrl has_any (SuspiciousPackageNames)
+| where RequestUrl endswith "index.html" or RequestUrl has "index.html"
+| project TimeGenerated, RequestUrl
+| extend MatchedPackage = extract(strcat("(", strcat_array(SuspiciousPackageNames, "|"), ")"), 1, RequestUrl)
