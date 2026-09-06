@@ -9,7 +9,7 @@ let SuspiciousMailboxRules = OfficeActivity
 let GraphEnumeration = CloudAppEvents
 | where ApplicationId == "00000003-0000-0000-c000-000000000000" // Microsoft Graph
 | where ActionType in ("ListContacts", "ListMailFolders", "ListMessages", "ListThreads", "ListPeople")
-| summarize GraphCallCount = count(), GraphActions = make_set(ActionType, 10) by AccountObjectId, bin(Timestamp, 15m), IPAddress
+| summarize GraphCallCount = count(), GraphActions = make_set(ActionType, 10), Timestamp = max(TimeGenerated) by AccountObjectId, bin(TimeGenerated, 15m), IPAddress
 | where GraphCallCount > 20;
 DeviceCodeSignins
 | join kind=inner (SuspiciousMailboxRules) on $left.UserPrincipalName == $right.UserId
