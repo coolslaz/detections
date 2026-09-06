@@ -1,0 +1,7 @@
+// Reference: https://detections.ai/inspirations/01a038d3-353b-751f-96a4-fe737792705c
+DeviceImageLoadEvents
+| where InitiatingProcessFileName =~ "ERAAgent.exe"
+| where FileName =~ "dpapisvc.dll"
+| project TimeGenerated, DeviceId, InitiatingProcessFileName, InitiatingProcessFolderPath, FileName, FolderPath, SHA256
+// Complement with process-level LoadLibraryW telemetry if available:
+// DeviceEvents | where ActionType has "LoadLibrary" and InitiatingProcessFileName =~ "ERAAgent.exe" and AdditionalFields has "dpapisvc.dll"
