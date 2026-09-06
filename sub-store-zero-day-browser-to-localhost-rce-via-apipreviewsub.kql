@@ -1,0 +1,22 @@
+// Detect browser-originated localhost RCE against vulnerable Sub-Store instances (<2.38.2)
+DeviceNetworkEvents
+| where RemoteIP in ("127.0.0.1", "::1")
+| where RemotePort == 38324
+| where InitiatingProcessFileName has_any ("chrome.exe", "msedge.exe", "firefox.exe", "safari", "brave.exe", "opera.exe")
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteIP, RemotePort
+| join kind=inner (
+    DeviceProcessEvents
+    | where FileName =~ "node.exe" or FileName == "node"
+    | where ProcessCommandLine has "sub-store" or ProcessCommandLine has "Sub-Store"
+    | project NodeTime = TimeGenerated, DeviceName, NodeCommandLine = ProcessCommandLine, NodePID = ProcessId
+) on DeviceName
+| where NodeTime between ((TimeGenerated - 5m) .. (TimeGenerated + 5m))
+| join kind=inner (
+    DeviceProcessEvents
+    | where InitiatingProcessFileName =~ "node.exe" or InitiatingProcessFileName == "node"
+    | where FileName in~ ("cmd.exe", "powershell.exe", "sh", "bash", "/bin/sh", "/bin/bash")
+    | project ChildTime = TimeGenerated, DeviceName, ChildProcessCommandLine = ProcessCommandLine, ChildFileName = FileName
+) on DeviceName
+| where ChildTime between (NodeTime .. (NodeTime + 5m))
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteIP, RemotePort, NodeCommandLine, ChildFileName, ChildProcessCommandLine, ChildTime
+| sort by TimeGenerated desc
