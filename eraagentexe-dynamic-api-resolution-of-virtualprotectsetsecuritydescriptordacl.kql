@@ -1,0 +1,12 @@
+// Reference: https://detections.ai/inspirations/01a038d3-353b-751f-96a4-fe737792705c
+// Detect SLEEPWALKER runtime string/API-name deobfuscation: ERAAgent.exe dynamically resolving
+// VirtualProtect, SetSecurityDescriptorDacl, and CryptGenRandom via GetProcAddress instead of
+// having them present as static import table entries.
+DeviceEvents
+| where ActionType in ("GetProcAddress", "ApiResolution", "DynamicApiCall")
+| where InitiatingProcessFileName =~ "ERAAgent.exe"
+| extend ResolvedFunction = tostring(parse_json(AdditionalFields).FunctionName)
+| where ResolvedFunction in~ ("VirtualProtect", "SetSecurityDescriptorDacl", "CryptGenRandom")
+| summarize DistinctFunctions = make_set(ResolvedFunction, 10), ResolutionCount = count(), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by DeviceId, InitiatingProcessFileName, InitiatingProcessId, InitiatingProcessSHA256
+| where array_length(DistinctFunctions) >= 2
+| project DeviceId, InitiatingProcessFileName, InitiatingProcessId, InitiatingProcessSHA256, DistinctFunctions, ResolutionCount, FirstSeen, LastSeen
