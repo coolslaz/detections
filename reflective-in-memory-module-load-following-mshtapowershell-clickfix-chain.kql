@@ -1,0 +1,16 @@
+// Detect reflective in-memory PE/DLL loading (no backing file on disk) occurring in a process descended from the mshta/PowerShell ClickFix chain, consistent with in-memory Amatera loading
+DeviceProcessEvents
+| where FileName in~ ("mshta.exe", "powershell.exe")
+| where InitiatingProcessFileName =~ "explorer.exe" or InitiatingProcessCommandLine has "mshta"
+| project ChainProcessId = ProcessId, ChainProcessGuid = InitiatingProcessId, SHA1, DeviceId, DeviceName, ChainTimestamp = TimeGenerated, ChainFileName = FileName, ChainCommandLine = ProcessCommandLine
+| join kind=inner (
+    DeviceImageLoadEvents
+    | where InitiatingProcessFileName in~ ("mshta.exe", "powershell.exe")
+    | where isempty(FolderPath) or FolderPath has "\\Device\\" or FolderPath == "" 
+    | project DeviceId, LoadProcessId = InitiatingProcessId, LoadTimestamp = TimeGenerated, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, FolderPath
+) on DeviceId
+| where LoadProcessId == ChainProcessId and LoadTimestamp >= ChainTimestamp
+| where InitiatingProcessCommandLine has "powershell" or InitiatingProcessCommandLine has "mshta"
+| project DeviceId, DeviceName, ChainTimestamp, LoadTimestamp, ChainFileName, ChainCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, FolderPath
+| summarize LoadCount = count(), LoadedModules = make_set(FileName, 20) by DeviceId, DeviceName, ChainFileName, ChainCommandLine, InitiatingProcessFileName
+| where LoadCount > 0
