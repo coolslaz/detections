@@ -1,0 +1,16 @@
+// Reference: https://detections.ai/inspirations/01a038d3-353b-751f-96a4-fe737792705c
+// Detects SLEEPWALKER STAGE_WRITE/STAGE_VERIFY_EXEC pattern: repeated small writes into a shared 128KB (131072-byte) buffer by ERAAgent.exe followed by code execution from that memory region
+DeviceEvents
+| where FileName =~ "ERAAgent.exe"
+| where ActionType in ("VirtualAllocApiCall", "VirtualProtectApiCall", "ProcessMemoryWritten")
+| extend AllocSize = toint(AdditionalFields.RegionSize)
+| where AllocSize == 131072 or AllocSize == 0x20000
+| summarize
+    WriteCount = countif(ActionType == "ProcessMemoryWritten"),
+    ProtectChanges = countif(ActionType == "VirtualProtectApiCall"),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated)
+    by DeviceId, InitiatingProcessId, InitiatingProcessFileName
+| where WriteCount >= 3 and ProtectChanges >= 1
+| where InitiatingProcessFileName =~ "ERAAgent.exe"
+| project DeviceId, InitiatingProcessId, InitiatingProcessFileName, WriteCount, ProtectChanges, FirstSeen, LastSeen
