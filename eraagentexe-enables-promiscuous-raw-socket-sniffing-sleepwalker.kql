@@ -1,0 +1,8 @@
+// Reference: https://detections.ai/inspirations/01a038d3-353b-751f-96a4-fe737792705c
+DeviceEvents
+| where FileName =~ "ERAAgent.exe"
+| where ActionType has_any ("SocketIoctl", "NetworkSocketIoctl", "RawSocketCreated", "SIO_RCVALL")
+| where AdditionalFields has "SIO_RCVALL" or AdditionalFields has "RCVALL_SOCKETLEVEL" or AdditionalFields has "promiscuous"
+| extend ProtocolFamily = tostring(parse_json(AdditionalFields).ProtocolFamily), IoctlCode = tostring(parse_json(AdditionalFields).IoctlCode)
+| where ProtocolFamily =~ "AF_INET" or ProtocolFamily =~ "RAW" or IoctlCode contains "SIO_RCVALL"
+| project TimeGenerated, DeviceName, FileName, InitiatingProcessAccountName, ProcessId, AdditionalFields, ActionType
