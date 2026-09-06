@@ -1,0 +1,1 @@
+alert ip [88.216.72.181,5.181.86.133] any -> $HOME_NET any (msg:"StyleSmuggler known attacker source IP connection"; reference:url,https://sansec.io/research/stylesmuggler; classtype:attempted-admin; metadata: attack_id T1190, malware StyleSmuggler; sid:1000030; rev:1;)
