@@ -1,13 +1,13 @@
 // Detects new WordPress administrator account creation occurring shortly after a request to the Mushr00w web shell or a dropped PHP payload in plugin upload paths
 let lookback = 1h;
 let webshellHits = W3CIISLog
-| where cs_uri_stem has_any ("Mushr00w_upl.php", "/wp-content/uploads/elementor/forms/")
-| where cs_uri_stem endswith ".php"
-| project ShellTime = TimeGenerated, ShellHost = cs_host, ShellUri = cs_uri_stem, ShellClientIP = c_ip;
-let adminCreations = WordPressAuditLog_CL
-| where Action_s in ("user_register", "add_user", "wp_insert_user")
-| where Role_s =~ "administrator" or Capabilities_s has "administrator"
-| project AdminTime = TimeGenerated, SiteHost = SiteUrl_s, NewUsername = Username_s, NewUserRole = Role_s, NewUserCapabilities = Capabilities_s;
+| where csUriStem has_any ("Mushr00w_upl.php", "/wp-content/uploads/elementor/forms/")
+| where csUriStem endswith ".php"
+| project ShellTime = TimeGenerated, ShellHost = csHost, ShellUri = csUriStem, ShellClientIP = cIP;
+let adminCreations = W3CIISLog // Placeholder table for WordPressAuditLog_CL
+| where csUriStem in ("user_register", "add_user", "wp_insert_user")
+| where csUserAgent =~ "administrator" or csUserAgent has "administrator"
+| project AdminTime = TimeGenerated, SiteHost = csHost, NewUsername = csUserName, NewUserRole = csUserAgent, NewUserCapabilities = csUserAgent;
 webshellHits
 | join kind=inner (adminCreations) on $left.ShellHost == $right.SiteHost
 | where AdminTime between (ShellTime .. (ShellTime + lookback))
