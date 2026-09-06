@@ -1,0 +1,1 @@
+alert dns any any -> any any (msg:"ProRAM DNS-based fallback C2 transport domain query"; dns.query; content:"d.clash-verge-upgrade.com"; nocase; fast_pattern; metadata: attack_id T1071.004, attack_id T1568; reference:url,detections.ai/inspirations/01a074a6-2f75-731e-a321-095f8e85e224; classtype:command-and-control; sid:1000501; rev:1;)
