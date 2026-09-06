@@ -1,0 +1,16 @@
+// Reference: https://detections.ai/inspirations/01a038d3-353b-751f-96a4-fe737792705c
+// Detects staged payload lifecycle consistent with SLEEPWALKER DECOMPRESS_RUN/STAGE_WRITE/STAGE_VERIFY_EXEC opcodes:
+// ERAAgent.exe writes a new file to disk and then executes it shortly after, indicating decompressed
+// or staged payload assembly followed by verified execution.
+let stagedWrites = DeviceFileEvents
+| where InitiatingProcessFileName =~ "ERAAgent.exe"
+| where ActionType == "FileCreated"
+| project WriteTime = TimeGenerated, DeviceId, FolderPath, FileName, SHA256, InitiatingProcessId;
+let stagedExecs = DeviceProcessEvents
+| where InitiatingProcessFileName =~ "ERAAgent.exe"
+| project ExecTime = TimeGenerated, DeviceId, FileName, FolderPath, SHA256, ProcessId, ProcessCommandLine, InitiatingProcessId;
+stagedWrites
+| join kind=inner (stagedExecs) on DeviceId, SHA256
+| where ExecTime - WriteTime between (0s .. 5m)
+| project DeviceId, WriteTime, ExecTime, FolderPath, FileName1, SHA256, ProcessCommandLine, InitiatingProcessId1
+| sort by ExecTime desc
