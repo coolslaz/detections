@@ -1,0 +1,15 @@
+// Reference: https://detections.ai/inspirations/01a038d3-353b-751f-96a4-fe737792705c
+// Detects recurring ERAAgent.exe execution/wake cycles consistent with SLEEPWALKER's CRON_SCHEDULE-driven XOR-decrypt-execute-reencrypt pattern
+let lookback = 7d;
+DeviceEvents
+| where TimeGenerated > ago(lookback)
+| where InitiatingProcessFileName =~ "ERAAgent.exe"
+| where ActionType has_any ("VirtualProtect", "ProcessMemoryChanged", "MemoryProtectionChanged")
+| sort by DeviceId, InitiatingProcessId, TimeGenerated asc
+| serialize
+| extend PrevTimestamp = prev(TimeGenerated, 1)
+| extend GapMinutes = datetime_diff('minute', TimeGenerated, PrevTimestamp)
+| where GapMinutes > 0 and GapMinutes < 1440
+| summarize WakeCount = count(), DistinctGaps = dcount(GapMinutes), Gaps = make_set(GapMinutes, 20), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by DeviceId, InitiatingProcessId, InitiatingProcessFileName
+| where WakeCount >= 5 and DistinctGaps <= 3
+| project DeviceId, InitiatingProcessId, InitiatingProcessFileName, WakeCount, DistinctGaps, Gaps, FirstSeen, LastSeen
