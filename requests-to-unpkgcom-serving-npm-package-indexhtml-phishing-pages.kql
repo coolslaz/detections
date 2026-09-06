@@ -1,0 +1,9 @@
+// Detects network requests to unpkg.com/npmmirror mirrors fetching an index.html file directly from a package path
+// rather than a package tarball/JS module - consistent with npm packages used purely as phishing hosting infrastructure
+DeviceNetworkEvents
+| where RemoteUrl has "unpkg.com"
+| where RemoteUrl endswith "/index.html" or RemoteUrl matches regex @"unpkg\.com/[a-z0-9]+@[0-9.]+/index\.html"
+| extend PackageName = extract(@"unpkg\.com/([a-z0-9_.@/-]+)@", 1, RemoteUrl)
+| where isnotempty(PackageName)
+| project TimeGenerated, DeviceName, InitiatingProcessAccountName, RemoteUrl, PackageName, InitiatingProcessFileName, InitiatingProcessCommandLine
+| sort by TimeGenerated desc
