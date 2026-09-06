@@ -1,0 +1,10 @@
+DeviceFileEvents
+| where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+| where FolderPath has "/tmp/.kw_"
+    or FolderPath matches regex @"/tmp/\.gvfsd-.*"
+    or FolderPath has "/.local/share/.gvfsd/"
+    or FileName =~ "gvfsd-user"
+    or FolderPath matches regex @"/.local/share/\.gvfsd/\.gvfsd_[0-9a-fA-F]{8}\.lock"
+    or FolderPath matches regex @"/tmp/\.gvfsd_[0-9a-fA-F]{8}\.lock"
+| project TimeGenerated, DeviceName, ActionType, FolderPath, FileName, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName
+| sort by TimeGenerated desc
