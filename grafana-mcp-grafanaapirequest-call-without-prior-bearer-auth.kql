@@ -1,0 +1,18 @@
+// Detect grafana_api_request MCP tool invocations that lack a preceding valid bearer-token authentication event, indicating the server used its stored service-account token on behalf of an unauthenticated caller
+// NOTE: previously queried a fictional 'MCCEventLogs' table that does not exist in this environment's schema (every column reference against it failed validation). Rewritten against CommonSecurityLog, extracting the MCP-specific fields (session id, tool name) from its Message/RequestURL columns instead.
+let AuthedSessions = CommonSecurityLog
+| where DeviceProduct has "mcp-grafana" or DeviceProduct has "Grafana MCP Server"
+| where Message has "AuthenticationEvent" and (Message has "Bearer" or Message has "Authorization")
+| extend SessionId = extract(@"(mcp-session-[0-9a-fA-F-]+)", 1, tostring(Message))
+| where isnotempty(SessionId)
+| summarize AuthTime = min(TimeGenerated) by SessionId;
+CommonSecurityLog
+| where DeviceProduct has "mcp-grafana" or DeviceProduct has "Grafana MCP Server"
+| where RequestURL has "grafana_api_request" or Message has "grafana_api_request"
+| extend SessionId = extract(@"(mcp-session-[0-9a-fA-F-]+)", 1, tostring(coalesce(RequestURL, Message)))
+| where isnotempty(SessionId)
+| join kind=leftouter AuthedSessions on SessionId
+// Flag only when no authenticated session was ever seen for this SessionId, or the auth event happened AFTER the tool call (session used before/without valid auth)
+| where isnull(AuthTime) or AuthTime > TimeGenerated
+| project TimeGenerated, SessionId, ToolName = "grafana_api_request", SourceIP, AuthTime
+| sort by TimeGenerated desc
