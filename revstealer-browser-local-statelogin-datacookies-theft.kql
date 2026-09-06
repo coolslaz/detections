@@ -1,0 +1,7 @@
+DeviceFileEvents
+| where TimeGenerated > ago(1d)
+| where FolderPath has_any ("\\User Data\\", "\\Chrome\\", "\\Edge\\", "\\Firefox\\") or FolderPath endswith "\\Local State"
+| where FileName in~ ("Local State", "Login Data", "Cookies")
+| where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+| where InitiatingProcessFileName !in~ ("chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe", "OneDrive.exe", "Dropbox.exe", "MsMpEng.exe", "SearchIndexer.exe", "backup.exe")
+| project TimeGenerated, DeviceId, InitiatingProcessFileName, InitiatingProcessCommandLine, FolderPath, FileName, ActionType
