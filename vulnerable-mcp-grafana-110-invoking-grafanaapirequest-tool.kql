@@ -1,0 +1,18 @@
+// Detects grafana_api_request MCP tool invocations served by an mcp-grafana process confirmed to be running below the 1.1.0 SSRF fix.
+// Version matching now extracts an actual version number and compares it precisely instead of enumerating raw substrings -- the old
+// list (e.g. "mcp-grafana v1.0") could match text merely MENTIONING that version (a changelog/upgrade-note argument) even on a patched host.
+// The "grafana_api_request" condition was also moved off host process-launch telemetry (EDR command lines never carry an MCP JSON-RPC
+// method name -- that string only ever appears at the application layer) onto CommonSecurityLog, the table used for MCP application-event
+// correlation elsewhere in this rule set.
+let VulnerableHosts = union isfuzzy=true DeviceProcessEvents, DeviceEvents
+| where ProcessCommandLine has "mcp-grafana" or InitiatingProcessCommandLine has "mcp-grafana" or AdditionalFields has "mcp-grafana"
+| extend RawVersionText = tostring(coalesce(ProcessCommandLine, InitiatingProcessCommandLine, AdditionalFields))
+| extend AppVersion = extract(@"mcp-grafana[^\d]{0,3}([0-9]+\.[0-9]+\.[0-9]+)", 1, RawVersionText)
+| where isnotempty(AppVersion) and AppVersion matches regex @"^(0\.|1\.0(\.|$))"
+| distinct DeviceName;
+CommonSecurityLog
+| where DeviceProduct has "mcp-grafana" or DeviceProduct has "Grafana MCP Server"
+| where RequestURL has "grafana_api_request" or Message has "grafana_api_request"
+| where DeviceName in (VulnerableHosts)
+| project TimeGenerated, DeviceName, RequestURL, Message, SourceIP
+| sort by TimeGenerated desc
