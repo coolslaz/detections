@@ -1,0 +1,9 @@
+// Detects a TypeError from array_merge() with an integer argument logged in Magento's system.log immediately after an include statement, indicating successful StyleSmuggler exploitation
+Syslog
+| where SyslogMessage has "system.log"
+| where SyslogMessage has "TypeError"
+| where SyslogMessage has "array_merge()"
+| where SyslogMessage has "include"
+| where SyslogMessage has_any ("must be of type array, int given", "must be of the type array, int given", "array_merge(): Argument")
+| project TimeGenerated, Computer, ProcessName, SyslogMessage
+| sort by TimeGenerated desc
