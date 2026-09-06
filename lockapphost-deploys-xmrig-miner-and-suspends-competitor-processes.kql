@@ -1,0 +1,11 @@
+let CryptoMinerBase = DeviceProcessEvents
+| where FileName has_any ("LockAppHost14a02b.exe", "LockAppHost.exe", "xmrig.exe")
+| where ProcessCommandLine has_any ("xmrig", "--donate-level", "--cpu-priority", "stratum+tcp", "stratum+ssl", "-o pool", "--url");
+let ProcessSuspension = DeviceProcessEvents
+| where InitiatingProcessFileName has_any ("LockAppHost14a02b.exe", "LockAppHost.exe")
+| where ProcessCommandLine has_any ("taskkill", "/F /IM", "SuspendThread", "NtSuspendProcess", "pssuspend");
+let RegistryPersistence = DeviceRegistryEvents
+| where InitiatingProcessFileName has_any ("LockAppHost14a02b.exe", "LockAppHost.exe")
+| where RegistryKey has "CurrentVersion\\Run";
+union CryptoMinerBase, ProcessSuspension, (RegistryPersistence | extend FileName = InitiatingProcessFileName, ProcessCommandLine = RegistryValueData)
+| project TimeGenerated, DeviceName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName
