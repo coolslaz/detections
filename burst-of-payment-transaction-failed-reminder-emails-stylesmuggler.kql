@@ -1,0 +1,5 @@
+EmailEvents
+| where Subject has "Payment Transaction Failed Reminder"
+| summarize EmailCount = count(), Recipients = make_set(RecipientEmailAddress, 100) by SenderFromAddress, bin(TimeGenerated, 1h)
+| where EmailCount > 20
+| sort by EmailCount desc
