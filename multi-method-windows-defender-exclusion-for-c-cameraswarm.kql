@@ -1,0 +1,33 @@
+union (
+    DeviceProcessEvents
+    | where TimeGenerated > ago(1d)
+    | where (
+        (FileName in~ ("powershell.exe","pwsh.exe") and ProcessCommandLine has_any ("Add-MpPreference","Set-MpPreference") and ProcessCommandLine has "ExclusionPath" and ProcessCommandLine has "C:\\")
+        or (FileName in~ ("powershell.exe","pwsh.exe") and ProcessCommandLine has "Invoke-CimMethod" and ProcessCommandLine has "ExclusionPath")
+        or (FileName =~ "reg.exe" and ProcessCommandLine has "add" and ProcessCommandLine has @"SOFTWARE\Policies\Microsoft\Windows Defender\Exclusions\Paths")
+        or (FileName =~ "gpupdate.exe" and ProcessCommandLine has "/force")
+    )
+    | extend DetectionReason = case(
+        ProcessCommandLine has "Add-MpPreference", "PowerShell Add-MpPreference exclusion",
+        ProcessCommandLine has "Set-MpPreference", "PowerShell Set-MpPreference exclusion list replace",
+        ProcessCommandLine has "Invoke-CimMethod", "CIM/WMI Defender exclusion bypass",
+        FileName =~ "reg.exe", "Registry write to Defender GPO exclusions key",
+        FileName =~ "gpupdate.exe", "Forced Group Policy refresh following exclusion write",
+        "Unclassified Defender exclusion activity")
+    | project TimeGenerated, DeviceName, DeviceId, AccountName, AccountDomain, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessAccountName, DetectionReason
+), (
+    DeviceRegistryEvents
+    | where TimeGenerated > ago(1d)
+    | where RegistryKey has @"SOFTWARE\Policies\Microsoft\Windows Defender\Exclusions\Paths"
+       or (RegistryKey has @"SOFTWARE\Microsoft\Windows Defender\Features\TamperProtection" and RegistryValueData == "0")
+    | extend DetectionReason = iff(RegistryKey has "TamperProtection", "Tamper Protection disabled via direct registry write", "Defender exclusion path written via registry")
+    | project TimeGenerated, DeviceName, DeviceId, AccountName = InitiatingProcessAccountName, AccountDomain = "", FileName = InitiatingProcessFileName, ProcessCommandLine = RegistryKey, InitiatingProcessFileName, InitiatingProcessAccountName, DetectionReason
+), (
+    DeviceEvents
+    | where TimeGenerated > ago(1d)
+    | where ActionType == "ScheduledTaskCreated"
+    | where AdditionalFields has "Add-MpPreference" or AdditionalFields has "ExclusionPath"
+    | extend DetectionReason = "SYSTEM-level scheduled task created to add Defender exclusion"
+    | project TimeGenerated, DeviceName, DeviceId, AccountName = InitiatingProcessAccountName, AccountDomain = "", FileName = InitiatingProcessFileName, ProcessCommandLine = tostring(AdditionalFields), InitiatingProcessFileName, InitiatingProcessAccountName, DetectionReason
+)
+| sort by TimeGenerated desc
