@@ -1,0 +1,17 @@
+// Reference: https://detections.ai/inspirations/01a038d3-353b-751f-96a4-fe737792705c
+DeviceEvents
+| where FileName =~ "ERAAgent.exe"
+| where ActionType in ("ProtectVirtualMemoryApiCall", "VirtualAllocApiCall", "CreateThreadApiCall")
+| extend ParsedFields = parse_json(AdditionalFields)
+| extend ProtectionFlags = tostring(ParsedFields.ProtectionFlags), CallerProcessName = tostring(ParsedFields.CallerProcessName)
+| where ActionType == "ProtectVirtualMemoryApiCall"
+| where ProtectionFlags has "PAGE_EXECUTE_READWRITE"
+| where FileName =~ "ERAAgent.exe"
+| join kind=inner (
+    DeviceEvents
+    | where FileName =~ "ERAAgent.exe"
+    | where ActionType == "CreateThreadApiCall" or ActionType == "CreateRemoteThreadApiCall"
+) on DeviceId
+| where TimeGenerated1 - TimeGenerated between (0s .. 30s)
+| project TimeGenerated, DeviceId, FileName, ActionType, ProtectionFlags, ActionType1, InitiatingProcessAccountName
+| summarize count(), make_set(ActionType1) by DeviceId, FileName, bin(TimeGenerated, 1m)
