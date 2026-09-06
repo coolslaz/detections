@@ -1,0 +1,20 @@
+let phishingDomains = dynamic(["login.microsofte.live"]);
+let ddrDomains = dynamic(["api.keyval.org","keyval.org"]);
+let DeviceEvents = DeviceNetworkEvents
+| where RemoteUrl has_any (phishingDomains) or RemoteUrl has_any (ddrDomains)
+    or (RemoteUrl has_any ("unpkg.com","npmmirror.com","cdn.jsdelivr.net/npm","yarnpkg.com") and RemoteUrl endswith ".html")
+| extend IocCategory = case(
+    RemoteUrl has_any (phishingDomains), "TyposquatCredentialPhishing",
+    RemoteUrl has_any (ddrDomains), "DeadDropResolver",
+    RemoteUrl has_any ("unpkg.com","npmmirror.com","cdn.jsdelivr.net/npm","yarnpkg.com") and RemoteUrl endswith ".html", "NpmMirrorHtmlPayload",
+    "Unknown")
+| project TimeGenerated, DeviceName, InitiatingProcessAccountName, RemoteUrl, RemoteIP, IocCategory, InitiatingProcessFileName, InitiatingProcessCommandLine;
+let DnsQueryEvents = DnsEvents
+| where Name has_any (phishingDomains) or Name has_any (ddrDomains)
+| extend IocCategory = case(
+    Name has_any (phishingDomains), "TyposquatCredentialPhishing",
+    Name has_any (ddrDomains), "DeadDropResolver",
+    "Unknown")
+| project TimeGenerated, DeviceName = Computer, InitiatingProcessAccountName = "", RemoteUrl = Name, RemoteIP = "", IocCategory, InitiatingProcessFileName = "", InitiatingProcessCommandLine = "";
+union DeviceEvents, DnsQueryEvents
+| sort by TimeGenerated desc
