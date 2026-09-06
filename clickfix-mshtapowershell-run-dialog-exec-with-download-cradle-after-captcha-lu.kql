@@ -1,0 +1,31 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where FileName in~ ("mshta.exe", "powershell.exe")
+| where InitiatingProcessFileName =~ "explorer.exe"
+| extend Ind_EncodedPS = ProcessCommandLine has_any ("-enc", "-EncodedCommand", "FromBase64String")
+| extend Ind_IEX = ProcessCommandLine has_any ("IEX", "Invoke-Expression")
+| extend Ind_DownloadCradle = ProcessCommandLine has_any ("Invoke-WebRequest", "iwr", "curl", "wget")
+| extend Ind_MshtaUrl = (FileName =~ "mshta.exe" and (ProcessCommandLine has "http://" or ProcessCommandLine has "https://"))
+| extend Ind_HiddenWindow = ProcessCommandLine has_any ("-w hidden", "-windowstyle hidden")
+| extend Ind_KnownIOC = ProcessCommandLine has_any ("login.microsofte.live", "api.keyval.org")
+| where Ind_EncodedPS or Ind_IEX or Ind_DownloadCradle or Ind_MshtaUrl or Ind_HiddenWindow or Ind_KnownIOC
+| extend MatchedIndicators = strcat_array(
+    pack_array(
+        iff(Ind_EncodedPS, "EncodedPowerShell", ""),
+        iff(Ind_IEX, "IEX", ""),
+        iff(Ind_DownloadCradle, "DownloadCradle", ""),
+        iff(Ind_MshtaUrl, "MshtaHttpUrl", ""),
+        iff(Ind_HiddenWindow, "HiddenWindow", ""),
+        iff(Ind_KnownIOC, "KnownCampaignIOC", "")
+    ), ",")
+| extend MatchedIndicators = replace_regex(replace_regex(MatchedIndicators, @"^,+|,+$", ""), @",{2,}", ",")
+| join kind=inner (
+    DeviceProcessEvents
+    | where TimeGenerated > ago(1d)
+    | where FileName in~ ("chrome.exe", "msedge.exe", "firefox.exe", "iexplore.exe")
+    | summarize BrowserTimestamp = arg_max(TimeGenerated, FileName) by DeviceId
+    | project BrowserTimestamp, DeviceId, BrowserProcess = FileName
+) on DeviceId
+| where TimeGenerated > BrowserTimestamp and TimeGenerated - BrowserTimestamp <= 5m
+| project TimeGenerated, DeviceId, AccountName, FileName, ProcessCommandLine, MatchedIndicators, InitiatingProcessFileName, BrowserProcess, BrowserTimestamp
+| sort by TimeGenerated desc
