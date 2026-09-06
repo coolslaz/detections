@@ -1,0 +1,20 @@
+// Reference: https://detections.ai/inspirations/01a038d3-353b-751f-96a4-fe737792705c
+let RegistryMod = DeviceRegistryEvents
+| where RegistryKey has_any (@"SYSTEM\CurrentControlSet\Control\Lsa", @"SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters")
+| where RegistryValueName in~ ("RestrictAnonymous", "NullSessionPipes")
+| where ActionType in ("RegistryValueSet", "RegistryKeyCreated")
+| project TimeGenerated, DeviceName, InitiatingProcessAccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, RegistryKey, RegistryValueName, RegistryValueData
+| join kind=inner (
+    DeviceProcessEvents
+    | where FileName =~ "ERAAgent.exe"
+    | project DeviceName, ProcessCreationTime = TimeGenerated
+) on DeviceName
+| where TimeGenerated between ((ProcessCreationTime - 1h) .. (ProcessCreationTime + 1h));
+let PipeEvents = DeviceEvents
+| where ActionType has "NamedPipeEvent" or ActionType has "PipeCreated"
+| where InitiatingProcessFileName =~ "ERAAgent.exe"
+| where AdditionalFields has_any ("Everyone", "Anonymous Logon", "ANONYMOUS LOGON")
+| project TimeGenerated, DeviceName, InitiatingProcessAccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, AdditionalFields;
+RegistryMod
+| union PipeEvents
+| sort by TimeGenerated desc
