@@ -1,0 +1,11 @@
+DeviceProcessEvents
+| where FileName =~ "powershell.exe"
+| where InitiatingProcessFileName =~ "mshta.exe"
+| where ProcessCommandLine has_any ("-EncodedCommand", "-enc", "-nop", "-noprofile", "-w hidden", "-windowstyle hidden")
+| project TimeGenerated, DeviceName, AccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, ProcessId, InitiatingProcessId
+| join kind=leftanti (
+    DeviceFileEvents
+    | where FileName endswith ".ps1"
+    | project DeviceName, FileEventDeviceName=DeviceName, FileEventTime=TimeGenerated
+) on DeviceName
+| sort by TimeGenerated desc
