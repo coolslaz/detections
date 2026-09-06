@@ -1,0 +1,7 @@
+// Reference: https://detections.ai/inspirations/01a038d3-353b-751f-96a4-fe737792705c
+DeviceEvents
+| where ActionType in ("SocketOutboundConnectionRequest", "SocketConnectRequest", "NetworkConnectionEvents")
+| where InitiatingProcessFileName =~ "ERAAgent.exe"
+| extend AddressFamily = tostring(parse_json(AdditionalFields).AddressFamily)
+| where AddressFamily has_any ("AF_VSOCK", "VMCI")
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessId, AddressFamily, RemoteIP, RemotePort, AdditionalFields
