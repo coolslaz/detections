@@ -1,0 +1,5 @@
+// Reference: https://detections.ai/inspirations/01a038d3-353b-751f-96a4-fe737792705c
+DeviceProcessEvents
+| where ProcessCommandLine has "vm:2" and ProcessCommandLine has_any ("svm_cid", "svm_port", "AF_VSOCK", "VMCI")
+| extend IsERAAgent = FileName =~ "ERAAgent.exe"
+| project TimeGenerated, DeviceName, FileName, ProcessCommandLine, InitiatingProcessFileName, AccountName, IsERAAgent
