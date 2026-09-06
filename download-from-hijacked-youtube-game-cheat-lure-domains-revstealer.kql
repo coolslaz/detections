@@ -1,0 +1,20 @@
+// Detects network connections or file downloads associated with REVSTEALER initial-access lure domains
+// advertised via hijacked YouTube channels posting fake game-cheat videos
+let lureDomains = dynamic(["elitecheatsx.live", "resight-cheats.net"]);
+union (
+    DeviceNetworkEvents
+    | extend RemoteHost = tostring(parse_url(RemoteUrl).Host)
+    | where RemoteHost in~ (lureDomains) or RemoteHost endswith ".elitecheatsx.live" or RemoteHost endswith ".resight-cheats.net" or RemoteUrl has "resightloader.exe"
+    | project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteUrl, RemoteHost, RemoteIP, RemotePort
+),
+(
+    DeviceFileEvents
+    | where FileName =~ "resightloader.exe"
+    | project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, FolderPath, FileName
+),
+(
+    DeviceProcessEvents
+    | where FileName =~ "resightloader.exe" or ProcessCommandLine has_any (lureDomains)
+    | project TimeGenerated, DeviceName, InitiatingProcessFileName, ProcessCommandLine, FileName
+)
+| sort by TimeGenerated desc
