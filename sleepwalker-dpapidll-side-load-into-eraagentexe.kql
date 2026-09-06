@@ -1,0 +1,12 @@
+// Reference: https://detections.ai/inspirations/01a038d3-353b-751f-96a4-fe737792705c
+DeviceImageLoadEvents
+| where InitiatingProcessFileName =~ "ERAAgent.exe"
+| where FileName =~ "dpapi.dll"
+| where FolderPath has "ESET"
+| join kind=inner (
+    DeviceFileCertificateInfo
+    | where IsSigned == false or IsTrusted == false
+) on $left.SHA1 == $right.SHA1
+| extend PossibleMismatch = iff(FolderPath !contains "System32" and FolderPath !contains "SysWOW64", true, false)
+| where PossibleMismatch == true
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, FileName, FolderPath, SHA1, SHA256, IsSigned, IsTrusted
