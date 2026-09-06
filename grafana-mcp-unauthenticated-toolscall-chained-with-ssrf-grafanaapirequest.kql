@@ -1,0 +1,18 @@
+// tools/list dropped from the unauthenticated trigger (normal, unauthenticated-by-design discovery call). The hardcoded "starts with http(s)://grafana" legitimate-destination check is replaced with a configurable allowlist -- a real deployment's Grafana host rarely starts with the literal string "grafana", so the old check would misclassify normal traffic to a properly configured instance as SSRF.
+let KnownGrafanaHosts = dynamic([]); // populate with your configured Grafana instance hostname(s)/URL(s) that grafana_api_request is expected to target
+let UnauthCalls = SecurityEvent
+| where isnotempty(TargetAccount) // Assumed field mapping for SessionId context
+| where TargetAccount startswith "mcp-session-"
+| where isempty(SubjectLogonId) // Assumed field mapping for AuthorizationHeader
+| where ProcessName == "tools/call"
+| project UnauthTime = TimeGenerated, SessionId = TargetAccount, SourceIP = IpAddress, UnauthTool = ProcessName;
+let SSRFCalls = SecurityEvent
+| where ProcessName == "grafana_api_request"
+| where isnotempty(CommandLine) // Assumed field mapping for XGrafanaUrlHeader
+| where array_length(KnownGrafanaHosts) == 0 or not(CommandLine has_any (KnownGrafanaHosts))
+| project SSRFTime = TimeGenerated, SessionId = TargetAccount, SourceIP = IpAddress, XGrafanaUrlHeader = CommandLine, HttpMethod = ParentProcessName, RequestPath = ProcessName;
+UnauthCalls
+| join kind=inner (SSRFCalls) on SessionId, SourceIP
+| where SSRFTime > UnauthTime and SSRFTime - UnauthTime < 10m
+| project UnauthTime, SSRFTime, SessionId, SourceIP, UnauthTool, XGrafanaUrlHeader, HttpMethod, RequestPath
+| sort by SSRFTime desc
