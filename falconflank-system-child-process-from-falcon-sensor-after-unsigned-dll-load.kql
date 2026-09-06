@@ -4,8 +4,12 @@ let FalconProcessNames = dynamic(["CSFalconService", "CSFalconContainer", "falco
 let SuspiciousDllLoads = DeviceImageLoadEvents
 | where TimeGenerated > ago(1d)
 | where InitiatingProcessFileName in~ (FalconProcessNames) or InitiatingProcessFolderPath has "CrowdStrike"
-| where Signature == "Unsigned" or SignatureStatus != "Verified"
-| project DeviceId, LoadTime = TimeGenerated, LoadedDllFileName = FileName, InitiatingProcessFileName, InitiatingProcessFolderPath, Signature, SignatureStatus;
+| join kind=leftouter (
+    DeviceFileCertificateInfo
+    | project SHA1, IsSigned, IsTrusted
+) on SHA1
+| where (isnotnull(IsSigned) and IsSigned == false) or (isnotnull(IsTrusted) and IsTrusted == false)
+| project DeviceId, LoadTime = TimeGenerated, LoadedDllFileName = FileName, InitiatingProcessFileName, InitiatingProcessFolderPath, IsSigned, IsTrusted;
 DeviceProcessEvents
 | where TimeGenerated > ago(1d)
 | where FileName in~ ("cmd.exe", "conhost.exe")
