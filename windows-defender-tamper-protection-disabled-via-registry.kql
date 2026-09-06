@@ -1,0 +1,6 @@
+DeviceRegistryEvents
+| where RegistryKey has @"SOFTWARE\Microsoft\Windows Defender\Features\TamperProtection"
+| where ActionType in ("RegistryValueSet", "RegistryKeyValueSet")
+| where RegistryValueName =~ "TamperProtection"
+| where RegistryValueData in ("0", "0x0")
+| project TimeGenerated, DeviceName, InitiatingProcessAccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, RegistryKey, RegistryValueName, RegistryValueData
