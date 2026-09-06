@@ -3,7 +3,7 @@
 // Tunable: drive letter allowlist below
 let DriveLetters = dynamic(["D:","E:","F:","G:","H:","I:"]); // guard-rail candidate letters only; the real match below requires the write's drive letter to equal the letter reported by the mount event itself
 let ExecWindow = 10m; // tunable execution time window after mount/write
-let RestrictParent = false; // tunable: set true to restrict to explorer.exe/powershell.exe initiators
+let RestrictParent = bool(false); // tunable: set true to restrict to explorer.exe/powershell.exe initiators
 let AllowedParents = dynamic(["explorer.exe","powershell.exe"]);
 let MountEvents = DeviceEvents
 | where ActionType in ("UsbDriveMounted", "PnpDeviceConnected")
