@@ -1,0 +1,14 @@
+// Reference: https://detections.ai/inspirations/01a038d3-353b-751f-96a4-fe737792705c
+let dpapisvcLoad = DeviceImageLoadEvents
+| where InitiatingProcessFileName =~ "ERAAgent.exe" or FileName =~ "ERAAgent.exe"
+| where FolderPath has "dpapisvc.dll" or FileName =~ "dpapisvc.dll"
+| project LoadTime = TimeGenerated, DeviceId, DeviceName, InitiatingProcessId, InitiatingProcessFileName;
+let eraTerminate = DeviceProcessEvents
+| where FileName =~ "ERAAgent.exe"
+| where ActionType in ("ProcessStopped", "ProcessTerminated")
+| project StopTime = TimeGenerated, DeviceId, DeviceName, ProcessId, ProcessCommandLine;
+dpapisvcLoad
+| join kind=inner (eraTerminate) on DeviceId
+| where StopTime between (LoadTime .. (LoadTime + 30s))
+| project DeviceId, DeviceName, LoadTime, StopTime, InitiatingProcessId, ProcessId, ProcessCommandLine
+| sort by StopTime desc
