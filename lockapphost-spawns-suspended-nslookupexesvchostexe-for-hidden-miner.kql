@@ -1,0 +1,9 @@
+DeviceProcessEvents
+| where FileName in~ ("nslookup.exe", "svchost.exe")
+| where InitiatingProcessFileName has "LockAppHost"
+| project TimeGenerated, DeviceName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, AccountName
+| extend UnexpectedParent = case(
+    FileName =~ "svchost.exe" and InitiatingProcessFileName !~ "services.exe", true,
+    FileName =~ "nslookup.exe" and InitiatingProcessFileName !in~ ("cmd.exe", "powershell.exe", "explorer.exe"), true,
+    false)
+| where UnexpectedParent == true
