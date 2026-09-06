@@ -1,0 +1,16 @@
+// Detect the Grafana MCP server process making repeated outbound connections to internal/private destinations it has NOT been observed contacting in the preceding 14 days, consistent with server-mediated lateral probing via grafana_api_request SSRF (X-Grafana-URL). Routine polling of its configured data sources (Prometheus, Loki, the Grafana instance itself, etc.) is baselined out rather than treated as an anomaly.
+let KnownGrafanaDataSourceIPs = dynamic([]); // populate with your configured Grafana instance / data source IPs to exclude expected polling traffic
+let BaselineIPs = DeviceNetworkEvents
+| where InitiatingProcessFileName has_any ("mcp-grafana", "grafana-mcp")
+| where TimeGenerated between (ago(14d) .. ago(1h))
+| where ipv4_is_in_any(RemoteIP, "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "169.254.0.0/16")
+| distinct RemoteIP;
+DeviceNetworkEvents
+| where TimeGenerated > ago(1h)
+| where InitiatingProcessFileName has_any ("mcp-grafana", "grafana-mcp")
+| where ipv4_is_in_any(RemoteIP, "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "169.254.0.0/16")
+| where RemoteIP !in (KnownGrafanaDataSourceIPs)
+| join kind=leftanti BaselineIPs on RemoteIP
+| summarize NewInternalDestinations = dcount(RemoteIP), Destinations = make_set(RemoteIP, 50), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by InitiatingProcessFileName, InitiatingProcessAccountName, DeviceName
+| where NewInternalDestinations >= 5
+| extend Reason = "MCP server process contacted multiple previously-unseen internal/private destinations outside its established baseline, indicating possible server-mediated lateral movement via SSRF-capable tool invocation rather than routine polling of configured data sources"
