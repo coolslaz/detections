@@ -1,0 +1,5 @@
+DeviceProcessEvents
+| where InitiatingProcessParentFileName in~ ("mshta.exe", "powershell.exe")
+| where FileName in~ ("powershell.exe", "cmd.exe", "sc.exe", "netsh.exe", "reg.exe")
+| where ProcessCommandLine has_any ("Set-MpPreference", "Add-MpPreference", "DisableRealtimeMonitoring", "DisableBehaviorMonitoring", "DisableIOAVProtection", "DisableScriptScanning", "-ExclusionPath", "-ExclusionProcess") or (FileName =~ "sc.exe" and ProcessCommandLine has_any ("stop", "config") and ProcessCommandLine has_any ("WinDefend", "SecurityHealthService", "wscsvc")) or (FileName =~ "netsh.exe" and ProcessCommandLine has "advfirewall" and ProcessCommandLine has "disable")
+| project TimeGenerated, DeviceName, InitiatingProcessParentFileName, FileName, ProcessCommandLine, AccountName
