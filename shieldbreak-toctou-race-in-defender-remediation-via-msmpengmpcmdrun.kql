@@ -10,6 +10,6 @@ let raceWindow = 5s;
 let minInvocations = 3;
 let RemediationActivity = 
     DeviceProcessEvents
-    | where Timestamp > ago(lookback)
+    | where TimeGenerated > ago(lookback)
     | where FileName in~ ("mpcmdrun.exe", "MsMpEng.exe");
 RemediationActivity
