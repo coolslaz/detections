@@ -1,0 +1,6 @@
+// Detects second-stage code execution when PHP/web server processes (Magento) spawn unexpected child processes consistent with StyleSmuggler's log-poisoning payload executing during rendering of the 'Payment Transaction Failed Reminder' email
+DeviceProcessEvents
+| where InitiatingProcessFileName has_any ("php", "php-fpm", "php-cgi", "apache2", "httpd", "nginx", "cron")
+| where FileName in~ ("sh", "bash", "dash", "curl", "wget", "python", "python3", "perl", "nc", "ncat", "socat")
+| where ProcessCommandLine has_any ("X_TRACE_", "var/report/", "var/log/system.log")
+ | project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, AccountName
