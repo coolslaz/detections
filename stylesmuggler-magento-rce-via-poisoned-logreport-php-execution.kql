@@ -1,0 +1,6 @@
+// Detect StyleSmuggler exploitation: PHP process spawned unexpectedly by web server or php-fpm reading/executing Magento log or report files (var/report, var/log/system.log) as part of template rendering RCE chain
+DeviceProcessEvents
+| where InitiatingProcessFileName in~ ("php", "php-fpm", "php-cgi", "nginx", "httpd", "apache2")
+| where FileName in~ ("php", "php-fpm", "php-cgi", "sh", "bash")
+| where ProcessCommandLine has_any ("var/report", "var/log/system.log", "X_TRACE_")
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, AccountName
