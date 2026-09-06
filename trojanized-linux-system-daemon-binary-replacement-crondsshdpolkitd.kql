@@ -9,5 +9,5 @@ DeviceFileEvents
     | where FileName in~ ("systemctl", "service", "init")
     | where ProcessCommandLine has_any ("crond", "sshd", "polkitd", "restart", "start")
 ) on DeviceId
-| where ProcessCreationTime between (Timestamp .. (Timestamp + 5m))
-| summarize Events = make_set(ActionType, 10), CommandLines = make_set(ProcessCommandLine, 10), Timestamps = make_list(Timestamp, 10) by DeviceId, FileName, FolderPath, SHA256, Timestamp, ProcessCommandLine, ProcessCreationTime
+| where ProcessCreationTime between (TimeGenerated .. (TimeGenerated + 5m))
+| summarize Events = make_set(ActionType, 10), CommandLines = make_set(ProcessCommandLine, 10), Timestamps = make_list(TimeGenerated, 10) by DeviceId, FileName, FolderPath, SHA256, TimeGenerated, ProcessCommandLine, ProcessCreationTime
