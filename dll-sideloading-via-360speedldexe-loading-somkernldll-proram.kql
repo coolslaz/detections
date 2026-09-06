@@ -1,0 +1,8 @@
+let ImageLoads = DeviceImageLoadEvents
+| where InitiatingProcessFileName =~ "360speedld.exe" or InitiatingProcessVersionInfoOriginalFileName =~ "SoftupNotify.exe"
+| where FileName =~ "somkernl.dll"
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessVersionInfoOriginalFileName, InitiatingProcessFolderPath, FileName, FolderPath, SHA256, InitiatingProcessAccountName;
+let ProcessExec = DeviceProcessEvents
+| where FileName =~ "360speedld.exe" or ProcessVersionInfoOriginalFileName =~ "SoftupNotify.exe"
+| project TimeGenerated, DeviceName, InitiatingProcessFileName=FileName, InitiatingProcessVersionInfoOriginalFileName=ProcessVersionInfoOriginalFileName, InitiatingProcessFolderPath=FolderPath, FileName="", FolderPath="", SHA256, InitiatingProcessAccountName=AccountName;
+union ImageLoads, ProcessExec
