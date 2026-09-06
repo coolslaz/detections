@@ -1,0 +1,4 @@
+DeviceProcessEvents
+| where FileName =~ "mshta.exe"
+| where ProcessCommandLine has "http" and ProcessCommandLine contains "timelevel12.com"
+| project TimeGenerated, DeviceName, AccountName, InitiatingProcessFileName, FileName, ProcessCommandLine, InitiatingProcessCommandLine
