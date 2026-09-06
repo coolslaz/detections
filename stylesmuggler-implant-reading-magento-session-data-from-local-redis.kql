@@ -1,0 +1,7 @@
+DeviceNetworkEvents
+| where RemotePort == 6379
+| where LocalIP == RemoteIP or RemoteIP startswith "127." or RemoteIP == "::1"
+| where InitiatingProcessFileName !in~ ("php-fpm", "php", "php-fpm7", "php-fpm8", "redis-server", "redis-cli", "nginx", "apache2", "httpd")
+| summarize ConnectionCount = count(), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by DeviceId, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessId, RemoteIP, RemotePort
+| where ConnectionCount >= 20
+| sort by ConnectionCount desc
