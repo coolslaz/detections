@@ -7,20 +7,16 @@ EmailEvents
 | extend ReplyToDomain = tostring(split(ReplyToAddress, "@")[1])
 | extend ReplyToMismatch = isnotempty(ReplyToDomain) and ReplyToDomain != SenderDomain
 | extend SubjectLower = tolower(Subject)
-| extend MatchedKeywords = array_concat(dynamic([]), pack_array(SuspiciousKeywords))
-| mv-apply Keyword = SuspiciousKeywords to typeof(string) on (
-    where SubjectLower has Keyword
-    | summarize MatchedKeywords = make_set(Keyword)
-)
-| where isnotempty(MatchedKeywords) or ReplyToMismatch
+| extend HasSuspiciousKeyword = SubjectLower has_any (SuspiciousKeywords)
+| where HasSuspiciousKeyword or ReplyToMismatch
 | where AttachmentCount == 0 and UrlCount == 0
 | summarize RecipientCount = dcount(RecipientEmailAddress),
             Recipients = make_set(RecipientEmailAddress, 50),
-            MatchedKeywordSet = make_set(MatchedKeywords, 20),
+            SuspiciousKeywordHits = countif(HasSuspiciousKeyword),
             ReplyToMismatchCount = countif(ReplyToMismatch),
             FirstSeen = min(TimeGenerated),
             LastSeen = max(TimeGenerated)
     by SenderFromAddress, SenderDomain, bin(TimeGenerated, 1h)
 | where RecipientCount >= 5
-| where ReplyToMismatchCount > 0 or array_length(MatchedKeywordSet) > 0
+| where ReplyToMismatchCount > 0 or SuspiciousKeywordHits > 0
 | order by RecipientCount desc
