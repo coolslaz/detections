@@ -1,0 +1,15 @@
+// Detects Grafana MCP tool dispatcher events where PRIVILEGED tool calls (tools/call) executed on session-format continuity alone, without an inbound caller identity claim (bearer token / Authorization header), consistent with pre-v1.1.0 session spoofing (CVE-2026-19516).
+// NOTE: bearer-token auth is OPT-IN (added in v1.1.0) -- absence of an Authorization header is the default for ALL traffic on unconfigured deployments too, so this is only high-confidence where auth is known to be enabled. tools/list is excluded (normal, unauthenticated-by-design discovery), and a repeat threshold replaces the prior single-call trigger.
+let McpToolEvents = union isfuzzy=true
+    (CommonSecurityLog | where DeviceVendor has "Grafana" or Activity has "mcp"),
+    (AuditLogs | where LoggedByService has "mcp" or OperationName has "tools/call");
+McpToolEvents
+| where isnotempty(RequestURL) or isnotempty(OperationName) or isnotempty(Activity)
+| extend McpSessionId = extract(@"(mcp-session-[0-9a-fA-F-]+)", 1, tostring(coalesce(RequestURL, AdditionalFields, Activity)))
+| extend ToolName = extract(@"(tools/call)", 1, tostring(coalesce(RequestURL, AdditionalFields, Activity)))
+| where isnotempty(McpSessionId) and isnotempty(ToolName)
+| extend HasAuthHeader = tostring(coalesce(AuthorizationHeader, RequestHeaders)) has_any ("Authorization", "Bearer")
+| where HasAuthHeader == false
+| project TimeGenerated, McpSessionId, ToolName, SourceIP = coalesce(SourceIP, ClientIP), HasAuthHeader
+| summarize ToolCalls = count(), Tools = make_set(ToolName, 10), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by McpSessionId, SourceIP
+| where ToolCalls >= 3
