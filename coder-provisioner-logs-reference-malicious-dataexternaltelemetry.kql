@@ -1,0 +1,10 @@
+// Detects the sentinel string 'data.external.telemetry' in Coder provisioner job logs
+// indicating execution of the backdoored Terraform module's data-collection logic
+let ExposureStart = datetime(2026-08-31T07:35:00Z);
+let ExposureEnd = datetime(2026-08-31T21:45:00Z);
+union isfuzzy=true
+    Syslog,
+    CommonSecurityLog
+| where * has "data.external.telemetry"
+| extend InExposureWindow = TimeGenerated between (ExposureStart .. ExposureEnd)
+| project-reorder TimeGenerated, InExposureWindow
