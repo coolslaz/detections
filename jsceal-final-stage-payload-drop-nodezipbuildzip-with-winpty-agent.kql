@@ -1,0 +1,8 @@
+DeviceFileEvents
+| where FileName in~ ("node.zip", "build.zip", "winpty-agent.exe", "winpty.dll")
+| summarize Artifacts = make_set(FileName, 10), FolderPaths = make_set(FolderPath, 10), Timestamps = make_set(TimeGenerated, 10) by DeviceId, InitiatingProcessFileName, InitiatingProcessCommandLine
+| where Artifacts has "winpty-agent.exe" or Artifacts has "winpty.dll"
+| where Artifacts has "node.zip" or Artifacts has "build.zip"
+| where FolderPaths has_any ("AppData\\Local\\Temp", "AppData\\Roaming", "ProgramData", "Users\\Public")
+| where not(FolderPaths has_any ("node_modules", "Program Files"))
+| project DeviceId, InitiatingProcessFileName, InitiatingProcessCommandLine, Artifacts, FolderPaths, Timestamps
