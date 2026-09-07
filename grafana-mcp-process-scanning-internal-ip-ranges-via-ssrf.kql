@@ -1,0 +1,19 @@
+// Baseline: internal/private destinations mcp-grafana has legitimately contacted over the prior 14 days (its configured data sources, the Grafana instance itself, etc.)
+let KnownGrafanaDataSourceIPs = dynamic([]); // populate with your configured Grafana instance / data source IPs to exclude expected polling traffic
+let BaselineIPs = DeviceNetworkEvents
+| where InitiatingProcessFileName has "mcp-grafana"
+| where TimeGenerated between (ago(14d) .. ago(1h))
+| where ipv4_is_private(RemoteIP) or ipv4_is_match(RemoteIP, "127.0.0.0/8") or ipv4_is_match(RemoteIP, "169.254.0.0/16")
+| distinct RemoteIP;
+// Detection: only count internal destinations NEW to this host (not in baseline, not allowlisted) -- routine polling of known data sources no longer trips this, only fan-out to previously-unseen internal hosts
+DeviceNetworkEvents
+| where TimeGenerated > ago(1h)
+| where InitiatingProcessFileName has "mcp-grafana"
+| where ActionType in ("ConnectionSuccess", "ConnectionFailed", "ConnectionAttempt")
+| where ipv4_is_private(RemoteIP) or ipv4_is_match(RemoteIP, "127.0.0.0/8") or ipv4_is_match(RemoteIP, "169.254.0.0/16")
+| where RemoteIP !in (KnownGrafanaDataSourceIPs)
+| join kind=leftanti BaselineIPs on RemoteIP
+| summarize NewInternalDestinations = dcount(RemoteIP), IPList = make_set(RemoteIP, 50), TotalConnections = count(), Ports = make_set(RemotePort, 25) by DeviceName, InitiatingProcessFileName, bin(TimeGenerated, 5m)
+| where NewInternalDestinations >= 5 and TotalConnections >= 20
+| project TimeGenerated = bin(TimeGenerated, 5m), DeviceName, InitiatingProcessFileName, NewInternalDestinations, TotalConnections, IPList, Ports
+| sort by TotalConnections desc
