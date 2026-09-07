@@ -1,0 +1,5 @@
+alert tcp any any -> 199.91.220.205 any (msg:"Connection to rogue registry.coder.com hosting IP (Coder supply chain compromise)"; flow:to_server; metadata: author Arnold Chan, created_at 2026-08-31, mitre_technique_id T1584.004, mitre_technique_id T1195.002, mitre_technique_id T1195.001, mitre_technique_id T1584.001; classtype:trojan-activity; sid:1000201; rev:1;)
+
+alert dns any any -> any any (msg:"DNS query for registry.coder.com during known rogue IP pool compromise window"; dns.query; content:"registry.coder.com"; nocase; metadata: author detections.ai, created_at 2026-08-31, mitre_technique_id T1584.004, mitre_technique_id T1195.002; classtype:bad-unknown; sid:1000202; rev:1;)
+
+alert http any any -> 199.91.220.205 any (msg:"HTTP request to rogue Coder registry IP serving backdoored Terraform modules"; flow:to_server,established; http.host; content:"registry.coder.com"; nocase; metadata: author detections.ai, created_at 2026-08-31, mitre_technique_id T1195.002, mitre_technique_id T1195.001; classtype:trojan-activity; sid:1000203; rev:1;)
