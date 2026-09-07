@@ -1,0 +1,13 @@
+// Detects potential session replay attacks against Google accounts where a session token/cookie is reused from an anomalous device or IP without a corresponding normal interactive authentication (password + MFA) flow, consistent with JSCeal stolen-cookie session reconstruction
+// This approximates impossible-travel/session-replay detection using country-boundary crossing as a proxy signal. Mature environments should replace the DistinctCountries check with a true geo-velocity (distance/time) calculation if latitude/longitude fields are available, since country-level checks can still miss travel within large countries or short cross-border hops.
+CloudAppEvents
+| where Application has "Google Workspace"
+| where ActionType in ("Login", "LoginSuccess", "UserLoginSuccess")
+| extend DeviceInfo = tostring(RawEventData.device_id), SessionId = tostring(RawEventData.session_id)
+| where isnotempty(SessionId)
+| summarize DistinctIPs = dcount(IPAddress), IPList = make_set(IPAddress, 10), DistinctDevices = dcount(DeviceInfo), DeviceList = make_set(DeviceInfo, 10), DistinctCountries = dcount(CountryCode), Countries = make_set(CountryCode, 10), Timestamps = make_list(TimeGenerated, 10) by SessionId, AccountId
+| where DistinctCountries > 1
+| extend LatestTimestamp = todynamic(Timestamps)[array_length(todynamic(Timestamps))-1], FirstTimestamp = todynamic(Timestamps)[0]
+| extend TimeSpanMinutes = datetime_diff('minute', todatetime(LatestTimestamp), todatetime(FirstTimestamp))
+| where TimeSpanMinutes < 60
+| project AccountId, SessionId, DistinctIPs, IPList, DistinctDevices, DeviceList, DistinctCountries, Countries, TimeSpanMinutes
