@@ -1,0 +1,26 @@
+// Detects periodic screenshot capture behavior consistent with JSCeal's surveillance module
+// JSCeal is delivered as a Node.js bundle (node.exe/electron.exe) and repeatedly invokes
+// screen capture APIs for reconnaissance/surveillance of victim activity
+// This version adds network correlation requiring an outbound connection to a public IP
+// from the same process within ~5 minutes of the screenshot burst, to separate exfiltration
+// behavior from legitimate local-only screen capture tools
+let Screenshots = DeviceEvents
+| where ActionType has_any ("ScreenshotTaken", "ScreenCapture", "ScreenCaptureApiCalled")
+| where InitiatingProcessFileName in~ ("node.exe", "electron.exe")
+| where InitiatingProcessFolderPath !contains "node_modules"
+| where InitiatingProcessFolderPath !contains "Program Files"
+| where InitiatingProcessFolderPath has_any (@"AppData\Local\Temp", @"AppData\Roaming", "ProgramData", @"Users\Public")
+| where InitiatingProcessParentFileName !in~ ("Slack.exe", "Discord.exe", "Teams.exe", "Zoom.exe", "obs64.exe", "TeamViewer.exe", "AnyDesk.exe")
+| summarize ScreenshotCount = count(), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), Files = make_set(InitiatingProcessFolderPath, 5)
+    by DeviceId, InitiatingProcessFileName, InitiatingProcessId
+| where ScreenshotCount >= 3
+| where LastSeen - FirstSeen <= 10m;
+let PublicEgress = DeviceNetworkEvents
+| where isnotempty(RemoteIP)
+| where not(ipv4_is_match(RemoteIP, "10.0.0.0/8")) and not(ipv4_is_match(RemoteIP, "172.16.0.0/12")) and not(ipv4_is_match(RemoteIP, "192.168.0.0/16")) and not(ipv4_is_match(RemoteIP, "127.0.0.0/8"))
+| project DeviceId, InitiatingProcessId, RemoteIP, RemoteUrl, NetTimeGenerated = TimeGenerated;
+Screenshots
+| join kind=inner PublicEgress on DeviceId, InitiatingProcessId
+| where NetTimeGenerated between ((FirstSeen - 5m) .. (LastSeen + 5m))
+| summarize OutboundIPs = make_set(RemoteIP, 5) by DeviceId, InitiatingProcessFileName, InitiatingProcessId, ScreenshotCount, FirstSeen, LastSeen, Files
+| project DeviceId, InitiatingProcessFileName, InitiatingProcessId, ScreenshotCount, FirstSeen, LastSeen, Files, OutboundIPs
