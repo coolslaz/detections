@@ -1,0 +1,7 @@
+DeviceProcessEvents
+| where FileName has_any ("ProManager.exe", "ProManagerServicedc894.exe")
+| where FolderPath !has @"\Program Files\" and FolderPath !has @"\Program Files (x86)\"
+| where FolderPath has_any (@"\AppData\", @"\Temp\", @"\ProgramData\", @"\Users\Public\")
+| extend ParentFileName = InitiatingProcessFileName
+| project TimeGenerated, DeviceName, FileName, FolderPath, ProcessCommandLine, ParentFileName, InitiatingProcessCommandLine, AccountName, SHA256
+| sort by TimeGenerated desc
