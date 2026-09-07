@@ -1,0 +1,14 @@
+union (
+    DeviceProcessEvents
+    | where TimeGenerated between (datetime(2026-08-31 07:35:00) .. datetime(2026-08-31 21:45:00))
+    | where FileName =~ "terraform.exe" or FileName =~ "terraform"
+    | where ProcessCommandLine has_any ("init", "apply", "plan")
+    | where ProcessCommandLine has "registry.coder.com" or InitiatingProcessCommandLine has "registry.coder.com" or ProcessCommandLine has "coder"
+    | project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
+), (
+    DeviceNetworkEvents
+    | where TimeGenerated between (datetime(2026-08-31 07:35:00) .. datetime(2026-08-31 21:45:00))
+    | where RemoteUrl has "registry.coder.com" or RemoteIP == "199.91.220.205"
+    | project TimeGenerated, DeviceName, AccountName = InitiatingProcessAccountName, FileName = InitiatingProcessFileName, ProcessCommandLine = InitiatingProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
+)
+| sort by TimeGenerated asc
