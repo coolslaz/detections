@@ -1,0 +1,15 @@
+alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"REVSTEALER EtherHiding - eth_call to Polygon C2 dead-drop contract"; flow:to_server,established; http.method; content:"POST"; http.request_body; content:"eth_call"; content:"0x4965e13f"; distance:0; content:"0xa612754454c845ffb0258dc2ef57e3529e80e37d"; nocase; distance:0; fast_pattern; http.host; content:"polygon"; nocase; metadata: author Arnold Chan, created_at 2025-01-01, mitre_technique_id T1102.002, mitre_technique_id T1573.001, mitre_technique_id T1568.002; classtype:command-and-control; sid:1000201; rev:1;)
+
+alert tls $HOME_NET any -> $EXTERNAL_NET any (msg:"REVSTEALER EtherHiding - TLS connection to hardcoded Polygon C2 fallback domain"; flow:to_server,established; tls.sni; content:"polygon.iwmukj.xyz"; nocase; sid:1000202; rev:1; metadata: author detections.ai, created_at 2025-01-01, mitre_technique_id T1102.001;)
+
+alert tls $HOME_NET any -> $EXTERNAL_NET any (msg:"REVSTEALER EtherHiding - TLS connection to hardcoded Polygon C2 fallback domain"; flow:to_server,established; tls.sni; content:"polygon.mnyhgxda.xyz"; nocase; sid:1000203; rev:1; metadata: author detections.ai, created_at 2025-01-01, mitre_technique_id T1102.001;)
+
+alert tls $HOME_NET any -> $EXTERNAL_NET any (msg:"REVSTEALER EtherHiding - TLS connection to known public Polygon RPC endpoint used as C2 dead-drop resolver"; flow:to_server,established; tls.sni; content:"polygon-bor-rpc.publicnode.com"; nocase; sid:1000204; rev:1; metadata: author detections.ai, created_at 2025-01-01, mitre_technique_id T1102.001, mitre_technique_id T1568;)
+
+alert tls $HOME_NET any -> $EXTERNAL_NET any (msg:"REVSTEALER EtherHiding - TLS connection to known public Polygon RPC endpoint used as C2 dead-drop resolver"; flow:to_server,established; tls.sni; content:"poly.api.pocket.network"; nocase; sid:1000205; rev:1; metadata: author detections.ai, created_at 2025-01-01, mitre_technique_id T1102.001, mitre_technique_id T1568;)
+
+alert tls $HOME_NET any -> $EXTERNAL_NET any (msg:"REVSTEALER EtherHiding - TLS connection to known public Polygon RPC endpoint used as C2 dead-drop resolver"; flow:to_server,established; tls.sni; content:"polygon.lava.build"; nocase; sid:1000206; rev:1; metadata: author detections.ai, created_at 2025-01-01, mitre_technique_id T1102.001, mitre_technique_id T1568;)
+
+alert tls $HOME_NET any -> $EXTERNAL_NET any (msg:"REVSTEALER EtherHiding - TLS connection to known public Polygon RPC endpoint used as C2 dead-drop resolver"; flow:to_server,established; tls.sni; content:"polygon-public.nodies.app"; nocase; sid:1000207; rev:1; metadata: author detections.ai, created_at 2025-01-01, mitre_technique_id T1102.001, mitre_technique_id T1568;)
+
+alert tls $HOME_NET any -> $EXTERNAL_NET any (msg:"REVSTEALER EtherHiding - TLS connection to known public Polygon RPC endpoint used as C2 dead-drop resolver"; flow:to_server,established; tls.sni; content:"polygon.drpc.org"; nocase; sid:1000208; rev:1; metadata: author detections.ai, created_at 2025-01-01, mitre_technique_id T1102.001, mitre_technique_id T1568;)
