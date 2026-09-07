@@ -1,0 +1,19 @@
+// Detects non-interactive sign-ins using OIDC or one-time external auth provider tokens shortly after the Coder registry compromise exposure window (2026-08-31 07:35-21:45 UTC), which may indicate use of tokens harvested by the malicious dlp.sh/dlp-docker.sh modules from Coder workspace provisioners.
+let ExposureStart = datetime(2026-08-31T07:35:00Z);
+let ExposureEnd = datetime(2026-08-31T21:45:00Z);
+SigninLogs
+| where TimeGenerated > ExposureEnd
+| where TimeGenerated < ExposureEnd + 14d
+// non-interactive sign-ins are consistent with token replay rather than fresh user-driven auth
+| where IsInteractive == false
+// single-factor auth requirement on a non-interactive sign-in suggests a stolen refresh/OIDC token bypassing MFA prompts
+| where AuthenticationRequirement == "singleFactorAuthentication"
+| where RiskState in ("atRisk", "confirmedCompromised") or RiskLevelDuringSignIn in ("medium", "high")
+| extend TokenType = case(
+    ResourceDisplayName has "OIDC" or AppDisplayName has "OIDC", "OIDC token",
+    ResourceDisplayName has_any ("external auth", "external-auth", "externalauth"), "one-time external auth token",
+    "other"
+)
+| where TokenType != "other"
+| project TimeGenerated, UserPrincipalName, AppDisplayName, ResourceDisplayName, TokenType, IPAddress, Location, RiskState, RiskLevelDuringSignIn, AuthenticationRequirement, CorrelationId
+| sort by TimeGenerated asc
