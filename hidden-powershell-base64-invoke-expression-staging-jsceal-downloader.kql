@@ -1,0 +1,15 @@
+DeviceProcessEvents
+| where FileName =~ "powershell.exe"
+| where ProcessCommandLine has "-WindowStyle" and ProcessCommandLine has "Hidden"
+| where ProcessCommandLine has "-Command"
+| where ProcessCommandLine has "Invoke-Expression"
+| where ProcessCommandLine has "System.Text.Encoding"
+| where ProcessCommandLine has "FromBase64String"
+| where ProcessCommandLine has "-NoProfile" or ProcessCommandLine has "-NonInteractive"
+| where strlen(ProcessCommandLine) > 400
+| where InitiatingProcessFileName !in~ ("MsSense.exe", "SenseIR.exe", "MonitoringHost.exe")
+| extend EncodedPayload = extract("FromBase64String\\(['\"]([A-Za-z0-9+/=]+)['\"]\\)", 1, ProcessCommandLine)
+| where isnotempty(EncodedPayload)
+| extend DecodedPayload = base64_decode_tostring(EncodedPayload)
+| where DecodedPayload has_any ("node.exe", "Net.WebClient", "DownloadFile", "DownloadString", "Expand-Archive", ".zip")
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, DecodedPayload, InitiatingProcessFileName, InitiatingProcessCommandLine
