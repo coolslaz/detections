@@ -1,0 +1,14 @@
+// Detect unauthorized administrative changes to Cloudflare DNS/IP pool configuration tied to registry.coder.com
+// Data source: CommonSecurityLog (CEF) -- Cloudflare Logpush/audit events forwarded via CEF connector
+let ConfigChanges = CommonSecurityLog
+    | where DeviceVendor == "Cloudflare"
+    | where DeviceAction has_any ("update", "create", "delete")
+    | where Message has "registry.coder.com" or DestinationHostName has "registry.coder.com" or FileName has "registry.coder.com"
+    | project TimeGenerated, SourceUserName, SourceIP, DeviceAction, Activity, DestinationHostName, Message;
+let AccountActivity = CommonSecurityLog
+    | where DeviceVendor == "Cloudflare"
+    | where DeviceAction has_any ("login", "api_token.create", "api_token.update", "user.login")
+    | project TimeGenerated, SourceUserName, SourceIP, DeviceAction, Activity = "account_access", DestinationHostName = "", Message = "";
+ConfigChanges
+| union AccountActivity
+| sort by TimeGenerated desc
