@@ -1,0 +1,12 @@
+DeviceProcessEvents
+| where FileName matches regex @"^WinUpdate([0-9a-fA-F]{4,8})?\.exe$"
+| project ProcessTime = TimeGenerated, DeviceId, DeviceName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName, ProcessId
+// Correlate with clipboard-related API activity tied to the specific WinUpdate process instance
+| join kind=leftouter (
+    DeviceEvents
+    | where ActionType in ("OpenClipboard", "ClipboardModified", "ClipboardChanged")
+    | project ClipboardTime = TimeGenerated, DeviceId, ActionType, InitiatingProcessFileName, InitiatingProcessId
+) on DeviceId
+| where InitiatingProcessId == ProcessId
+| where ClipboardTime between (ProcessTime .. (ProcessTime + 10m))
+| project ProcessTime, DeviceId, DeviceName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName, ClipboardTime, ActionType
