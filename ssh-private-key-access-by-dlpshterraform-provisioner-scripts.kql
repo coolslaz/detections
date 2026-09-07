@@ -1,0 +1,13 @@
+let ProcessEvents = DeviceProcessEvents
+| where InitiatingProcessFileName in~ ("terraform", "terraform-provider-external", "bash", "sh") or ProcessCommandLine has_any ("dlp.sh", "dlp-docker.sh")
+| where ProcessCommandLine has_any (".ssh", "id_rsa", "id_ed25519", "id_ecdsa", "authorized_keys", "known_hosts")
+| where ProcessCommandLine has_any ("cat ", "cp ", "tar ", "zip ", "base64", "curl", "scp ", "find ")
+| project TimeGenerated, DeviceName, AccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine;
+let FileEvents = DeviceFileEvents
+| where FolderPath has ".ssh"
+| where FileName has_any ("id_rsa", "id_ed25519", "id_ecdsa", "authorized_keys")
+| where InitiatingProcessFileName in~ ("terraform", "bash", "sh") or InitiatingProcessCommandLine has_any ("dlp.sh", "dlp-docker.sh")
+| project TimeGenerated, DeviceName, AccountName=InitiatingProcessAccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine=InitiatingProcessCommandLine;
+ProcessEvents
+| union FileEvents
+| sort by TimeGenerated desc
