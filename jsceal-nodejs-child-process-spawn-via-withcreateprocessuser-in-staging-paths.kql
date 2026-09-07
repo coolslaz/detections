@@ -1,0 +1,10 @@
+DeviceProcessEvents
+| where InitiatingProcessFileName in~ ("node.exe", "winpty-agent.exe")
+| where FileName in~ ("cmd.exe", "powershell.exe", "conhost.exe", "node.exe")
+| where ProcessCommandLine has "withCreateProcessUser"
+   or InitiatingProcessCommandLine has "withCreateProcessUser"
+| where InitiatingProcessFolderPath has_any (@"AppData\Local\Temp", @"AppData\Roaming", "ProgramData", @"Users\Public")
+| where InitiatingProcessFolderPath !contains "node_modules"
+| where InitiatingProcessFolderPath !contains "Program Files"
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessFolderPath, FileName, ProcessCommandLine, FolderPath, AccountName
+| sort by TimeGenerated desc
