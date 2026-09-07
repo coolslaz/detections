@@ -1,0 +1,12 @@
+// Detect a single source IP issuing MCP tools/list discovery probes against MANY distinct destination hosts within a short window -- consistent with internet-wide/breadth-first scanning for reachable MCP servers, rather than a single legitimate client listing tools against its own one or two configured servers (a normal, expected MCP handshake call).
+// Presence/absence of an Authorization header is no longer used as a signal: bearer-token auth is opt-in (added in v1.1.0), so its absence is the default for legitimate traffic too, and previously this fired on a SINGLE unauthenticated call despite being framed as scan detection.
+CommonSecurityLog
+| where TimeGenerated > ago(1h)
+| where isnotempty(RequestURL) or isnotempty(Message)
+| where RequestURL has "tools/list" or Message has "tools/list"
+| where isnotempty(SourceIP)
+| where not(ipv4_is_match(SourceIP, "10.0.0.0/8")) and not(ipv4_is_match(SourceIP, "172.16.0.0/12")) and not(ipv4_is_match(SourceIP, "192.168.0.0/16")) and not(ipv4_is_match(SourceIP, "127.0.0.0/8")) and not(ipv4_is_match(SourceIP, "169.254.0.0/16"))
+| summarize RequestCount = count(), DistinctDestinationHosts = dcount(DestinationHostName), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), DestinationHosts = make_set(DestinationHostName, 25) by SourceIP
+| where DistinctDestinationHosts >= 5 and RequestCount >= 10
+| project SourceIP, RequestCount, DistinctDestinationHosts, FirstSeen, LastSeen, DestinationHosts
+| sort by DistinctDestinationHosts desc
