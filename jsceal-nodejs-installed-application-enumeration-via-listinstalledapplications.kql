@@ -1,0 +1,6 @@
+DeviceProcessEvents
+| where FileName in~ ("node.exe", "electron.exe")
+| where ProcessCommandLine has "listInstalledApplications"
+| where (FolderPath has_any (@"AppData\Local\Temp", @"AppData\Roaming", "ProgramData", @"Users\Public") or InitiatingProcessFolderPath has_any (@"AppData\Local\Temp", @"AppData\Roaming", "ProgramData", @"Users\Public"))
+| where not(FolderPath has_any ("node_modules", "Program Files")) and not(InitiatingProcessFolderPath has_any ("node_modules", "Program Files"))
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
