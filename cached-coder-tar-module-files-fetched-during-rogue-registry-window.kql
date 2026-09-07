@@ -1,0 +1,11 @@
+// Detects Coder database file records matching the malicious module cache pattern
+// identified during the registry.coder.com rogue IP serving window
+// Window: 2026-08-31 07:35-21:45 UTC
+// NOTE: 'CoderFiles' is an assumed table name for this environment
+let CoderFiles = datatable(mimetype:string, created_at:datetime, created_by:string, id:string, hash:string) [];
+CoderFiles
+| where mimetype == "application/x-tar"
+| where created_at between (datetime(2026-08-31 07:35:00) .. datetime(2026-08-31 21:45:00))
+| where created_by has "system"
+| project created_at, created_by, mimetype, id, hash
+| sort by created_at asc
