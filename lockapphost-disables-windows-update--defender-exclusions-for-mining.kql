@@ -1,0 +1,10 @@
+DeviceProcessEvents
+| where FileName has "LockAppHost"
+| where ProcessCommandLine has_any ("wuauserv", "Add-MpPreference", "-ExclusionPath", "-ExclusionExtension", "-ExclusionProcess", "Set-MpPreference", "DisableAntiSpyware", "DisableRealtimeMonitoring", "sc config", "sc stop", "sc.exe", "schtasks")
+| extend TamperType = case(
+    ProcessCommandLine has "wuauserv" or ProcessCommandLine has_any ("sc config", "sc stop"), "WindowsUpdateTampering",
+    ProcessCommandLine has_any ("Add-MpPreference", "-ExclusionPath", "-ExclusionExtension", "-ExclusionProcess", "Set-MpPreference", "DisableAntiSpyware", "DisableRealtimeMonitoring"), "DefenderTampering",
+    ProcessCommandLine has "schtasks", "ScheduledTaskTampering",
+    "Other")
+| project TimeGenerated, DeviceName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, AccountName, TamperType
+| sort by TimeGenerated desc
