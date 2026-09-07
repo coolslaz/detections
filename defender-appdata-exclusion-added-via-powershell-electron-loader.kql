@@ -1,0 +1,7 @@
+DeviceProcessEvents
+| where FileName in~ ("powershell.exe", "powershell_ise.exe", "pwsh.exe")
+| where ProcessCommandLine has_any ("Add-MpPreference", "Set-MpPreference")
+| where ProcessCommandLine has "ExclusionPath"
+| where ProcessCommandLine matches regex @"(?i)-ExclusionPath\s+\S*\\Users\\[^\\]+\\AppData\\(Local|Roaming)\\[A-Za-z0-9_-]{6,}"
+| where InitiatingProcessParentFileName !in~ ("msiexec.exe", "trustedinstaller.exe", "ccmexec.exe", "setup.exe")
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName
