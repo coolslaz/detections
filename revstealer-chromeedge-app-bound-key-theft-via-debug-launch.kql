@@ -1,0 +1,21 @@
+// Complementary detection surface: search for artifacts referencing the App-Bound decrypt symbol targeted by the breakpoint
+// alongside process-hollowing/debug indicators for chrome.dll or msedge.dll
+let BrowserDebugJoin = DeviceProcessEvents
+| where FileName in~ ("chrome.exe", "msedge.exe")
+| where InitiatingProcessFileName !in~ ("chrome.exe", "msedge.exe", "explorer.exe", "cmd.exe", "powershell.exe")
+| project BrowserLaunchTime = TimeGenerated, DeviceId, InitiatingProcessAccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessId
+| join kind=inner (
+    DeviceEvents
+    | where ActionType in ("CreateRemoteThreadApiCall", "ProcessInfoDebugAttach", "NtGetNextThread", "SetThreadContext", "ThreadContextSet")
+    | where AdditionalFields has_any ("DEBUG_PROCESS", "CreateDesktopW", "NtGetNextThread", "SetThreadContext", "Dr0", "EXCEPTION_SINGLE_STEP")
+    | project DebugEventTime = TimeGenerated, DeviceId, ActionType, AdditionalFields
+) on DeviceId
+| where DebugEventTime > BrowserLaunchTime and DebugEventTime <= BrowserLaunchTime + 5m
+| project TimeGenerated = DebugEventTime, DeviceId, InitiatingProcessAccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessId, ActionType, AdditionalFields;
+let CommandLineDebugFlags = DeviceProcessEvents
+| where InitiatingProcessCommandLine has_any ("DEBUG_PROCESS", "CreateDesktopW")
+| where InitiatingProcessCommandLine has_any ("chrome.exe", "msedge.exe");
+let AppBoundDecryptSymbol = DeviceEvents
+| where AdditionalFields has "OSCrypt.AppBoundProvider.Decrypt.ResultCode"
+| where AdditionalFields has_any ("chrome.dll", "msedge.dll");
+union BrowserDebugJoin, CommandLineDebugFlags, AppBoundDecryptSymbol
