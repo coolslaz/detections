@@ -1,0 +1,7 @@
+DeviceRegistryEvents
+| where ActionType in ("RegistryKeyEnumerated", "RegistryValueSet", "RegistryKeyAccessed")
+| where RegistryKey has_any (@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall", @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall")
+| where InitiatingProcessFileName !in~ ("MsiExec.exe", "explorer.exe", "regedit.exe", "TrustedInstaller.exe", "svchost.exe", "ccmexec.exe", "sensecncproxy.exe", "msmpeng.exe", "searchprotocolhost.exe", "wmiprvse.exe")
+| summarize KeyTouches = count(), DistinctSubkeys = dcount(RegistryKey), TimeGenerated = arg_max(TimeGenerated, *) by InitiatingProcessFileName, InitiatingProcessId, InitiatingProcessCommandLine, DeviceId, bin(TimeGenerated, 5m)
+| where DistinctSubkeys >= 5
+| project TimeGenerated, DeviceId, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessId, KeyTouches, DistinctSubkeys
