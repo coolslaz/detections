@@ -1,0 +1,27 @@
+let zipNames = dynamic(["node.zip", "build.zip"]);
+let ciMarkers = dynamic(["actions-runner", "azure-pipelines", "_work\\", ".jenkins"]);
+let stagingPaths = dynamic([@"AppData\Local\Temp", @"AppData\Roaming", @"ProgramData", @"Users\Public"]);
+let psZipActivity = DeviceProcessEvents
+| where FileName =~ "powershell.exe"
+| where ProcessCommandLine has_any ("node.zip", "build.zip")
+| where ProcessCommandLine has_any ("Invoke-WebRequest", "DownloadFile", "Expand-Archive", "System.IO.Compression", "wget", "curl")
+| where not(ProcessCommandLine has_any (ciMarkers))
+| project TimeGenerated, DeviceId, PsProcessId = ProcessId, PsCommandLine = ProcessCommandLine, PsAccount = AccountName;
+let zipFileDrops = DeviceFileEvents
+| where FileName in~ ("node.zip", "build.zip")
+| where FolderPath has_any (stagingPaths)
+| where not(FolderPath has_any (ciMarkers))
+| project TimeGenerated, DeviceId, FileDropName = FileName, FolderPath;
+let nodeDrop = DeviceFileEvents
+| where FileName =~ "node.exe" or FileName in~ ("winpty-agent.exe", "winpty.dll")
+| where FolderPath has_any (stagingPaths)
+| where not(FolderPath has_any (ciMarkers))
+| project TimeGenerated, DeviceId, NodeDropName = FileName, NodeFolderPath = FolderPath;
+psZipActivity
+| join kind=inner (zipFileDrops) on DeviceId
+| where (TimeGenerated1 - TimeGenerated) between (0min .. 30min)
+| join kind=inner (nodeDrop) on DeviceId
+| where (TimeGenerated2 - TimeGenerated) between (0min .. 30min)
+| project DeviceId, PsAccount, PsCommandLine, FileDropName, FolderPath, NodeDropName, NodeFolderPath, TimeGenerated, TimeGenerated1, TimeGenerated2
+| summarize ZipNames = make_set(FileDropName), DroppedArtifacts = make_set(NodeDropName), CommandLines = make_set(PsCommandLine) by DeviceId, PsAccount
+| where array_length(ZipNames) >= 1 and array_length(DroppedArtifacts) >= 1
