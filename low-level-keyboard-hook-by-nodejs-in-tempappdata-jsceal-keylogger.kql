@@ -1,0 +1,11 @@
+// Detect low-level keyboard hook installation by a Node.js process running from user-writable locations, consistent with JSCeal's keylogging surveillance module
+DeviceEvents
+| where ActionType has_any ("SetWindowsHookEx", "SetWindowsHookExApiCall", "HookProcedureInstalled")
+| where InitiatingProcessFileName =~ "node.exe"
+| extend AdditionalFieldsJson = parse_json(AdditionalFields)
+| where tostring(AdditionalFieldsJson.HookType) has_any ("WH_KEYBOARD_LL", "WH_KEYBOARD")
+| where InitiatingProcessFolderPath has_any (@"\AppData\Local\Temp\", @"\AppData\Roaming\", @"\ProgramData\", @"\Users\Public\")
+| where not(InitiatingProcessFolderPath has_any (@"\Program Files\", @"\Program Files (x86)\"))
+| where InitiatingProcessParentFileName !in ("Code.exe", "slack.exe", "Discord.exe", "Teams.exe", "Docker Desktop.exe")
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessParentFileName, ActionType, AdditionalFields
+| sort by TimeGenerated desc
