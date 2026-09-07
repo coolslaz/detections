@@ -1,0 +1,5 @@
+DeviceRegistryEvents
+| where ActionType in ("RegistryValueSet", "RegistryKeyValueSet")
+| where RegistryKey has @"Environment" and RegistryValueName =~ "UserInitMprLogonScript"
+| where RegistryValueData has "SoftManager.exe"
+| project TimeGenerated, DeviceName, InitiatingProcessAccountName, RegistryKey, RegistryValueName, RegistryValueData, InitiatingProcessFileName, InitiatingProcessCommandLine
