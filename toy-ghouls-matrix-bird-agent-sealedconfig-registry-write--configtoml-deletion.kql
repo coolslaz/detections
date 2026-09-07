@@ -5,6 +5,6 @@ DeviceRegistryEvents
     DeviceFileEvents
     | where ActionType == "FileDeleted"
     | where FileName =~ "config.toml"
-    | project DeviceId, ConfigDeletedTime = Timestamp, DeletedFileName = FileName
+    | project DeviceId, ConfigDeletedTime = TimeGenerated, DeletedFileName = FileName
 ) on DeviceId
-| project-reorder Timestamp, DeviceId, RegistryKey, RegistryValueName, ActionType, InitiatingProcessFileName, InitiatingProcessCommandLine, ConfigDeletedTime, DeletedFileName
+| project-reorder TimeGenerated, DeviceId, RegistryKey, RegistryValueName, ActionType, InitiatingProcessFileName, InitiatingProcessCommandLine, ConfigDeletedTime, DeletedFileName
