@@ -1,0 +1,15 @@
+// Detects template creation, template version updates, dry-run builds, or workspace builds with module caching disabled
+// during the known Coder registry compromise window (2026-08-31 07:35-21:45 UTC)
+// Data source: CommonSecurityLog (CEF) -- Coder audit events forwarded via CEF connector (DeviceVendor = "Coder")
+let windowStart = datetime(2026-08-31T07:35:00Z);
+let windowEnd = datetime(2026-08-31T21:45:00Z);
+CommonSecurityLog
+| where TimeGenerated between (windowStart .. windowEnd)
+| where DeviceVendor == "Coder"
+| where DeviceAction in ("template_version_create", "template_create", "workspace_build")
+     or Activity in ("template_version", "template", "workspace_build")
+| extend JobType = DeviceCustomString1
+| extend ModuleCachingEnabled = tobool(DeviceCustomString2)
+| where JobType == "dry_run" or ModuleCachingEnabled == false or DeviceAction in ("template_version_create", "template_create")
+| project TimeGenerated, DeviceAction, Activity, JobType, ModuleCachingEnabled, SourceUserName, DestinationUserName
+| sort by TimeGenerated asc
