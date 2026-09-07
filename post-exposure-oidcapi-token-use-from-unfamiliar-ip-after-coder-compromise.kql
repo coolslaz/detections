@@ -1,0 +1,30 @@
+// Detect anomalous use of OIDC tokens or cloud API keys from unfamiliar IPs/locations following the Coder registry compromise exposure window (2026-08-31 07:35-21:45 UTC)
+let exposureStart = datetime(2026-08-31T07:35:00Z);
+let exposureEnd = datetime(2026-08-31T21:45:00Z);
+let lookback = 30d;
+let postWindowSignins = 
+    AADNonInteractiveUserSignInLogs
+    | where TimeGenerated > exposureEnd
+    | where TimeGenerated < exposureEnd + 14d
+    | where ResultType == 0
+    | where AuthenticationRequirement =~ "singleFactorAuthentication" or isnotempty(TokenIssuerType)
+    | extend SourceIP = IPAddress, GeoLocation = strcat(tostring(LocationDetails.city), "_", tostring(LocationDetails.countryOrRegion))
+    | project TimeGenerated, UserPrincipalName, AppDisplayName, SourceIP, GeoLocation, ResourceDisplayName, TokenIssuerType;
+let knownBaselineIPs = 
+    AADNonInteractiveUserSignInLogs
+    | where TimeGenerated between ((exposureStart - lookback) .. exposureStart)
+    | where ResultType == 0
+    | summarize BaselineIPs = make_set(IPAddress, 1000) by UserPrincipalName;
+postWindowSignins
+| join kind=leftouter knownBaselineIPs on UserPrincipalName
+| where isempty(BaselineIPs) or not(set_has_element(BaselineIPs, SourceIP))
+| project TimeGenerated, UserPrincipalName, AppDisplayName, ResourceDisplayName, SourceIP, GeoLocation, TokenIssuerType
+| union (
+    CloudAppEvents
+    | where Timestamp > exposureEnd
+    | where Timestamp < exposureEnd + 14d
+    | where ActionType has_any ("ApiCall", "Add service principal credentials", "Consent to application", "Update application")
+    | extend SourceIP = tostring(RawEventData.IPAddress)
+    | project TimeGenerated = Timestamp, UserPrincipalName = AccountDisplayName, AppDisplayName = Application, ResourceDisplayName = ActionType, SourceIP, GeoLocation = tostring(Location.countryCode), TokenIssuerType = "CloudAPIKey"
+  )
+| sort by TimeGenerated asc
