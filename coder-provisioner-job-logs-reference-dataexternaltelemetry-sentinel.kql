@@ -1,0 +1,4 @@
+DeviceProcessEvents
+| where ProcessCommandLine has "data.external.telemetry"
+| project TimeGenerated, DeviceId, ProcessCommandLine
+| sort by TimeGenerated desc // Assuming DeviceProcessEvents as the target table for process logs
