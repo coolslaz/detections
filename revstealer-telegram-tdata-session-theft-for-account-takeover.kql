@@ -1,0 +1,7 @@
+DeviceFileEvents
+| where FolderPath has "tdata"
+| where FileName has_any ("key_datas", "settingss", "usertag")
+| where InitiatingProcessFileName !in~ ("Telegram.exe", "OneDrive.exe", "Dropbox.exe", "MsMpEng.exe", "SearchProtocolHost.exe", "backup.exe")
+| where ActionType in ("FileCreated", "FileModified", "FileRenamed", "FileCopied")
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, FolderPath, InitiatingProcessAccountName, ActionType
+| sort by TimeGenerated desc
