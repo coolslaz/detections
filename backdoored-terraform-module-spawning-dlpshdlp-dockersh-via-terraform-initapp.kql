@@ -1,0 +1,7 @@
+DeviceProcessEvents
+| where TimeGenerated between (datetime(2026-08-31T07:35:00Z) .. datetime(2026-08-31T21:45:00Z))
+| where InitiatingProcessFileName =~ "terraform.exe" or InitiatingProcessFileName =~ "terraform"
+| where InitiatingProcessCommandLine has_any ("init", "apply")
+| where FolderPath contains ".terraform" or ProcessCommandLine contains ".terraform"
+ or ProcessCommandLine has_any ("dlp.sh", "dlp-docker.sh") or ProcessCommandLine contains "data.external.telemetry"
+| project TimeGenerated, DeviceName, AccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, FolderPath
