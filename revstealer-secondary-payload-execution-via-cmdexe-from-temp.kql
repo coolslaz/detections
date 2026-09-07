@@ -1,0 +1,9 @@
+DeviceProcessEvents
+| where FileName =~ "cmd.exe"
+| where ProcessCommandLine has "/c"
+| where ProcessCommandLine contains "\\AppData\\Local\\Temp\\" or ProcessCommandLine contains "%temp%"
+| where ProcessCommandLine matches regex @"(?i)\\Temp\\[^\\]+\.exe"
+| where InitiatingProcessParentFileName !in~ ("explorer.exe")
+| where InitiatingProcessFileName !in~ ("msiexec.exe", "trustedinstaller.exe", "wuauclt.exe", "ccmsetup.exe", "ccmexec.exe")
+| where not(ProcessCommandLine matches regex @"(?i)\\Temp\\\{[0-9A-Fa-f-]{36}\}\\")
+| project TimeGenerated, DeviceName, AccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, ProcessIntegrityLevel
