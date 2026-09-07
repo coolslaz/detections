@@ -1,0 +1,7 @@
+DeviceProcessEvents
+| where FileName in~ ("sh", "bash", "dlp.sh", "dlp-docker.sh")
+| where ProcessCommandLine has_any ("dlp.sh", "dlp-docker.sh")
+| where InitiatingProcessFileName in~ ("terraform", "terraform.exe", "terraform-provider-external", "terraform-provider-external.exe")
+| where ProcessCommandLine has_any ("path.module", "external")
+| where ProcessCommandLine has "telemetry" or InitiatingProcessCommandLine has "telemetry"
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName
