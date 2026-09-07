@@ -1,0 +1,6 @@
+DeviceProcessEvents
+| where FileName =~ "schtasks.exe"
+| where ProcessCommandLine has "/create"
+| where ProcessCommandLine has_any ("WinUpdate.exe", "SoftManager.exe", "LockAppHost.exe")
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
+| order by TimeGenerated desc
