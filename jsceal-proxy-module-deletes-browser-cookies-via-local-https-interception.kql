@@ -1,0 +1,16 @@
+// Detects JSCeal's generic proxy handler activity: a Node.js/Electron-based local proxy process (T1557) staged in a temp/user-writable path selectively clearing browser cookie files (T1565.002)
+let localProxyProcs = DeviceNetworkEvents
+| where InitiatingProcessFileName in~ ("node.exe", "electron.exe")
+| where RemoteIP == "127.0.0.1" or LocalIP == "127.0.0.1"
+| where InitiatingProcessFolderPath has_any (@"AppData\Local\Temp", @"AppData\Roaming", "ProgramData", @"Users\Public")
+| where InitiatingProcessFolderPath !contains "node_modules" and InitiatingProcessFolderPath !contains "Program Files"
+| project DeviceId, ProxyPID = InitiatingProcessId, ProxyProcess = InitiatingProcessFileName, ProxyTime = TimeGenerated;
+DeviceFileEvents
+| where ActionType in ("FileDeleted", "FileModified")
+| where FileName =~ "Cookies" or FolderPath has "Network\\Cookies"
+| where InitiatingProcessFileName in~ ("node.exe", "electron.exe")
+| where FolderPath has_any ("\\Google\\Chrome\\", "\\Microsoft\\Edge\\", "\\BraveSoftware\\", "\\Opera Software\\", "\\Vivaldi\\", "\\CocCoc\\")
+| join kind=inner localProxyProcs on DeviceId, $left.InitiatingProcessId == $right.ProxyPID
+| where abs(datetime_diff('minute', Timestamp, ProxyTime)) < 30
+| project Timestamp, DeviceId, InitiatingProcessFileName, InitiatingProcessId, FolderPath, FileName, ActionType, ProxyProcess, ProxyTime
+| sort by Timestamp desc
