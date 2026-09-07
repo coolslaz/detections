@@ -1,0 +1,24 @@
+let DistinctiveNames = dynamic(["iterInstalledBrowsers", "findInstalledBrowser", "getPasswords"]);
+let ProcessEvents = DeviceProcessEvents
+| where FileName in~ ("node.exe", "electron.exe")
+| where (FolderPath contains "AppData\\Local\\Temp" or FolderPath contains "AppData\\Roaming" or FolderPath contains "ProgramData" or FolderPath contains "Users\\Public")
+    and not(FolderPath contains "node_modules" or FolderPath contains "Program Files")
+| extend PatternMatches = (iff(ProcessCommandLine has "iterInstalledBrowsers", 1, 0)) + (iff(ProcessCommandLine has "findInstalledBrowser", 1, 0)) + (iff(ProcessCommandLine has "--user-data-dir=", 1, 0)) + (iff(ProcessCommandLine has "--profile-directory=", 1, 0)) + (iff(ProcessCommandLine has "getPasswords", 1, 0))
+| where (ProcessCommandLine has_any (DistinctiveNames)) or (PatternMatches >= 2)
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, FolderPath;
+let FileEvents = DeviceFileEvents
+| where InitiatingProcessFileName in~ ("node.exe", "electron.exe")
+| where (InitiatingProcessFolderPath contains "AppData\\Local\\Temp" or InitiatingProcessFolderPath contains "AppData\\Roaming" or InitiatingProcessFolderPath contains "ProgramData" or InitiatingProcessFolderPath contains "Users\\Public")
+    and not(InitiatingProcessFolderPath contains "node_modules" or InitiatingProcessFolderPath contains "Program Files")
+| where (FolderPath contains "\\Google\\Chrome\\User Data"
+    or FolderPath contains "\\Microsoft\\Edge\\User Data"
+    or FolderPath contains "\\BraveSoftware\\Brave-Browser\\User Data"
+    or FolderPath contains "\\Opera Software\\Opera Stable"
+    or FolderPath contains "\\Opera Software\\Opera GX Stable"
+    or FolderPath contains "\\AVAST Software\\Browser\\User Data"
+    or FolderPath contains "\\Vivaldi\\User Data"
+    or FolderPath contains "\\CocCoc\\Browser\\User Data")
+| extend AccountName = InitiatingProcessAccountName
+| project TimeGenerated, DeviceName, AccountName, FileName, InitiatingProcessFileName, InitiatingProcessCommandLine, FolderPath;
+union ProcessEvents, FileEvents
+| sort by TimeGenerated desc
