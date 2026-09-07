@@ -1,0 +1,8 @@
+DeviceProcessEvents
+| where FileName in~ ("node.exe", "electron.exe")
+| where ProcessCommandLine has_any ("createBrowserContext", "newPage", "getCookies", "setCookie", "launch")
+| where ProcessCommandLine has_any (@"AppData\Local\Temp", @"AppData\Roaming", @"ProgramData", @"Users\Public")
+| where not(ProcessCommandLine has_any ("node_modules", @"Program Files"))
+| extend IndicatorMatchCount = toint(ProcessCommandLine has "createBrowserContext") + toint(ProcessCommandLine has "newPage") + toint(ProcessCommandLine has "getCookies") + toint(ProcessCommandLine has "setCookie") + toint(ProcessCommandLine has "launch")
+| where IndicatorMatchCount >= 3
+| summarize IndicatorCount = max(IndicatorMatchCount), Indicators = make_set(ProcessCommandLine, 10) by DeviceId, InitiatingProcessAccountName, FileName, ProcessCommandLine, TimeGenerated
