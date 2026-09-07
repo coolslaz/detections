@@ -1,0 +1,5 @@
+DeviceProcessEvents
+| where FileName =~ "LockAppHost.exe" or InitiatingProcessFileName =~ "LockAppHost.exe"
+| where FileName in~ ("sc.exe", "cmd.exe", "powershell.exe")
+| where ProcessCommandLine has "config" and ProcessCommandLine has "wuauserv" and ProcessCommandLine has "disabled"
+| project TimeGenerated, DeviceName, AccountName, InitiatingProcessFileName, FileName, ProcessCommandLine
