@@ -1,0 +1,12 @@
+OfficeActivity
+| where TimeGenerated > ago(1d)
+| extend Parameters = parse_json(Parameters)
+| extend QueryText = tostring(Parameters.QueryText)
+| where Operation =~ "SearchQueryPerformed"
+| where QueryText has_any ("contentclass:STS_Site", "contentclass:STS_Web") or QueryText matches regex @"indexdocid[><]\d+"
+| extend UserId = tostring(UserId), ClientIP = tostring(ClientIP)
+| summarize QueryCount = count(), DistinctQueries = dcount(QueryText), SampleQueries = make_set(QueryText, 10), TimeGenerated = max(TimeGenerated) by UserId, ClientIP, bin(TimeGenerated, 1h)
+// Tightened: raised the query floor and require most queries to be distinct (paginated indexdocid walks
+// produce many unique queries; a handful of repeats from normal browsing/refresh does not).
+| where QueryCount > 30 and DistinctQueries > 15
+| project TimeGenerated, UserId, ClientIP, QueryCount, DistinctQueries, SampleQueries
