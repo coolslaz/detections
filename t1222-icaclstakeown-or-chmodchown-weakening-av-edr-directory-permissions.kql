@@ -1,0 +1,19 @@
+let SecurityToolPaths = dynamic(["Windows Defender","CrowdStrike","SentinelOne","Symantec","McAfee","Carbon Black","Sophos","Trend Micro","Cylance","ESET"]);
+let VendorProcessNames = dynamic(["MsMpEng.exe","MpCmdRun.exe","ConfigSecurityPolicy.exe","CSFalconService.exe","CSFalconContainer.exe","SentinelAgent.exe","SentinelServiceHost.exe","SentinelUI.exe","ccSvcHst.exe","Symantec.exe","mcshield.exe","McUICnt.exe","cb.exe","RepMgr.exe","SophosUI.exe","SophosFileScanner.exe","TmListen.exe","CylanceSvc.exe","ekrn.exe"]);
+let WindowsPermAbuse = DeviceProcessEvents
+| where FileName in~ ("icacls.exe","takeown.exe")
+| where ProcessCommandLine has_any (SecurityToolPaths)
+| where FileName =~ "takeown.exe" or ProcessCommandLine has_any ("/grant","/deny","/setowner","/reset","/remove")
+| where not(InitiatingProcessFileName in~ (VendorProcessNames))
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine;
+let LinuxMacPaths = dynamic(["/opt/CrowdStrike","/opt/sentinelone","/Library/Sophos","/opt/McAfee","/opt/Symantec","/opt/carbonblack","/opt/eset","/Library/Application Support/CrowdStrike","/Library/Application Support/SentinelOne"]);
+let LinuxMacVendorProcessNames = dynamic(["falcon-sensor","falconctl","sentinelctl","SentinelAgent","savdstatus","SophosScanD","McAfeeD","cbagentd","esets_daemon"]);
+let LinuxMacPermAbuse = DeviceProcessEvents
+| where FileName in~ ("chmod","chown")
+| where ProcessCommandLine has_any (LinuxMacPaths)
+| where (FileName =~ "chmod" and ProcessCommandLine has_any ("777","666","a+w","a+rwx","o+w")) or FileName =~ "chown"
+| where not(InitiatingProcessFileName in~ (LinuxMacVendorProcessNames))
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine;
+WindowsPermAbuse
+| union LinuxMacPermAbuse
+| sort by TimeGenerated desc
