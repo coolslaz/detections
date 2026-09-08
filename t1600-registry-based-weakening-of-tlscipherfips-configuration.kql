@@ -1,0 +1,27 @@
+DeviceRegistryEvents
+| where ActionType in ("RegistryValueSet", "RegistryKeyCreated")
+| where RegistryKey has_any (
+    @"SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Ciphers",
+    @"SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols",
+    @"SYSTEM\CurrentControlSet\Control\Lsa\FipsAlgorithmPolicy"
+)
+| where (RegistryKey has "Ciphers" and RegistryValueName has_any ("AES", "Triple DES", "3DES")) 
+    or (RegistryKey has "Protocols" and RegistryValueName in~ ("Enabled", "DisabledByDefault"))
+    or (RegistryKey has "FipsAlgorithmPolicy" and RegistryValueName =~ "Enabled")
+| where (RegistryValueName =~ "Enabled" and RegistryValueData in ("0", "0x0")) 
+    or (RegistryValueName =~ "DisabledByDefault" and RegistryValueData in ("1", "0x1"))
+// Exclude approved configuration-management baseline pushes
+| where InitiatingProcessFileName !~ "gpsvc.exe"
+| where InitiatingProcessFileName !~ "gpscript.exe"
+| where InitiatingProcessFileName !~ "CcmExec.exe"
+| where InitiatingProcessFileName !~ "IntuneManagementExtension.exe"
+| where InitiatingProcessCommandLine !has "gpscript"
+| where InitiatingProcessCommandLine !has "CcmExec"
+| where InitiatingProcessCommandLine !has "IntuneManagementExtension"
+// Require interactive user-invoked process context, not SYSTEM/service accounts or compliance scans
+| where InitiatingProcessAccountName !~ "SYSTEM"
+| where InitiatingProcessAccountName !~ "LOCAL SERVICE"
+| where InitiatingProcessAccountName !~ "NETWORK SERVICE"
+| where InitiatingProcessAccountName !endswith "$"
+| where isnotempty(InitiatingProcessAccountName)
+| project TimeGenerated, DeviceName, InitiatingProcessAccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, RegistryKey, RegistryValueName, RegistryValueData, ActionType
