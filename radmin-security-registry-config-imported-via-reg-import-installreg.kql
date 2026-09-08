@@ -1,0 +1,9 @@
+DeviceProcessEvents
+| where FileName =~ "reg.exe"
+| where ProcessCommandLine has "import" and ProcessCommandLine has_any ("install.reg", "install.Reg")
+| where ProcessCommandLine has_any ("/reg:32", "/reg:64")
+| join kind=inner (
+    DeviceRegistryEvents
+    | where RegistryKey has @"SOFTWARE\Radmin\v3.0\Server\Parameters\Radmin Security"
+) on DeviceId
+| project TimeGenerated, DeviceId, DeviceName, FileName, ProcessCommandLine, FolderPath, RegistryKey, RegistryValueName, RegistryValueData, InitiatingProcessFileName, InitiatingProcessFolderPath
