@@ -1,0 +1,31 @@
+// T1563 - Remote Service Session Hijacking
+// Detects RDP session ID reuse by a different account, and SSH sessions reattached/hijacked by a different source process or user than the original session owner
+let RdpLogons = DeviceLogonEvents
+| where LogonType == "RemoteInteractive"
+| project LogonTime = TimeGenerated, DeviceId, SessionId = LogonId, OriginalAccount = AccountName, RemoteIP
+| summarize OriginalAccount = arg_min(LogonTime, OriginalAccount, RemoteIP) by DeviceId, SessionId;
+let RdpHijack = DeviceProcessEvents
+| where InitiatingProcessLogonId != "" or LogonId != ""
+| join kind=inner RdpLogons on DeviceId, $left.LogonId == $right.SessionId
+// Bound the join to a 30-minute window from the original logon time to avoid matching unrelated later logons that reused a recycled LogonId
+| where TimeGenerated between (LogonTime .. (LogonTime + 30m))
+| where AccountName != OriginalAccount
+// Exclude known remote-support/helpdesk and service/machine accounts performing expected authorized session takeover
+| where AccountName !has "svc_" and AccountName !has "helpdesk" and AccountName !has "support" and AccountName !endswith "$"
+| project TimeGenerated, DeviceId, SessionId = LogonId, HijackAccount = AccountName, OriginalAccount, FileName, ProcessCommandLine, RemoteIP
+| extend HijackType = "RDP_SessionID_Reuse";
+let SshHijack = DeviceProcessEvents
+| where FileName has_any ("sshd", "ssh")
+| where ProcessCommandLine has_any ("reattach", "screen -r", "tmux attach")
+| join kind=inner (
+    DeviceProcessEvents
+    | where FileName has_any ("sshd", "ssh")
+    | summarize OriginalAccount = arg_min(TimeGenerated, AccountName, InitiatingProcessAccountName) by DeviceId, SessionId = LogonId
+) on DeviceId, $left.LogonId == $right.SessionId
+// Only flag when the reattaching human identity differs from the original owner - a self-reattach under tmux/screen by the same user (even via a different local process/account field) is normal and excluded
+| extend ReattachAccount = iff(isnotempty(AccountName), AccountName, InitiatingProcessAccountName)
+| where ReattachAccount != OriginalAccount and (AccountName != OriginalAccount and InitiatingProcessAccountName != OriginalAccount)
+| project TimeGenerated, DeviceId, SessionId = LogonId, HijackAccount = ReattachAccount, OriginalAccount, FileName, ProcessCommandLine, InitiatingProcessAccountName
+| extend HijackType = "SSH_Session_Reattach_Hijack";
+union RdpHijack, SshHijack
+| sort by TimeGenerated desc
