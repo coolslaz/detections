@@ -1,0 +1,11 @@
+let vncFiles = DeviceFileEvents
+| where FileName in~ ("AccInfo.ini", "History.txt")
+| summarize FileCount=dcount(FileName), Files=make_set(FileName, 5), FolderPaths=make_set(FolderPath, 5), TimeGenerated=max(TimeGenerated) by DeviceId
+| where FileCount == 2
+| project DeviceId, Files, FolderPaths, TimeGenerated;
+let vncNetwork = DeviceNetworkEvents
+| where RemotePort == 10635
+| project TimeGenerated, DeviceId, DeviceName, RemoteIP, RemotePort, InitiatingProcessFileName, InitiatingProcessCommandLine;
+vncFiles
+| join kind=inner (vncNetwork) on DeviceId
+| project TimeGenerated, DeviceName, Files, FolderPaths, RemoteIP, RemotePort, InitiatingProcessFileName, InitiatingProcessCommandLine
