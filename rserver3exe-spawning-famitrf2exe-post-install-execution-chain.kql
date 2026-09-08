@@ -1,0 +1,5 @@
+DeviceProcessEvents
+| where InitiatingProcessFileName =~ "rserver3.exe"
+| where InitiatingProcessFolderPath has @"C:\intel\rserver\rserver3.exe"
+| where FileName =~ "famitrf2.exe"
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, FileName, FolderPath, ProcessCommandLine, AccountName
