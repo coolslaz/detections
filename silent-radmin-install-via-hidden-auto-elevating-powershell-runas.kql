@@ -1,0 +1,12 @@
+DeviceProcessEvents
+| where FileName =~ "powershell.exe"
+| where ProcessCommandLine has "-nop" and ProcessCommandLine has "-WindowStyle" and ProcessCommandLine has "Hidden"
+| where ProcessCommandLine has "Start-Process" and ProcessCommandLine has "-Verb" and ProcessCommandLine has "RunAs"
+| where ProcessCommandLine has "rsetup64.exe" or ProcessCommandLine has "C:\\Intel\\RServer"
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
+| union (
+    DeviceProcessEvents
+    | where InitiatingProcessCommandLine has "net session" and InitiatingProcessCommandLine has ">nul"
+    | where FileName =~ "rsetup64.exe" or ProcessCommandLine has "C:\\Intel\\RServer"
+    | project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
+)
