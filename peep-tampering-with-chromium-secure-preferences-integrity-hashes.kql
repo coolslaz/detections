@@ -1,0 +1,16 @@
+let ProcessHits = DeviceProcessEvents
+| where TimeGenerated > ago(7d)
+| where FileName in~ ("powershell.exe", "pwsh.exe")
+| where ProcessCommandLine has_any ("patch_secure_prefs.ps1", "install_silent.ps1", "force_enable.ps1")
+ or (ProcessCommandLine has "protection.macs" and ProcessCommandLine has "super_mac")
+ or (ProcessCommandLine has "super_mac" and ProcessCommandLine has_any (@"\Google\Chrome\User Data", @"\Microsoft\Edge\User Data"))
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine;
+let FileHits = DeviceFileEvents
+| where TimeGenerated > ago(7d)
+| where FolderPath has_any (@"\Google\Chrome\User Data\", @"\Microsoft\Edge\User Data\")
+| where FolderPath endswith "Secure Preferences"
+| where InitiatingProcessFileName in~ ("powershell.exe", "pwsh.exe", "nm_host.exe")
+ or InitiatingProcessCommandLine has_any ("patch_secure_prefs.ps1", "install_silent.ps1", "force_enable.ps1")
+| project TimeGenerated, DeviceName, AccountName=InitiatingProcessAccountName, FileName, ProcessCommandLine=InitiatingProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine;
+union ProcessHits, FileHits
+| where isnotempty(FileName)
