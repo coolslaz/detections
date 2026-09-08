@@ -1,0 +1,33 @@
+// Detect executable/script/archive files copied to remote hosts via SMB admin shares (C$, ADMIN$)
+// followed by execution on the destination host shortly after transfer
+let fileExtensions = dynamic([".exe",".dll",".ps1",".bat",".vbs",".zip",".rar",".7z",".scr",".hta",".msi"]);
+// Allowlist of known legitimate deployment/agent installer file names - extend as needed for your environment
+let knownDeploymentFileNames = dynamic(["ccmsetup.exe","sccmagent.exe","sms_def.msi","sensor_installer.exe"]);
+// Known software deployment / patch-management server names - analysts should populate and tune this list
+let knownManagementServers = dynamic([]);
+let copyEvents = DeviceFileEvents
+| where TimeGenerated > ago(1d)
+// Exclude pure FileRenamed events - renames alone are weaker evidence of a real file transfer than create/modify
+| where ActionType in ("FileCreated", "FileModified")
+| where FolderPath has_any ("\\ADMIN$", "\\C$", "\\admin$", "\\c$")
+| where FileName has_any (fileExtensions)
+// Exclude known deployment/agent installer file names from the allowlist
+| where FileName !in~ (knownDeploymentFileNames)
+// Exclude known software deployment/patch-management service accounts performing the copy
+| where InitiatingProcessAccountName !has "svc_" and InitiatingProcessAccountName !has "sccm" and InitiatingProcessAccountName !has "deploy" and InitiatingProcessAccountName !has "ccmexec"
+| project CopyTime = TimeGenerated, DestDeviceId = DeviceId, DestDeviceName = DeviceName, FileName, FolderPath, InitiatingProcessAccountName, InitiatingProcessRemoteSessionDeviceName, SHA256;
+let execEvents = DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+// Exclude known software deployment/patch-management service accounts performing the execution
+| where AccountName !has "svc_" and AccountName !has "sccm" and AccountName !has "deploy" and AccountName !has "ccmexec"
+| project ExecTime = TimeGenerated, ExecDeviceId = DeviceId, ExecDeviceName = DeviceName, ExecFileName = FileName, ProcessCommandLine, AccountName, ExecSHA256 = SHA256;
+copyEvents
+| join kind=inner (execEvents) on $left.DestDeviceId == $right.ExecDeviceId, $left.FileName == $right.ExecFileName
+| where ExecTime > CopyTime and ExecTime - CopyTime <= 15m
+// Require the destination execution account to meaningfully differ from the account that copied the file,
+// OR the source host to not be a known management/deployment server - this avoids flagging routine same-admin
+// push-install work on its own. Analysts should tune knownManagementServers and knownDeploymentFileNames above
+// as legitimate deployment tooling is identified in their environment.
+| where AccountName != InitiatingProcessAccountName or InitiatingProcessRemoteSessionDeviceName !in~ (knownManagementServers)
+| project CopyTime, ExecTime, TimeToExecution = ExecTime - CopyTime, DestDeviceName, FileName, FolderPath, InitiatingProcessAccountName, InitiatingProcessRemoteSessionDeviceName, ProcessCommandLine, AccountName, SHA256, ExecSHA256
+| sort by CopyTime desc
