@@ -1,0 +1,29 @@
+// T1080 - Taint Shared Content
+// Detect a file write of an executable/script to a network share, followed by execution
+// of that same file path from a different host, indicating tainted shared-content lateral movement.
+let fileExt = dynamic([".exe",".scr",".vbs",".bat",".ps1"]);
+// Dropped .lnk - shortcut files are too common/noisy for this pattern
+let writes = DeviceFileEvents
+| where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+| where FolderPath matches regex @"^\\[^\\]+\"
+| where FileName has_any (fileExt)
+// Exclude well-known legitimate write-then-multi-host-execute paths (NETLOGON/SYSVOL logon scripts,
+// SCCM content library, and common software deployment/patch shares) - central IT tooling
+// intentionally writes once and executes on many hosts, which is not tainted content
+| where FolderPath !has "NETLOGON" and FolderPath !has "SYSVOL" and FolderPath !has "SCCMContentLib" and FolderPath !has "Packages" and FolderPath !has "Deploy" and FolderPath !has "Software$"
+| project WriteTime = TimeGenerated, WriteDevice = DeviceName, SharePath = FolderPath, FileName, WriteAccount = InitiatingProcessAccountName;
+let execs = DeviceProcessEvents
+| where FileName has_any (fileExt)
+// Exclude known service/deployment account patterns (machine accounts ending in '$', or accounts
+// containing svc_/sccm/deploy) - these represent expected automated deployment execution, not lateral movement
+| where AccountName !endswith "$" and AccountName !has "svc_" and AccountName !has "sccm" and AccountName !has "deploy"
+| project ExecTime = TimeGenerated, ExecDevice = DeviceName, ExecFolderPath = FolderPath, FileName, ExecCommandLine = ProcessCommandLine, ExecAccount = AccountName;
+writes
+| join kind=inner (execs) on FileName, $left.SharePath == $right.ExecFolderPath
+// Narrowed write-to-exec window from 1 day to 2 hours to reduce coincidental/unrelated matches
+| where ExecTime > WriteTime and ExecTime - WriteTime < 2h
+| where ExecDevice != WriteDevice
+// Require write and exec accounts differ - same-user execution across their own devices is expected and low-signal
+| where WriteAccount != ExecAccount
+| project WriteTime, WriteDevice, WriteAccount, SharePath, FileName, ExecTime, ExecDevice, ExecAccount, ExecCommandLine
+| sort by ExecTime desc
