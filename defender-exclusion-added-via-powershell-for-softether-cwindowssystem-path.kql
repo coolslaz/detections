@@ -1,0 +1,7 @@
+DeviceProcessEvents
+| where FileName =~ "powershell.exe"
+| where ProcessCommandLine has "Add-MpPreference"
+| where (ProcessCommandLine has "-ExclusionPath" and ProcessCommandLine has @"C:\Windows\system")
+    or ProcessCommandLine has @"C:\Windows\Fonts\web"
+    or (ProcessCommandLine has "-ExclusionProcess" and ProcessCommandLine has "svchost.exe" and ProcessCommandLine has @"C:\Windows\system")
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
