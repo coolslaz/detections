@@ -1,0 +1,14 @@
+OfficeActivity
+| where TimeGenerated > ago(1d)
+| where Operation in ("FileAccessed", "FileDownloaded")
+| where OfficeWorkload in ("SharePoint", "OneDrive")
+| extend UserAgent = tostring(parse_json(ExtraProperties)[0].Value)
+| extend SessionId = tostring(parse_json(ExtraProperties)[1].Value)
+| summarize EventCount = count(), DistinctFiles = dcount(SourceFileName), UserAgents = make_set(UserAgent, 10), SessionIds = make_set(SessionId, 10) by UserId, ClientIP, bin(TimeGenerated, 1h)
+| where EventCount > 50
+| extend ScriptingAgentUsed = UserAgents has_any ("python-requests", "Microsoft.Graph.Client", "python-httpx")
+// Tightened: scripting-agent use is now a hard filter, not just a severity label - normal browser-driven
+// bulk downloads (e.g., a user zipping many files via the web UI) no longer alert.
+| where ScriptingAgentUsed
+| extend Severity = "High"
+| sort by EventCount desc
