@@ -1,0 +1,34 @@
+// Detect session token replay from residential proxy infrastructure (e.g., NodeMaven).
+// Requires: prior interactive sign-in was MFA-satisfied, followed by a single-factor
+// sign-in for the same user with a different IP/ASN and an unmanaged (non-trusted) device,
+// while city/country still match - the residential proxy spoofs geolocation but not ASN/device trust.
+let lookback = 7d;
+SigninLogs
+| where TimeGenerated > ago(lookback)
+| where ResultType == 0
+| extend DeviceId_ = tostring(DeviceDetail.deviceId)
+| extend Browser_ = tostring(DeviceDetail.browser)
+| extend OS_ = tostring(DeviceDetail.operatingSystem)
+| extend TrustType_ = tostring(DeviceDetail.trustType)
+| extend City_ = tostring(LocationDetails.city)
+| extend Country_ = tostring(LocationDetails.countryOrRegion)
+| extend ASN_ = tostring(AutonomousSystemNumber)
+| summarize Signins = make_list(pack("Time", TimeGenerated, "IPAddress", IPAddress, "DeviceId", DeviceId_, "Browser", Browser_, "OS", OS_, "TrustType", TrustType_, "ASN", ASN_, "IsInteractive", IsInteractive, "AuthRequirement", AuthenticationRequirement), 50) by UserPrincipalName, City_, Country_
+| mv-expand Signins
+| extend SigninTime = todatetime(Signins.Time), IPAddress = tostring(Signins.IPAddress), DeviceId = tostring(Signins.DeviceId), Browser = tostring(Signins.Browser), OS = tostring(Signins.OS), TrustType = tostring(Signins.TrustType), ASN = tostring(Signins.ASN), IsInteractive = tobool(Signins.IsInteractive), AuthRequirement = tostring(Signins.AuthRequirement)
+| sort by UserPrincipalName asc, SigninTime asc
+| serialize
+| extend PrevDeviceId = prev(DeviceId), PrevBrowser = prev(Browser), PrevOS = prev(OS), PrevUser = prev(UserPrincipalName), PrevIsInteractive = prev(IsInteractive), PrevAuthRequirement = prev(AuthRequirement), PrevTime = prev(SigninTime), PrevTrustType = prev(TrustType), PrevASN = prev(ASN), PrevIPAddress = prev(IPAddress)
+| where UserPrincipalName == PrevUser
+| where PrevIsInteractive == true
+| where PrevAuthRequirement == "multiFactorAuthentication"
+| where AuthRequirement == "singleFactorAuthentication"
+| where isnotempty(PrevDeviceId)
+| where DeviceId != PrevDeviceId or isempty(DeviceId)
+| where Browser != PrevBrowser or OS != PrevOS
+| where IPAddress != PrevIPAddress
+| where ASN != PrevASN
+| where isempty(TrustType)
+| where datetime_diff('minute', SigninTime, PrevTime) between (5 .. 60)
+| project UserPrincipalName, City_, Country_, SigninTime, IPAddress, DeviceId, Browser, OS, ASN, TrustType, PrevTime, PrevDeviceId, PrevBrowser, PrevOS, PrevASN, PrevIPAddress, AuthRequirement, PrevAuthRequirement
+| extend AlertReason = "MFA-satisfied interactive sign-in followed by a single-factor sign-in for the same user within 5-60 minutes, from a different IP/ASN on an unmanaged (untrusted) device, while city/country still match - consistent with residential proxy replay of a stolen session token (e.g., NodeMaven) bypassing MFA"
