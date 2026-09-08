@@ -1,0 +1,18 @@
+// Detects session token reuse (sign-in without a fresh MFA challenge) originating from known residential proxy providers used to replay stolen Microsoft 365 tokens (e.g., NodeMaven)
+// Tightened: dropped short/generic provider tokens ("Massive", "Soax") that risk matching unrelated ISP
+// names by substring; kept only distinctive proxy-service brand strings.
+let ResidentialProxyProviders = dynamic(["NodeMaven", "DataImpulse", "Luminati", "Proxyrack", "Shifter", "Yilu"]);
+SigninLogs
+| where ResultType == 0
+| where AuthenticationRequirement != "multiFactorAuthentication"
+| where isnotempty(AuthenticationDetails)
+| extend AuthDetails = parse_json(AuthenticationDetails)
+| mv-expand AuthDetails
+| where AuthDetails.authenticationStepResultDetail !in ("MFA requirement satisfied by claim in the token", "MFA completed in Azure AD")
+| extend ISP = tostring(parse_json(tostring(NetworkLocationDetails))[0].networkNames[0])
+| where ISP has_any (ResidentialProxyProviders)
+| project TimeGenerated, UserPrincipalName, AppDisplayName, IPAddress, ISP, LocationDetails, DeviceDetail, AuthenticationRequirement, ResultType
+| extend Browser = tostring(parse_json(tostring(DeviceDetail)).browser), DeviceOS = tostring(parse_json(tostring(DeviceDetail)).operatingSystem)
+| summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), IPAddresses = make_set(IPAddress, 10), Browsers = make_set(Browser, 10), DeviceOSes = make_set(DeviceOS, 10), Apps = make_set(AppDisplayName, 10), SignInCount = count() by UserPrincipalName, ISP
+| where SignInCount >= 1
+| order by LastSeen desc
