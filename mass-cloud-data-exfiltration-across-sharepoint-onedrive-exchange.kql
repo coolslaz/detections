@@ -1,0 +1,11 @@
+OfficeActivity
+| where TimeGenerated > ago(1h)
+| where Operation in ("FileDownloaded", "FileAccessed", "FileSyncDownloadedFull", "MailItemsAccessed", "SendAs", "New-InboxRule", "Set-Mailbox")
+| where OfficeWorkload in ("SharePoint", "OneDrive", "Exchange")
+| summarize EventCount = count(), Operations = make_set(Operation, 10), DistinctObjects = dcount(OfficeObjectId), Workloads = make_set(OfficeWorkload, 5) by UserId, ClientIP, bin(TimeGenerated, 1h)
+// Tightened: raised the volume floor, require the touched objects to actually be diverse (not one file
+// re-synced repeatedly), and require activity to span more than one workload - narrows out normal
+// single-service bulk syncs (e.g., a OneDrive client re-indexing) that aren't cross-service collection.
+| where EventCount > 250 and DistinctObjects > 30
+| where array_length(Workloads) >= 2
+| sort by EventCount desc
