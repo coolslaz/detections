@@ -1,0 +1,62 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where
+    // Disabling Windows SmartScreen via registry
+    (FileName in~ ("reg.exe", "powershell.exe", "pwsh.exe") and
+        ProcessCommandLine has "SmartScreen" and
+        (ProcessCommandLine has "EnableSmartScreen" or ProcessCommandLine has "SmartScreenEnabled") and
+        (ProcessCommandLine has "0" or ProcessCommandLine has "Off" or ProcessCommandLine has "disable"))
+    or
+    // Bulk/scripted Mark-of-the-Web removal via Unblock-File: targeting many files (wildcard/recurse/pipeline) or executable/script file types, not a routine single-file unblock
+    (FileName in~ ("powershell.exe", "pwsh.exe") and ProcessCommandLine has "Unblock-File" and
+        (ProcessCommandLine has "-Recurse" or
+         ProcessCommandLine has "Get-ChildItem" or
+         ProcessCommandLine has "gci " or
+         ProcessCommandLine has "dir " or
+         ProcessCommandLine has "*.exe" or
+         ProcessCommandLine has "*.ps1" or
+         ProcessCommandLine has "*.bat" or
+         ProcessCommandLine has "*.cmd" or
+         ProcessCommandLine has "*.vbs" or
+         ProcessCommandLine has "*.js" or
+         ProcessCommandLine has "*.msi" or
+         ProcessCommandLine has ".exe" or
+         ProcessCommandLine has ".ps1" or
+         ProcessCommandLine has ".bat" or
+         ProcessCommandLine has ".cmd" or
+         ProcessCommandLine has ".vbs" or
+         ProcessCommandLine has ".js" or
+         ProcessCommandLine has ".msi") and
+        InitiatingProcessFileName !in~ ("ccmexec.exe", "IntuneManagementExtension.exe", "sccmcliboot.exe"))
+    or
+    // Bulk/scripted removal of Zone.Identifier alternate data stream targeting many files or executable/script types
+    (ProcessCommandLine has "Zone.Identifier" and
+        (FileName in~ ("powershell.exe", "pwsh.exe", "cmd.exe") and
+         (ProcessCommandLine has "Remove-Item" or ProcessCommandLine has "del " or ProcessCommandLine has "erase ")) and
+        (ProcessCommandLine has "-Recurse" or
+         ProcessCommandLine has "Get-ChildItem" or
+         ProcessCommandLine has "gci " or
+         ProcessCommandLine has "for /r" or
+         ProcessCommandLine has "*.exe" or
+         ProcessCommandLine has "*.ps1" or
+         ProcessCommandLine has "*.bat" or
+         ProcessCommandLine has "*.cmd" or
+         ProcessCommandLine has "*.vbs" or
+         ProcessCommandLine has "*.js" or
+         ProcessCommandLine has "*.msi" or
+         ProcessCommandLine has ".exe" or
+         ProcessCommandLine has ".ps1" or
+         ProcessCommandLine has ".bat" or
+         ProcessCommandLine has ".cmd" or
+         ProcessCommandLine has ".vbs" or
+         ProcessCommandLine has ".js" or
+         ProcessCommandLine has ".msi") and
+        InitiatingProcessFileName !in~ ("ccmexec.exe", "IntuneManagementExtension.exe", "sccmcliboot.exe"))
+    or
+    // Disabling driver signature enforcement or test signing via bcdedit, excluding known dev/test machines
+    (FileName =~ "bcdedit.exe" and
+        ((ProcessCommandLine has "nointegritychecks" and ProcessCommandLine has "on") or
+         (ProcessCommandLine has "testsigning" and ProcessCommandLine has "on") or
+         (ProcessCommandLine has "loadoptions" and ProcessCommandLine has "DDISABLE_INTEGRITY_CHECKS")) and
+        not(DeviceName has_any ("DEV-", "TEST-", "-DEV", "-TEST", "SANDBOX", "LAB-")))
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
