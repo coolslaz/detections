@@ -1,0 +1,26 @@
+// Detects commands that add routes or enable IP forwarding, potentially bridging network segments (T1599)
+DeviceProcessEvents
+| where FileName in~ ("route.exe", "netsh.exe", "reg.exe", "sysctl", "powershell.exe", "cmd.exe")
+| where (ProcessCommandLine has "route" and ProcessCommandLine has "add")
+ or (ProcessCommandLine has "netsh" and ProcessCommandLine has "interface" and ProcessCommandLine has "forwarding" and ProcessCommandLine has "enabled")
+ or (ProcessCommandLine has "IPEnableRouter")
+ or (ProcessCommandLine has "net.ipv4.ip_forward")
+ or (ProcessCommandLine has "echo 1" and ProcessCommandLine has "ip_forward")
+// Exclude container/orchestration networking components that routinely manage routes and IP forwarding
+| where InitiatingProcessFileName !in~ ("dockerd", "docker", "docker-proxy", "containerd", "containerd-shim", "kubelet", "calico-node", "calico", "felix", "flanneld", "flannel", "cilium-agent", "cilium", "kube-proxy", "weave", "weaveproxy")
+| where not(ProcessCommandLine has_any ("docker0", "cni0", "flannel.1", "cali", "cilium_host", "cilium_net", "weave"))
+// Exclude known VPN client software that legitimately modifies routes/forwarding
+| where InitiatingProcessFileName !in~ ("openvpn.exe", "openvpn", "wireguard.exe", "wg.exe", "nordvpn.exe", "expressvpn.exe", "anyconnect.exe", "vpnui.exe", "vpnagent.exe", "globalprotect.exe", "panGPA.exe", "forticlient.exe", "fortitray.exe")
+// Exclude routine network engineering activity performed by dedicated network admin accounts/tools
+| where not(AccountName has_any ("netadmin", "networkops", "netops", "svc-network", "svc-net"))
+| where FileName !in~ ("ansible", "puppet", "chef-client", "salt-minion")
+| extend BridgeIndicator = case(
+ ProcessCommandLine has "route" and ProcessCommandLine has "add", "RouteAdd",
+ ProcessCommandLine has "IPEnableRouter", "RegistryIPForwardingEnable",
+ ProcessCommandLine has "net.ipv4.ip_forward" or (ProcessCommandLine has "echo 1" and ProcessCommandLine has "ip_forward"), "LinuxIPForwardEnable",
+ ProcessCommandLine has "netsh", "NetshForwardingEnable",
+ "Unknown")
+// Focus on endpoint/workstation host roles; exclude hosts with a network appliance/gateway naming role
+| where not(DeviceName has_any ("-rtr", "-fw", "-gw", "-gateway", "-router", "-switch", "-sw", "-vpn", "-firewall", "-appliance", "-lb"))
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, BridgeIndicator, InitiatingProcessFileName, InitiatingProcessCommandLine
+| sort by TimeGenerated desc
