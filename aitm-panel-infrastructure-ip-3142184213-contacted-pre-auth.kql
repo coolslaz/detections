@@ -1,0 +1,14 @@
+// Detect network connections or email/identity signals tied to the known PREY-0058 AiTM panel IP
+let AitMPanelIP = "31.42.184.213";
+union isfuzzy=true
+    (CommonSecurityLog
+    | where DestinationIP == AitMPanelIP or SourceIP == AitMPanelIP
+    | project TimeGenerated, SourceIP, DestinationIP, DeviceAction, RequestURL, Computer),
+    (DnsEvents
+    | where IPAddresses has AitMPanelIP
+    | project TimeGenerated, Name, ClientIP, IPAddresses),
+    (EmailUrlInfo
+    | join kind=inner (EmailEvents) on NetworkMessageId
+    | where Url has AitMPanelIP
+    | project TimeGenerated, SenderFromAddress, RecipientEmailAddress, Url, NetworkMessageId)
+| sort by TimeGenerated desc
