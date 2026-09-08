@@ -1,0 +1,17 @@
+DeviceFileEvents
+| where ActionType in ("FileModified", "FileCreated", "FileRenamed")
+| where FolderPath has_any ("\\Windows\\System32\\", "\\Windows\\SysWOW64\\", "\\Windows\\System32\\drivers\\", "\\Windows\\Boot\\", "\\EFI\\", "\\Windows\\System32\\winload.exe", "\\Windows\\System32\\ntoskrnl.exe")
+| where FileName endswith ".exe" or FileName endswith ".dll" or FileName endswith ".sys" or FileName endswith ".efi"
+// Exclude modifications performed by the authorized OS/package update channel
+| where InitiatingProcessFileName !in~ ("TrustedInstaller.exe", "wusa.exe", "dism.exe", "TiWorker.exe", "MoUsoCoreWorker.exe", "msiexec.exe", "svchost.exe", "dpkg", "apt", "apt-get", "rpm", "yum", "dnf")
+| where not(InitiatingProcessCommandLine has_any ("Windows Update", "wuauserv", "usoclient", "dpkg", "apt-get", "apt ", "rpm -", "yum ", "dnf ", "firmware update", "fwupd", "fwupdmgr"))
+| join kind=leftouter (
+    DeviceFileCertificateInfo
+    | project SHA1, Signer, IsSigned
+) on SHA1
+| where isnotempty(SHA256) and (isempty(Signer) or IsSigned == false)
+// Flag as high-confidence if occurring outside a known patch/maintenance window (when tagged)
+| extend OutsideMaintenanceWindow = iff(isnotempty(column_ifexists("MaintenanceWindow", "")), column_ifexists("MaintenanceWindow", "") == "false", true)
+| where InitiatingProcessFileName !in~ ("TrustedInstaller.exe", "wusa.exe", "dism.exe", "TiWorker.exe", "MoUsoCoreWorker.exe", "msiexec.exe", "svchost.exe", "dpkg", "apt", "apt-get", "rpm", "yum", "dnf") or OutsideMaintenanceWindow == true
+| project TimeGenerated, DeviceName, FileName, FolderPath, SHA256, ActionType, InitiatingProcessFileName, InitiatingProcessCommandLine, IsSigned, Signer, OutsideMaintenanceWindow
+| sort by TimeGenerated desc
