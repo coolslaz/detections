@@ -1,0 +1,8 @@
+DeviceEvents
+| where ActionType == "ServiceInstalled"
+| extend ServiceName = tostring(parse_json(AdditionalFields).ServiceName)
+| extend ServiceDisplayName = tostring(parse_json(AdditionalFields).ServiceDisplayName)
+| extend ServiceBinaryPath = tostring(parse_json(AdditionalFields).ServiceStartCommand)
+| where ServiceName in~ ("WpnUserHost", "FontCacheExt", "FontWebHost", "WinHttpProxyHelper", "WindowsUpdateHelper")
+ or ServiceDisplayName in~ ("Windows Push Notifications User Host", "Windows Font Cache Extension")
+| project TimeGenerated, DeviceName, ServiceName, ServiceDisplayName, ServiceBinaryPath, InitiatingProcessCommandLine, InitiatingProcessFileName, ReportId
