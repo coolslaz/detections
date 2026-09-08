@@ -1,0 +1,54 @@
+// T1550 - Use Alternate Authentication Material (Pass-the-Hash / Pass-the-Ticket)
+// Detects NTLM Type 3 logons without interactive logon context reused rapidly across multiple destination hosts,
+// and Kerberos service ticket reuse (same TargetLogonId) across multiple computers in a short window.
+let lookback = 1d;
+let window = 5m;
+// Raised from 3 to 5 distinct hosts: legitimate SSO fan-out (file shares, printers, Exchange, DFS) routinely
+// touches several hosts within 5 minutes for a single legitimate user.
+let minHosts = 5;
+// Known infrastructure/service account name patterns that legitimately authenticate to many hosts.
+let svcAccountPattern = @"svc_|backup|scan|monitor";
+// File-server cluster / DFS / load-balanced destination name patterns: one logical logon can touch multiple physical nodes.
+let clusterHostPattern = @"-dfs|-cluster|-nlb";
+let NtlmReuse = SecurityEvent
+| where TimeGenerated > ago(lookback)
+| where EventID == 4624
+| where LogonType == 3
+| where AuthenticationPackageName =~ "NTLM"
+| where isnotempty(TargetUserName) and not(TargetUserName endswith "$")
+// Exclude known service/infrastructure accounts that fan out by design
+| where not(TargetUserName matches regex svcAccountPattern)
+// Exclude DFS/cluster/NLB destination hosts where a single logon spans multiple physical nodes
+| where not(Computer matches regex clusterHostPattern)
+| summarize DistinctHosts = dcount(Computer), Hosts = make_set(Computer, 10), LogonIds = make_set(TargetLogonId, 10), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by TargetUserName, IpAddress, bin(TimeGenerated, window)
+| where DistinctHosts >= minHosts
+| extend DetectionType = "NTLM_PassTheHash_Reuse", Confidence = "High";
+// Kerberos: prefer service-ticket requests (4769) as the primary high-confidence signal, since a single TGT
+// (4768) legitimately backs many subsequent service ticket requests and is treated as lower-confidence alone.
+let KerberosServiceTicketReuse = SecurityEvent
+| where TimeGenerated > ago(lookback)
+| where EventID == 4769
+| where isnotempty(TargetUserName) and not(TargetUserName endswith "$")
+| where isnotempty(TargetLogonId)
+// Exclude known service/infrastructure accounts that fan out by design
+| where not(TargetUserName matches regex svcAccountPattern)
+// Exclude DFS/cluster/NLB destination hosts where a single logon spans multiple physical nodes
+| where not(Computer matches regex clusterHostPattern)
+| summarize DistinctHosts = dcount(Computer), Hosts = make_set(Computer, 10), LogonIds = make_set(TargetLogonId, 10), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by TargetUserName, TargetLogonId, bin(TimeGenerated, window)
+| where DistinctHosts >= minHosts
+| extend IpAddress = "", DetectionType = "Kerberos_PassTheTicket_Reuse", Confidence = "High";
+// TGT-only (4768) reuse retained as a lower-confidence secondary signal since one TGT can legitimately back many requests
+let KerberosTgtReuse = SecurityEvent
+| where TimeGenerated > ago(lookback)
+| where EventID == 4768
+| where isnotempty(TargetUserName) and not(TargetUserName endswith "$")
+| where isnotempty(TargetLogonId)
+| where not(TargetUserName matches regex svcAccountPattern)
+| where not(Computer matches regex clusterHostPattern)
+| summarize DistinctHosts = dcount(Computer), Hosts = make_set(Computer, 10), LogonIds = make_set(TargetLogonId, 10), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by TargetUserName, TargetLogonId, bin(TimeGenerated, window)
+| where DistinctHosts >= minHosts
+| extend IpAddress = "", DetectionType = "Kerberos_TGT_Reuse_LowConfidence", Confidence = "Low";
+NtlmReuse
+| union KerberosServiceTicketReuse
+| union KerberosTgtReuse
+| project TargetUserName, IpAddress, DistinctHosts, Hosts, LogonIds, FirstSeen, LastSeen, DetectionType, Confidence
