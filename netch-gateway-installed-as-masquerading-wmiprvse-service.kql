@@ -1,0 +1,19 @@
+let ProcessTable = DeviceProcessEvents
+| where (FileName has_any ("sc.exe", "cmd.exe", "powershell.exe") and ProcessCommandLine has "WmiPrvSE" and ProcessCommandLine has "create" and ProcessCommandLine has "binpath")
+ or (FileName =~ "install_service.bat")
+ or (ProcessCommandLine has "WMI Provider Host" and ProcessCommandLine has "WmiPrvSE")
+| where ProcessCommandLine !has "C:\\Windows\\System32\\wbem\\WmiPrvSE.exe"
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine;
+let RegistryTable = DeviceRegistryEvents
+| where RegistryKey has "WmiPrvSE" and RegistryKey has "Services"
+| where RegistryValueData has "WMI Provider Host" or RegistryValueName has "DisplayName"
+| project TimeGenerated, DeviceName, AccountName = InitiatingProcessAccountName, FileName = InitiatingProcessFileName, ProcessCommandLine = InitiatingProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine;
+let EventsTable = DeviceEvents
+| where ActionType has "ServiceInstalled"
+| extend ServiceName = tostring(parse_json(AdditionalFields).ServiceName)
+| extend ServiceDisplayName = tostring(parse_json(AdditionalFields).ServiceDisplayName)
+| where ServiceName =~ "WmiPrvSE" and ServiceDisplayName =~ "WMI Provider Host"
+| project TimeGenerated, DeviceName, AccountName = InitiatingProcessAccountName, FileName = InitiatingProcessFileName, ProcessCommandLine = InitiatingProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine;
+ProcessTable
+| union RegistryTable
+| union EventsTable
