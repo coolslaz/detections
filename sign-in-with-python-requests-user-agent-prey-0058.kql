@@ -1,0 +1,14 @@
+let lookback = 14d;
+let KnownUAs = SigninLogs
+| where TimeGenerated between (ago(lookback) .. ago(1h))
+| summarize KnownUserAgents = make_set(UserAgent, 200) by UserPrincipalName;
+SigninLogs
+| where TimeGenerated > ago(1h)
+| where ResultType == 0
+| where UserAgent has_any ("python-requests/2.33.1", "python-requests/2.34.2")
+| join kind=inner (KnownUAs) on UserPrincipalName
+// Tightened: successful sign-ins only, and only when this user-agent is NEW for that account in the last
+// 14 days - excludes accounts with a known, legitimate scripted integration using this library.
+| where not(UserAgent in (KnownUserAgents))
+| project TimeGenerated, UserPrincipalName, UserId, IPAddress, UserAgent, AppDisplayName, ResultType, ResultDescription, Location
+| sort by TimeGenerated desc
