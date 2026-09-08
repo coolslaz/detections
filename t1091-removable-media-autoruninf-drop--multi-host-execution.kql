@@ -1,0 +1,32 @@
+let RemovableDriveRoot = @"^[D-Z]:\\";
+let AutorunDrops = DeviceFileEvents
+| where TimeGenerated > ago(7d)
+| where ActionType in ("FileCreated", "FileModified")
+| where FileName =~ "autorun.inf"
+| where FolderPath matches regex RemovableDriveRoot
+| project AutorunTime = TimeGenerated, DeviceId, DeviceName, AutorunPath = FolderPath, AutorunSHA256 = SHA256;
+let RemovableExec = DeviceProcessEvents
+| where TimeGenerated > ago(7d)
+| where FolderPath matches regex RemovableDriveRoot
+| where FileName endswith ".exe" or FileName endswith ".vbs" or FileName endswith ".bat" or FileName endswith ".cmd" or FileName endswith ".scr" or FileName endswith ".js"
+// Exclude digitally signed & trusted executables (e.g. signed installers/driver packages) to cut USB-distributed legit software FPs
+| where not(InitiatingProcessSignatureStatus =~ "SignedValid" or (isnotempty(InitiatingProcessSignatureStatus) and InitiatingProcessSignatureStatus contains "Signed" and InitiatingProcessSignatureStatus contains "Trusted"))
+// Exclude known IT deployment/provisioning accounts pushing USB images across many hosts
+| where not(AccountName has_any ("deploy", "imaging", "provision"))
+| project ExecTime = TimeGenerated, DeviceId, DeviceName, ProcessFolderPath = FolderPath, ProcessFileName = FileName, ProcessCommandLine, ExecSHA256 = SHA256, AccountName;
+let AutorunFollowedByExec = AutorunDrops
+| join kind=inner (RemovableExec) on DeviceId
+| where ExecTime between (AutorunTime .. (AutorunTime + 10m))
+| project DeviceId, DeviceName, AutorunTime, AutorunPath, AutorunSHA256, ExecTime, ProcessFolderPath, ProcessFileName, ProcessCommandLine, ExecSHA256, AccountName, DetectionType = "AutorunThenExec";
+let MultiHostSameHash = RemovableExec
+| where isnotempty(ExecSHA256)
+| summarize DistinctHosts = dcount(DeviceId), Hosts = make_set(DeviceName, 20), FirstSeen = min(ExecTime), LastSeen = max(ExecTime) by ExecSHA256
+// Require the same hash to appear across hosts within a 1-hour window rather than the full 7-day range, so routine multi-day IT provisioning of the same USB image doesn't trigger
+| where datetime_diff('minute', LastSeen, FirstSeen) <= 60
+// Raise threshold from >=2 to >=3 distinct hosts to reduce single coincidental cross-host matches
+| where DistinctHosts >= 3
+| join kind=inner (RemovableExec) on ExecSHA256
+| project DeviceId, DeviceName, ExecTime, ProcessFolderPath, ProcessFileName, ProcessCommandLine, ExecSHA256, AccountName, DistinctHosts, Hosts, DetectionType = "SameHashMultiHost";
+AutorunFollowedByExec
+| union MultiHostSameHash
+| sort by ExecTime desc
