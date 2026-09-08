@@ -1,0 +1,14 @@
+DeviceProcessEvents
+| where InitiatingProcessFileName =~ "w3wp.exe"
+| where FileName has_any ("cmd.exe", "powershell.exe", "powershell_ise.exe", "pwsh.exe")
+// Require an indicator of encoded/obfuscated or remote-download/recon behavior.
+// Legitimate IIS health-check and admin automation rarely combines w3wp.exe-spawned
+// shells with these patterns; webshell-driven post-exploitation commonly does.
+| where ProcessCommandLine has_any (
+    "-enc", "-encodedcommand", "-nop", "-noni", "-windowstyle hidden", "-w hidden",
+    "iex", "invoke-expression", "downloadstring", "downloadfile", "frombase64string",
+    "net.webclient", "whoami", "certutil", "bitsadmin", "net user", "net localgroup",
+    "reg add", "schtasks", "wmic", "new-object net", "add-type"
+)
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, AccountName, InitiatingProcessId, ProcessId
+| order by TimeGenerated desc
