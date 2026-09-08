@@ -1,0 +1,44 @@
+let lookback = 14d;
+let logonWindow = ago(1d);
+let execWindow = 5m;
+let minBaselineDays = 3d;
+// Known jump hosts / bastions / PAWs / IT admin subnets - first-time admin access from these is expected, populate from asset inventory
+let KnownAdminSources = dynamic([]);
+// Remote interactive/network logons cover RDP, SMB, WinRM, SSH, and VNC sessions recorded by the endpoint
+let RemoteLogons = DeviceLogonEvents
+| where TimeGenerated > logonWindow
+| where LogonType in ("RemoteInteractive", "Network", "Interactive")
+| where isnotempty(RemoteIP)
+| where AccountName !endswith "$"
+// Exclude common IT/service account naming patterns to reduce noise from automated maintenance tooling
+| where AccountName !contains "svc_" and AccountName !contains "backup" and AccountName !contains "monitor" and AccountName !contains "deploy"
+// Exclude known jump hosts / bastions / PAWs / admin subnets since first-time admin access from these sources is expected
+| where not(RemoteIP has_any (KnownAdminSources)) and not(RemoteDeviceName has_any (KnownAdminSources))
+| project LogonTimestamp = TimeGenerated, DeviceId, DeviceName, RemoteIP, RemoteDeviceName, AccountName, LogonType;
+// Historical baseline of prior source->destination authentications for the same account, scoped to this DeviceId
+let PriorLogons = DeviceLogonEvents
+| where TimeGenerated between (ago(lookback) .. logonWindow)
+| where LogonType in ("RemoteInteractive", "Network", "Interactive")
+| project DeviceId, RemoteIP, AccountName;
+// Wider baseline: has this AccountName+RemoteIP pair been seen destined to ANY host recently (covers load-balanced/clustered server round-robin access)
+let PriorLogonsAnyHost = DeviceLogonEvents
+| where TimeGenerated between (ago(lookback) .. logonWindow)
+| where LogonType in ("RemoteInteractive", "Network", "Interactive")
+| project RemoteIP, AccountName;
+// Only consider devices with enough baseline history collected to trust a 'new pair' determination, avoiding cold-start noise on newly onboarded log sources
+let DeviceHistoryDepth = DeviceLogonEvents
+| summarize FirstSeen = min(TimeGenerated) by DeviceId
+| where FirstSeen <= logonWindow - minBaselineDays;
+RemoteLogons
+| join kind=inner (DeviceHistoryDepth) on DeviceId
+| join kind=leftanti (PriorLogons) on DeviceId, RemoteIP, AccountName
+| join kind=leftanti (PriorLogonsAnyHost) on RemoteIP, AccountName
+| join kind=inner (
+    DeviceProcessEvents
+    | where TimeGenerated > logonWindow
+    | project ProcessTimestamp = TimeGenerated, DeviceId, FileName, ProcessCommandLine, InitiatingProcessAccountName
+) on DeviceId
+| where ProcessTimestamp - LogonTimestamp between (0min .. execWindow)
+| where AccountName =~ InitiatingProcessAccountName
+| project LogonTimestamp, DeviceName, RemoteIP, RemoteDeviceName, AccountName, LogonType, ProcessTimestamp, FileName, ProcessCommandLine
+| sort by LogonTimestamp desc
