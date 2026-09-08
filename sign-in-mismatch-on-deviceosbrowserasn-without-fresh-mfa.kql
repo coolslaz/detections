@@ -1,0 +1,23 @@
+let lookback = 14d;
+let baseline = SigninLogs
+| where TimeGenerated between (ago(lookback) .. ago(1h))
+| where ResultType == 0
+| extend DeviceId = tostring(DeviceDetail.deviceId), OS = tostring(DeviceDetail.operatingSystem), Browser = tostring(DeviceDetail.browser)
+| summarize KnownDevices = make_set(DeviceId, 200), KnownOS = make_set(OS, 200), KnownBrowsers = make_set(Browser, 200), KnownASN = make_set(tostring(AutonomousSystemNumber), 200) by UserPrincipalName;
+SigninLogs
+| where TimeGenerated > ago(1h)
+| where ResultType == 0
+| extend DeviceId = tostring(DeviceDetail.deviceId), OS = tostring(DeviceDetail.operatingSystem), Browser = tostring(DeviceDetail.browser)
+| join kind=inner (baseline) on UserPrincipalName
+// token reuse without a fresh MFA challenge
+| where AuthenticationRequirement != "multiFactorAuthentication"
+| extend DeviceMismatch = iff(not(DeviceId in (KnownDevices)), 1, 0)
+| extend OSMismatch = iff(not(OS in (KnownOS)), 1, 0)
+| extend BrowserMismatch = iff(not(Browser in (KnownBrowsers)), 1, 0)
+| extend ASNMismatch = iff(not(tostring(AutonomousSystemNumber) in (KnownASN)), 1, 0)
+| extend MismatchScore = DeviceMismatch + OSMismatch + BrowserMismatch + ASNMismatch
+// Tightened: require at least 2 of the 4 signals to differ from the user's 14-day baseline together -
+// a single drifted signal (e.g., a browser auto-update changing the UA string) alone is not enough.
+| where MismatchScore >= 2
+| project TimeGenerated, UserPrincipalName, IPAddress, Location, AutonomousSystemNumber, DeviceId, OS, Browser, ClientAppUsed, AuthenticationRequirement, ResultType, MismatchScore
+| sort by TimeGenerated desc
