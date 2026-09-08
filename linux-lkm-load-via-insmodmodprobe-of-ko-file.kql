@@ -1,0 +1,12 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where FileName in~ ("insmod", "modprobe")
+| where ProcessCommandLine has_any (".ko")
+// Exclude modules loaded from standard kernel module directories (normal driver/package management)
+| where not(ProcessCommandLine has_any ("/lib/modules/", "/usr/lib/modules/"))
+// Focus on modules staged in writable/non-standard locations - a strong indicator of manual/malicious loading
+| where ProcessCommandLine has_any ("/tmp/", "/var/tmp/", "/dev/shm/", "/home/", "/root/", "/opt/")
+// Exclude common legitimate installers/package managers as the initiating process
+| where InitiatingProcessFileName !in~ ("dpkg", "rpm", "yum", "dnf", "apt", "apt-get", "dracut", "systemd-modules-load", "kmod")
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
+| sort by TimeGenerated desc
