@@ -1,0 +1,29 @@
+let GPOSecurityChanges = SecurityEvent
+| where EventID == 5136
+| where ObjectName =~ "groupPolicyContainer"
+| where DisplayName in~ ("gPCFileSysPath", "gPCMachineExtensionNames", "versionNumber")
+// focus on settings being weakened/disabled or exclusions being widened, not any policy edit
+| where Attributes has_any ("DisableAntiSpyware", "DisableRealtimeMonitoring", "DisableBehaviorMonitoring", "DisableIOAVProtection", "DisableScriptScanning", "DisableFirewall", "AllowInboundExceptions", "DisableAuditPolicy", "RemoveAuditPolicy", "ExclusionPath", "ExclusionProcess", "ExclusionExtension")
+// exclude changes that are hardening rather than weakening a control
+| where not(Attributes has_any ("EnableFirewall", "EnableRealtimeMonitoring", "EnableAntiSpyware", "EnableAuditPolicy", "EnableBehaviorMonitoring", "EnableIOAVProtection"))
+// exclude read-only/reporting actions that should never match a modification event
+| where not(Attributes has_any ("gpresult", "Export-GPO", "Backup-GPO", "Get-GPO", "Get-GPResultantSetOfPolicy"))
+| project TimeGenerated, EventID, SubjectUserName, SubjectDomainName, ObjectName, DisplayName, Attributes, Computer
+| extend AlertType = "GPO Security Setting Weakening";
+let EntraPolicyChanges = AuditLogs
+| where Category in ("Policy", "ConditionalAccess", "Authentication")
+| where OperationName has_any ("Update policy", "Add policy", "Delete policy", "Update conditional access policy", "Add conditional access policy", "Delete conditional access policy", "Set federation settings on domain", "Update trust settings", "Set domain authentication", "Add partner to cross-tenant access setting", "Update cross-tenant access setting")
+// exclude read-only/reporting operations that should never have matched a policy change alert
+| where not(OperationName has_any ("Get policy", "List policy", "Export policy", "Get conditional access policy", "List conditional access policy"))
+| extend InitiatedBy = tostring(InitiatedBy.user.userPrincipalName)
+| extend TargetName = tostring(TargetResources[0].displayName)
+| extend ModifiedProperties = tostring(TargetResources[0].modifiedProperties)
+| where ModifiedProperties has_any ("grantControls", "conditions", "MfaRequired", "requireMultiFactorAuthentication", "blockLegacyAuthentication", "trustedIPs", "NamedLocation", "IssuerUri", "PassiveLogOnUri", "ActiveLogOnUri", "FederationBrandName", "SigningCertificate") or OperationName has_any ("Set federation settings on domain", "Update trust settings", "Set domain authentication")
+// focus on changes that move toward a less secure state: disabled controls, removed MFA requirement, deleted CA policy, or widened trust/exclusions
+| where OperationName has_any ("Delete conditional access policy", "Delete policy", "Set federation settings on domain", "Update trust settings", "Set domain authentication", "Add partner to cross-tenant access setting") or ModifiedProperties has_any ('"requireMultiFactorAuthentication":false', '"MfaRequired":false', '"Enabled":false', '"State":"Disabled"', '"IsEnabled":false', '"blockLegacyAuthentication":false', '"GrantControls":[]', '"conditions":[]')
+// exclude routine, documented changes performed via known privileged change-management workflows, where identifiable in the audit trail
+| where not(ModifiedProperties has_any ("ChangeTicket", "ApprovedChangeRequest", "MaintenanceWindow"))
+| project TimeGenerated, OperationName, InitiatedBy, TargetName, ModifiedProperties, Result
+| extend AlertType = "Entra Conditional Access or Trust Policy Weakening";
+union GPOSecurityChanges, EntraPolicyChanges
+| sort by TimeGenerated desc
