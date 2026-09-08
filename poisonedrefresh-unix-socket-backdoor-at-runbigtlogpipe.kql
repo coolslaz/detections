@@ -1,0 +1,6 @@
+union (DeviceFileEvents 
+| where FileName has "bigtlog.pipe" or FolderPath has "/run/bigtlog.pipe" 
+| where InitiatingProcessFileName in~ ("httpd", "apache2", "httpd.worker") 
+| project TimeGenerated, DeviceName, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName), (DeviceProcessEvents 
+| where InitiatingProcessCommandLine has "Kzwd6jM5" 
+| project TimeGenerated, DeviceName, FileName="", FolderPath="", InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName)
