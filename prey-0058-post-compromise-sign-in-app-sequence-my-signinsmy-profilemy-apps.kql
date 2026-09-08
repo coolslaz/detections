@@ -1,0 +1,15 @@
+// Detects narrow, consistent client-application sequence seen at the start of PREY-0058/UNC6671 post-compromise sessions.
+// Tightened: successful interactive sign-ins only, from an unmanaged (untrusted) device, within a 15-minute burst -
+// excludes routine account self-service checks performed from a user's normal, managed device.
+SigninLogs
+| where ResultType == 0
+| where IsInteractive == true
+| where AppDisplayName in ("OfficeHome", "My Signins", "My Profile", "My Apps", "Microsoft Account Controls V2")
+| extend TrustType_ = tostring(DeviceDetail.trustType)
+| where isempty(TrustType_)
+| summarize AppsUsed = make_set(AppDisplayName), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), IPAddresses = make_set(IPAddress), Count = count() by UserPrincipalName, bin(TimeGenerated, 1h)
+| where array_length(AppsUsed) >= 3
+| where AppsUsed has_any ("My Signins", "My Profile", "My Apps")
+| extend SessionDurationMinutes = datetime_diff('minute', LastSeen, FirstSeen)
+| where SessionDurationMinutes <= 15
+| sort by Count desc
