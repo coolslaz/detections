@@ -1,0 +1,5 @@
+DeviceProcessEvents
+| where FileName =~ "reg.exe"
+| where ProcessCommandLine has "copy" and ProcessCommandLine has "HKLM\\SOFTWARE\\Radmin" and ProcessCommandLine has "WOW6432Node\\Radmin"
+| where ProcessCommandLine has "/s" and ProcessCommandLine has "/f"
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName
