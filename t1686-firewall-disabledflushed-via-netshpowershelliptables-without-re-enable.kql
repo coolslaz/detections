@@ -1,0 +1,26 @@
+let lookback = 1d;
+let reenableWindow = 15m;
+let knownMgmtTools = dynamic(["CcmExec.exe", "IntuneManagementExtension.exe", "gpscript.exe", "gpupdate.exe", "ansible-playbook", "puppet", "puppet.exe", "chef-client", "chef-client.exe", "dockerd", "kubelet", "containerd"]);
+DeviceProcessEvents
+| where TimeGenerated > ago(lookback)
+| where (FileName in~ ("netsh.exe", "powershell.exe", "pwsh.exe", "iptables", "ip6tables", "nft", "bash", "sh") or ProcessCommandLine has_any ("netsh", "Set-NetFirewallProfile", "iptables", "ip6tables", "nft"))
+| where not(InitiatingProcessFileName in~ (knownMgmtTools) or ProcessCommandLine has_any ("CcmExec", "IntuneManagementExtension", "gpscript", "gpupdate", "ansible", "puppet", "chef-client", "dockerd", "kubelet", "containerd"))
+| where not(AccountName in~ ("SYSTEM", "LOCAL SERVICE", "NETWORK SERVICE") or AccountName endswith "$")
+| extend IsDisable = (ProcessCommandLine has_all ("advfirewall", "set", "allprofiles", "state", "off"))
+    or (ProcessCommandLine has "Set-NetFirewallProfile" and ProcessCommandLine has "-Enabled" and ProcessCommandLine has "False")
+    or (ProcessCommandLine has "iptables" and ProcessCommandLine has "-F")
+    or (ProcessCommandLine has "iptables" and ProcessCommandLine has "-P" and ProcessCommandLine has "ACCEPT")
+    or (ProcessCommandLine has "nft" and ProcessCommandLine has "flush" and ProcessCommandLine has "ruleset")
+| extend IsEnable = (ProcessCommandLine has_all ("advfirewall", "set", "allprofiles", "state", "on"))
+    or (ProcessCommandLine has "Set-NetFirewallProfile" and ProcessCommandLine has "-Enabled" and ProcessCommandLine has "True")
+| where IsDisable
+| join kind=leftanti (
+    DeviceProcessEvents
+    | where TimeGenerated > ago(lookback)
+    | where (FileName in~ ("netsh.exe", "powershell.exe", "pwsh.exe") or ProcessCommandLine has_any ("netsh", "Set-NetFirewallProfile"))
+    | where (ProcessCommandLine has_all ("advfirewall", "set", "allprofiles", "state", "on"))
+        or (ProcessCommandLine has "Set-NetFirewallProfile" and ProcessCommandLine has "-Enabled" and ProcessCommandLine has "True")
+    | project DeviceName, ReEnableTime = TimeGenerated
+) on DeviceName
+| where isnull(ReEnableTime) or datetime_diff('minute', ReEnableTime, TimeGenerated) > totimespan(reenableWindow) / 1m or ReEnableTime < TimeGenerated
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
