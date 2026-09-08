@@ -1,0 +1,18 @@
+let PowershellExec = DeviceProcessEvents
+| where FileName =~ "powershell.exe"
+| where ProcessCommandLine has "103.86.86.244";
+let NetworkMatch = DeviceNetworkEvents
+| where RemoteIP == "103.86.86.244"
+| where RemoteUrl has "svchost.exe";
+let UnionBase = PowershellExec
+| join kind=inner (NetworkMatch) on DeviceId
+| project TimeGenerated, DeviceId, InitiatingProcessFileName, ProcessCommandLine, RemoteIP, RemoteUrl;
+let FileEvents = DeviceFileEvents
+| where FolderPath has @"\fonts\web\"
+| where FileName endswith "svchost.exe.download" or FileName =~ "svchost.exe.download";
+let NetworkEvents = DeviceNetworkEvents
+| where RemoteUrl startswith "http://103.86.86.244/c/svchost.exe"
+| where InitiatingProcessFileName =~ "powershell.exe";
+UnionBase
+| union FileEvents
+| union NetworkEvents
