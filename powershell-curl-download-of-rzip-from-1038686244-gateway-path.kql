@@ -1,0 +1,6 @@
+DeviceProcessEvents
+| where FileName =~ "powershell.exe"
+| where ProcessCommandLine has "curl"
+| where ProcessCommandLine contains "103.86.86.244"
+| where ProcessCommandLine contains "/Gateway/r.zip"
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
