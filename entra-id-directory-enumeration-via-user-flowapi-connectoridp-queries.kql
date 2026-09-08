@@ -1,0 +1,12 @@
+AuditLogs
+| where TimeGenerated > ago(1d)
+| where OperationName in ("Get user flows", "Get API connectors", "Get identity providers", "Get user attributes")
+| extend InitiatedByUser = tostring(InitiatedBy.user.userPrincipalName)
+| extend InitiatedByIP = tostring(InitiatedBy.user.ipAddress)
+| summarize DistinctOperations = dcount(OperationName), Operations = make_set(OperationName), EventCount = count(), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by InitiatedByUser, InitiatedByIP
+| extend WindowMinutes = datetime_diff('minute', LastSeen, FirstSeen)
+// Tightened: bounded to the last day, require all 4 enumeration operation types (not just 2), and require
+// they occur in a tight burst - excludes routine, spread-out admin/help-desk configuration work.
+| where DistinctOperations >= 3 and WindowMinutes <= 30
+| project InitiatedByUser, InitiatedByIP, DistinctOperations, Operations, EventCount, FirstSeen, LastSeen, WindowMinutes
+| sort by DistinctOperations desc, EventCount desc
