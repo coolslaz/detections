@@ -1,0 +1,6 @@
+DeviceProcessEvents
+| where FileName in~ ("sc.exe", "wmic.exe")
+| where (FileName =~ "sc.exe" and ProcessCommandLine has "\"Soft\"" and (ProcessCommandLine has "stop" or ProcessCommandLine has "delete"))
+ or (FileName =~ "wmic.exe" and ProcessCommandLine has "svchost.exe" and ProcessCommandLine has "C:\\Windows\\system\\svchost.exe" and ProcessCommandLine has "terminate")
+| summarize StopDeleteCount = countif(FileName =~ "sc.exe"), WmicTerminateCount = countif(FileName =~ "wmic.exe"), Commands = make_set(ProcessCommandLine, 10), Timestamps = make_set(TimeGenerated, 10) by DeviceId, InitiatingProcessAccountName
+| where StopDeleteCount > 0 and WmicTerminateCount > 0
