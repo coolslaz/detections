@@ -1,0 +1,11 @@
+OfficeActivity
+| where RecordType == "ExchangeItemAggregated" or Operation == "MailItemsAccessed"
+| where ClientAppId == "9199bf20-a13f-4107-85dc-02114787ef48"
+| extend ParsedParams = parse_json(Parameters)
+| where tostring(ParsedParams) has "c999ed3e-27ae-4cb3-b3a2-46b056af63d3" or tostring(AppAccessContext) has "c999ed3e-27ae-4cb3-b3a2-46b056af63d3"
+| summarize EventCount = count(), Mailboxes = make_set(MailboxOwnerUPN, 50), DistinctMailboxes = dcount(MailboxOwnerUPN), ClientIPs = make_set(ClientIP, 50), StartTime = min(TimeGenerated), EndTime = max(TimeGenerated) by UserId, ClientAppId, bin(TimeGenerated, 15m)
+// Tightened: require access spans multiple mailboxes - a single heavily-used mailbox on this app/token
+// combo is normal for that user's own mail client; cross-mailbox collection is the anomalous pattern.
+| where EventCount > 20 and DistinctMailboxes > 1
+| project StartTime, EndTime, UserId, ClientAppId, EventCount, DistinctMailboxes, Mailboxes, ClientIPs
+| sort by EventCount desc
