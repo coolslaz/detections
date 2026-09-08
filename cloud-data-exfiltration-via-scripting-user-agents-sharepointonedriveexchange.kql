@@ -1,0 +1,10 @@
+OfficeActivity
+| where Operation in ("FileDownloaded", "FileAccessed", "FileSyncDownloadedFull", "MailItemsAccessed", "SearchQueryPerformed")
+| where UserAgent has_any ("Microsoft.Graph.Client/6.0.3", "python-httpx/0.28.1", "python-requests/2.28.1")
+| extend ClientIPAddr = trim(@'[\[\]]', tostring(ClientIP))
+| summarize EventCount = count(), Operations = make_set(Operation, 20), DistinctObjects = dcount(OfficeObjectId) by UserId, ClientIPAddr, UserAgent, bin(TimeGenerated, 1h)
+// Tightened: raised the volume floor and require the touched objects to be diverse - legitimate scripted
+// integrations (backup jobs, Graph automation) using these libraries tend to hit a narrow, repeated set
+// of objects rather than a broad spread.
+| where EventCount > 30 and DistinctObjects > 15
+| sort by EventCount desc
