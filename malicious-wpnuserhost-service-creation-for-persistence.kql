@@ -1,0 +1,14 @@
+let ProcessCreation = DeviceProcessEvents
+| where FileName =~ "sc.exe"
+| where ProcessCommandLine has "create" and ProcessCommandLine has "WpnUserHost"
+| where ProcessCommandLine has "binpath"
+| where ProcessCommandLine !has "System32"
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine;
+let RegistryCreation = DeviceRegistryEvents
+| where ActionType in ("RegistryValueSet", "RegistryKeyCreated")
+| where RegistryKey has @"SYSTEM\CurrentControlSet\Services\WpnUserHost"
+| where RegistryValueName in~ ("ImagePath", "Start") or ActionType == "RegistryKeyCreated"
+| where RegistryValueData !has "System32"
+| project TimeGenerated, DeviceName, AccountName=InitiatingProcessAccountName, FileName=InitiatingProcessFileName, ProcessCommandLine=InitiatingProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine;
+// Complement with registry-based service creation detection
+union ProcessCreation, RegistryCreation
