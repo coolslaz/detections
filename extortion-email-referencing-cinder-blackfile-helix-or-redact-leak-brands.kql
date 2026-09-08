@@ -1,0 +1,13 @@
+EmailEvents
+| where EmailDirection == "Inbound"
+| where isnotempty(Subject)
+// EmailEvents does not expose a raw email-body column in the M365 Defender advanced hunting schema
+// (body content isn't surfaced there), so matching is limited to the Subject line.
+| where Subject has_any ("Cinder", "BlackFile", "Helix", "Redact")
+| where Subject has_any ("leak", "leaked", "publish", "published", "expose", "exposed", "data breach", "stolen data", "stolen documents")
+| where Subject has_any ("payment", "pay", "ransom", "bitcoin", "btc", "cryptocurrency", "wallet", "demand")
+// Tightened: inbound-only, so internal SOC/threat-intel mail referencing these brand names doesn't match.
+// Tune YOUR_ORG_DOMAIN.COM to your own mail domain(s) to also drop internal-sender false positives.
+| where SenderFromAddress !endswith "@YOUR_ORG_DOMAIN.COM"
+| project TimeGenerated, NetworkMessageId, SenderFromAddress, RecipientEmailAddress, Subject
+| sort by TimeGenerated desc
