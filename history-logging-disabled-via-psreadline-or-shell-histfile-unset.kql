@@ -1,0 +1,12 @@
+DeviceProcessEvents
+| where FileName in~ ("powershell.exe", "pwsh.exe", "bash", "sh", "zsh", "dash")
+| where AccountName !in~ ("SYSTEM", "LOCAL SERVICE", "NETWORK SERVICE") and AccountName !endswith "$"
+| where InitiatingProcessFileName !in~ ("cloud-init", "cloud-init-per", "dockerd", "containerd", "packer", "ansible-playbook", "puppet", "chef-client", "systemd")
+| where (ProcessCommandLine has "Remove-Module" and ProcessCommandLine has "PSReadLine")
+    or (ProcessCommandLine has "Set-PSReadLineOption" and ProcessCommandLine has "HistorySaveStyle" and ProcessCommandLine has "SaveNothing")
+    or (ProcessCommandLine matches regex @"unset\s+HISTFILE\b")
+    or (ProcessCommandLine matches regex @"HISTFILE\s*=\s*(/dev/null)?\s*($|;)")
+    or (ProcessCommandLine matches regex @"unset\s+HISTSIZE\b")
+    or (ProcessCommandLine matches regex @"HISTSIZE\s*=\s*0\s*($|;)")
+    or ProcessCommandLine has "set +o history"
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
