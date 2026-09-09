@@ -1,0 +1,21 @@
+DeviceProcessEvents
+| where FileName =~ "powershell.exe"
+| where ProcessCommandLine has "-w h" and ProcessCommandLine has "-enc"
+| where InitiatingProcessFileName =~ "explorer.exe"
+| extend EncodedCmd = extract(@"(?i)-enc\w*\s+([A-Za-z0-9+/=]{20,})", 1, ProcessCommandLine)
+| where isnotempty(EncodedCmd) and strlen(EncodedCmd) >= 80
+| project TimeGenerated, DeviceName, AccountName, ProcessCommandLine, EncodedCmd, InitiatingProcessFileName, InitiatingProcessCommandLine
+| join kind=leftouter (
+    DeviceRegistryEvents
+    | where RegistryKey has @"Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU"
+    | project DeviceName, RegistryTime = TimeGenerated, RegistryKey, RegistryValueData
+) on DeviceName
+| join kind=leftouter (
+    DeviceProcessEvents
+    | where FileName =~ "rundll32.exe"
+    | where ProcessCommandLine has "WindowsUpdate.log"
+    | project DeviceName, RundllTime = TimeGenerated, RundllCommandLine = ProcessCommandLine
+) on DeviceName
+| where (isnotnull(RegistryTime) and abs(datetime_diff('minute', TimeGenerated, RegistryTime)) <= 15)
+    or (isnotnull(RundllTime) and abs(datetime_diff('minute', TimeGenerated, RundllTime)) <= 15)
+| project TimeGenerated, DeviceName, AccountName, ProcessCommandLine, EncodedCmd, RegistryTime, RegistryKey, RegistryValueData, RundllTime, RundllCommandLine
