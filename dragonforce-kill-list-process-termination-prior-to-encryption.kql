@@ -1,0 +1,21 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(1h)
+| where FileName in~ ("MsMpEng.exe", "sql.exe", "oracle.exe", "sqlservr.exe", "outlook.exe")
+| extend Bin = bin(TimeGenerated, 10m)
+| join kind=inner (
+    DeviceEvents
+    | where TimeGenerated > ago(1h)
+    | where ActionType in ("OpenProcessApiCall", "ProcessTerminationEvent", "TerminateProcessApiCall")
+    | where InitiatingProcessFileName !in~ ("TrustedInstaller.exe", "MsiExec.exe", "msiexec.exe", "wuauclt.exe", "UsoClient.exe", "ccmexec.exe", "CcmExec.exe", "SCNotification.exe", "setup.exe")
+    | extend Bin = bin(TimeGenerated, 10m)
+) on DeviceId, Bin
+| summarize KilledProcessNames = make_set(FileName, 38), KillCount = dcount(FileName) by DeviceId, Bin
+| where KillCount >= 5
+| join kind=inner (
+    DeviceFileEvents
+    | where ActionType == "FileModified" or ActionType == "FileCreated"
+    | extend Bin = bin(TimeGenerated, 10m)
+    | summarize FileWriteCount = count() by DeviceId, Bin
+    | where FileWriteCount > 100
+) on DeviceId, Bin
+| project DeviceId, Bin, KilledProcessNames, KillCount, FileWriteCount
