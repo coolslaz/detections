@@ -1,0 +1,10 @@
+// False positives: narrowed to require both a known Silver Fox HVNC C2 indicator (gerenciadorcaixa.digital domain, nfe_valid_access_key parameter, or known C2 IPs 40.124.169.27 / 5.230.249.49) in the launched URL AND an initiating process matching the known malicious dropper binaries/paths observed in this campaign (UpdateAssistant.exe, AppUpdateHelper.exe, SysMaintenance.exe under AppData\Local\Programs\SystemComponents or AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup). Generic cmd.exe-launched browser activity without both conditions is excluded.
+DeviceProcessEvents
+| where FileName =~ "cmd.exe"
+| where ProcessCommandLine has "/c" and ProcessCommandLine has "start"
+| where ProcessCommandLine has_any ("chrome.exe", "firefox.exe", "msedge.exe", "brave.exe", "opera.exe")
+| where ProcessCommandLine matches regex @"start\s+\S*(chrome|firefox|msedge|brave|opera)\.exe\s+https?://"
+| where ProcessCommandLine has_any ("gerenciadorcaixa.digital", "nfe_valid_access_key", "40.124.169.27", "5.230.249.49")
+| where InitiatingProcessFileName in~ ("UpdateAssistant.exe", "AppUpdateHelper.exe", "SysMaintenance.exe")
+| where InitiatingProcessFolderPath has_any (@"AppData\Local\Programs\SystemComponents", @"AppData\Roaming\Programs\Common", @"AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup")
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, FileName, ProcessCommandLine, AccountName
