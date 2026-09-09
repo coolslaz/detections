@@ -1,0 +1,15 @@
+DeviceProcessEvents
+| where FileName in~ ("cmd.exe", "wmic.exe")
+| where ProcessCommandLine has "WMIC.exe" and ProcessCommandLine has "shadowcopy" and ProcessCommandLine has "delete"
+| where ProcessCommandLine has "where" and ProcessCommandLine has "ID="
+| where ProcessCommandLine contains "C:\\Windows\\System32\\wbem\\WMIC.exe" or ProcessCommandLine has_all ("cmd.exe", "/c", "WMIC.exe", "shadowcopy")
+// Exclude known legitimate backup/maintenance agents in the process tree
+| where InitiatingProcessParentFileName !in~ ("VeeamAgent.exe", "MacriumService.exe", "VSSVC.exe", "ngen.exe", "wbengine.exe")
+| where InitiatingProcessFileName !in~ ("VeeamAgent.exe", "MacriumService.exe", "VSSVC.exe", "ngen.exe", "wbengine.exe")
+// Exclude known backup/service accounts where such naming convention exists
+| where not(AccountName has_any ("veeam", "backup", "svc-backup", "wbengine"))
+// Require looped/bulk deletion behavior: multiple distinct WMIC shadowcopy delete invocations per device within a 5-minute window
+| extend Bucket = bin(TimeGenerated, 5m)
+| summarize InvocationCount = dcount(ProcessCommandLine), Invocations = make_set(ProcessCommandLine, 10), DeviceNames = make_set(DeviceName, 5), Accounts = make_set(AccountName, 5), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by DeviceId, Bucket
+| where InvocationCount >= 2
+| project FirstSeen, LastSeen, DeviceId, DeviceNames, InvocationCount, Invocations, Accounts
