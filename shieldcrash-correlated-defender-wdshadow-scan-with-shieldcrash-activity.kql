@@ -1,0 +1,19 @@
+let timeWindow = 5m;
+let ShieldCrashProcs =
+    DeviceProcessEvents
+    | where FileName =~ "ShieldCrash.exe" or ProcessCommandLine has "ShieldCrash"
+    | project DeviceName, IndicatorTime = TimeGenerated, IndicatorSource = "ProcessCreation", IndicatorDetail = ProcessCommandLine;
+let ShieldCrashFiles =
+    DeviceFileEvents
+    | where FolderPath has "ShieldCrash_" or FileName has "ShieldCrash_"
+    | project DeviceName, IndicatorTime = TimeGenerated, IndicatorSource = "ObjectCreation", IndicatorDetail = FolderPath;
+let ShieldCrashIndicators = union ShieldCrashProcs, ShieldCrashFiles;
+DeviceFileEvents
+| where FolderPath has "BaseNamedObjects\\Restricted\\WD_SHADOW_"
+| where FolderPath has "WD_SCAN"
+| where FolderPath contains "globalroot" or FolderPath contains "BaseNamedObjects"
+| project ScanTime = TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, FolderPath, FileName, ActionType
+| join kind=inner (ShieldCrashIndicators) on DeviceName
+| where abs(datetime_diff('second', ScanTime, IndicatorTime)) <= 300
+| project ScanTime, IndicatorTime, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, FolderPath, FileName, ActionType, IndicatorSource, IndicatorDetail
+| sort by ScanTime desc
