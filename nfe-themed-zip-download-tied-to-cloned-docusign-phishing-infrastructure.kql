@@ -1,0 +1,15 @@
+let SuspiciousZipNames = DeviceFileEvents
+| where TimeGenerated > ago(1d)
+| where (FileName has "_NFe_" and FileName endswith ".zip")
+    or (FileName startswith "CASAS_BAHIA_COM" and FileName endswith ".zip")
+    or (FileName startswith "MOTOROLA_MOB_COM_NFe" and FileName endswith ".zip")
+| project TimeGenerated, DeviceName, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine;
+let SuspiciousDownloadContext = DeviceNetworkEvents
+| where TimeGenerated > ago(1d)
+| where isnotempty(RemoteUrl) and (RemoteUrl has "download_direct.php" or RemoteUrl has "nfe_valid_access_key_2026_secure")
+| project NetTimeGenerated = TimeGenerated, DeviceName, RemoteUrl;
+SuspiciousZipNames
+| join kind=inner (SuspiciousDownloadContext) on DeviceName
+| where abs(datetime_diff('minute', TimeGenerated, NetTimeGenerated)) <= 15
+| project TimeGenerated, DeviceName, FileName, FolderPath, RemoteUrl, InitiatingProcessFileName, InitiatingProcessCommandLine
+| sort by TimeGenerated desc
