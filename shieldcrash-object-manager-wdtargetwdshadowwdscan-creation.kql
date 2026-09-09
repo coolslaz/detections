@@ -1,0 +1,10 @@
+// Detects creation of restricted Object Manager namespace directories/objects mimicking Windows Defender scan internals
+// used by the ShieldCrash PoC (CVE-2026-69414) to hijack Defender's scan process
+let WDNames = dynamic(["WD_TARGET", "WD_SHADOW", "WD_SCAN"]);
+let LegitDefenderProcs = dynamic(["MsMpEng.exe", "NisSrv.exe", "MpCmdRun.exe", "SecurityHealthService.exe", "svchost.exe", "System"]);
+DeviceEvents
+| where ActionType in ("ObjectManagerDirectoryCreated", "NamedObjectCreated", "ObjectCreated")
+| where AdditionalFields has_any ("BaseNamedObjects\\Restricted", "WD_TARGET", "WD_SHADOW", "WD_SCAN")
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, ActionType, AdditionalFields
+| where InitiatingProcessCommandLine has "ShieldCrash.exe" or AdditionalFields has_any ("BaseNamedObjects\\Restricted\\WD_TARGET_", "BaseNamedObjects\\Restricted\\WD_SHADOW_")
+| where not(InitiatingProcessFileName has_any (LegitDefenderProcs))
