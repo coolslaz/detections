@@ -1,0 +1,7 @@
+DeviceProcessEvents
+| where FileName in~ ("UpdateAssistant.exe", "AppUpdateHelper.exe")
+| where (FileName =~ "UpdateAssistant.exe" and FolderPath has @"AppData\Local\Programs\SystemComponents\UpdateAssistant.exe")
+    or (FileName =~ "AppUpdateHelper.exe" and FolderPath has @"AppData\Roaming\Programs\Common\AppUpdateHelper.exe")
+| where not(FolderPath has_any (@"C:\Windows\System32", @"C:\Windows\SysWOW64", @"C:\Windows\SoftwareDistribution", @"C:\Program Files\Windows Update", @"C:\Program Files (x86)\Windows Update"))
+| project TimeGenerated, DeviceName, AccountName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, SHA256
+// false_positives: Legitimate UpdateAssistant.exe or AppUpdateHelper.exe binaries should only execute from official system paths (C:\Windows\System32, C:\Windows\SysWOW64, C:\Windows\SoftwareDistribution, or Windows Update Program Files directories); any occurrence from the specific AppData\Local\Programs\SystemComponents or AppData\Roaming\Programs\Common paths is not a known legitimate Windows Update location and warrants investigation.
