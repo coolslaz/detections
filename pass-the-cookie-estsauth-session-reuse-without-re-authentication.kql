@@ -1,0 +1,28 @@
+// Detects likely session cookie replay (pass-the-cookie) of stolen ESTSAUTH/AppSessionId tokens
+// against Microsoft 365 / Azure AD - a non-interactive sign-in inheriting an MFA-established
+// session from a NEW device AND a new IP within a tight window, without repeating the MFA
+// challenge, consistent with BigBear 2.0 Cookie Replay API.
+// FP tightening: anchors the baseline to a session that actually completed interactive MFA
+// (not just any successful signin), requires BOTH device and IP to change together (same-device
+// roaming across networks - mobile/VPN/home-office handoff - is excluded since PriorDeviceId
+// still matches), narrows the replay window to 30m, and dedupes to one row per hijacked session.
+let lookback = 14d;
+let replayWindow = 30m;
+let priorSignins = SigninLogs
+| where TimeGenerated > ago(lookback)
+| where ResultType == 0
+| where IsInteractive == true
+| where AuthenticationRequirement == "multiFactorAuthentication"
+| where isnotempty(tostring(DeviceDetail.deviceId))
+| project UserPrincipalName, PriorIP = IPAddress, PriorDeviceId = tostring(DeviceDetail.deviceId), PriorTime = TimeGenerated;
+SigninLogs
+| where TimeGenerated > ago(1d)
+| where ResultType == 0
+| where IsInteractive == false
+| where AuthenticationRequirement != "multiFactorAuthentication"
+| extend DeviceId = tostring(DeviceDetail.deviceId)
+| join kind=inner (priorSignins) on UserPrincipalName
+| where TimeGenerated > PriorTime and TimeGenerated < PriorTime + replayWindow
+| where IPAddress != PriorIP
+| where DeviceId != PriorDeviceId or isempty(DeviceId)
+| summarize ReplayCount = count(), FirstReplay = min(TimeGenerated), ReplayIPs = make_set(IPAddress), ReplayDevices = make_set(DeviceId) by UserPrincipalName, PriorIP, PriorDeviceId, PriorTime
