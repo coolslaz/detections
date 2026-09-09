@@ -1,0 +1,25 @@
+union (
+DeviceRegistryEvents
+| where ActionType == "RegistryValueSet"
+| where RegistryKey has_any (@"CurrentVersion\Run", @"CurrentVersion\RunOnce")
+| where RegistryValueName =~ "msvc"
+| where InitiatingProcessFileName =~ "wscl.exe"
+| where not(InitiatingProcessFolderPath has_any (@"\Windows\System32\", @"\Windows\SysWOW64\", @"\Program Files\", @"\Program Files (x86)\"))
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath, RegistryKey, RegistryValueName, RegistryValueData, InitiatingProcessAccountName
+),
+(
+DeviceProcessEvents
+| where FileName =~ "wscl.exe"
+| where not(FolderPath has_any (@"\Windows\System32\", @"\Windows\SysWOW64\", @"\Program Files\", @"\Program Files (x86)\"))
+| where ProcessCommandLine has_any ("wscl-13", "msvcsrvc") and ProcessCommandLine has_any ("create", "sc.exe", "New-Service", "delayed-auto", "delayedautostart")
+| project TimeGenerated, DeviceName, InitiatingProcessFileName = FileName, InitiatingProcessFolderPath = FolderPath, RegistryKey = "", RegistryValueName = "", RegistryValueData = ProcessCommandLine, InitiatingProcessAccountName = AccountName
+),
+(
+DeviceEvents
+| where ActionType has "ServiceInstalled"
+| where AdditionalFields has_any ("wscl-13", "msvcsrvc")
+| where InitiatingProcessFileName =~ "wscl.exe"
+| where not(InitiatingProcessFolderPath has_any (@"\Windows\System32\", @"\Windows\SysWOW64\", @"\Program Files\", @"\Program Files (x86)\"))
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath, RegistryKey = "", RegistryValueName = "", RegistryValueData = tostring(AdditionalFields), InitiatingProcessAccountName = InitiatingProcessAccountName
+)
+| sort by TimeGenerated desc
