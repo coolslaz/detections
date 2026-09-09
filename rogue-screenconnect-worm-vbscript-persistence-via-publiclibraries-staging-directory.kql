@@ -1,0 +1,8 @@
+DeviceRegistryEvents
+| where ActionType in ("RegistryValueSet", "RegistryKeyCreated")
+| where RegistryKey has @"Software\Microsoft\Windows\CurrentVersion\Run"
+| where RegistryValueData has @"Public\Libraries\Default\Lib\Lib1"
+| where RegistryValueData has_any ("wscript.exe", "cscript.exe")
+| where RegistryValueData has_any ("WindowsServiceHost.vbs", "1.vbs", "2.vbs", "3.vbs", "4.vbs")
+| project TimeGenerated, DeviceName, InitiatingProcessAccountName, RegistryKey, RegistryValueName, RegistryValueData
+| sort by TimeGenerated desc
