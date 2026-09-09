@@ -1,0 +1,8 @@
+DeviceProcessEvents
+| where FileName =~ "powershell.exe" or FileName =~ "powershell_ise.exe"
+| where ProcessCommandLine has "Add-MpPreference"
+| where ProcessCommandLine has_any ("-ExclusionPath 'C:\\'", "-ExclusionPath \"C:\\\"", "-ExclusionPath C:\\ ") or ProcessCommandLine endswith "-ExclusionPath C:\\"
+| where ProcessCommandLine has_all ("-DisableRealtimeMonitoring", "-DisableBehaviorMonitoring", "-DisableIOAVProtection")
+| extend SuppressesNotifications = ProcessCommandLine has "UILockdown" or ProcessCommandLine has "DisableEnhancedNotifications"
+| extend ReferencesInstallerScript = ProcessCommandLine has "t.ps1"
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, SuppressesNotifications, ReferencesInstallerScript, InitiatingProcessFileName, InitiatingProcessCommandLine
