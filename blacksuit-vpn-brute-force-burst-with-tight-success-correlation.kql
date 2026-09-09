@@ -1,0 +1,19 @@
+let BlackSuitVpnIPs = dynamic(['94.232.46.204','45.227.254.43','66.70.179.236','94.232.46.45','5.181.86.158','5.181.86.65','5.181.86.185','92.255.85.43','85.234.216.197','85.234.216.195']);
+let Failures = CommonSecurityLog
+| where TimeGenerated > ago(9d)
+| where Activity has 'sslvpn_login_permission_denied' or DeviceEventClassID has 'sslvpn_login_permission_denied' or Message has 'sslvpn_login_permission_denied'
+| extend BurstBin = bin(TimeGenerated, 1h)
+| summarize FailedAttempts = count(), FirstFailure = min(TimeGenerated), LastFailure = max(TimeGenerated), FailureIPs = make_set(SourceIP, 20) by Account = tostring(SourceUserName), BurstBin;
+let Successes = CommonSecurityLog
+| where TimeGenerated > ago(9d)
+| where Activity has_any ('login successfully', 'tunnel up', 'DTLS tunnel established') or Message has_any ('login successfully', 'tunnel up', 'DTLS tunnel established')
+| project Account = tostring(SourceUserName), SuccessTime = TimeGenerated, SuccessIP = SourceIP, DestinationIP, Activity, Message;
+Failures
+| where FailedAttempts >= 10
+| join kind=inner (Successes) on Account
+| where SuccessTime > LastFailure and SuccessTime <= LastFailure + 15m
+| where not(Message has_any ('mfa', 'multi-factor', 'multi factor', 'otp', 'push approved', 'second factor')) and not(Activity has_any ('mfa', 'multi-factor', 'otp'))
+| extend KnownMaliciousIP = SuccessIP in (BlackSuitVpnIPs) or (set_has_element(FailureIPs, SuccessIP))
+| where KnownMaliciousIP
+| project Account, BurstBin, FailedAttempts, FirstFailure, LastFailure, FailureIPs, SuccessTime, SuccessIP, DestinationIP, KnownMaliciousIP
+| sort by SuccessTime desc
