@@ -1,0 +1,7 @@
+DeviceProcessEvents
+| where FileName in~ ("powershell.exe", "WindowsPowerShell.exe")
+| where ProcessCommandLine has "-WindowStyle Hidden" and ProcessCommandLine has "-ExecutionPolicy Bypass"
+| where ProcessCommandLine has "Invoke-WebRequest" and ProcessCommandLine has "-OutFile"
+| where ProcessCommandLine has_any ("dl.php?f=NotaFiscal", "nfe_valid_access_key_2026_secure")
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessFolderPath
+// false_positives: Hidden/Bypass PowerShell alone is common in legitimate automation and is no longer sufficient to alert; this rule now requires the co-occurrence of hidden+bypass flags with Invoke-WebRequest/-OutFile AND the specific NotaFiscal/nfe_valid_access_key_2026_secure themed download URL pattern, narrowing false positives to only this campaign's lure infrastructure.
