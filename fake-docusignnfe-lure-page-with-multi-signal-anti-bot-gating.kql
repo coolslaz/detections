@@ -1,0 +1,27 @@
+// Detects fake DocuSign/NFe phishing lure pages that implement anti-bot gating
+// requiring ALL THREE gating techniques together: navigator.webdriver checks,
+// headless-browser artifact detection, AND interaction-wait fallback timers,
+// scoped specifically to the Documento_Contrato_Signado.pdf-themed lure page.
+DeviceNetworkEvents
+| where isnotempty(AdditionalFields)
+| extend HttpResponseBody = tostring(AdditionalFields.HttpResponseBody)
+| where isnotempty(HttpResponseBody)
+| where HttpResponseBody has_any ("Documento_Contrato_Signado.pdf", "0a4b2aff1c2ebf8b")
+| where HttpResponseBody has "navigator.webdriver"
+| where HttpResponseBody has_any ("headless", "HeadlessChrome", "Headless-browser")
+| where HttpResponseBody has_any ("3500", "3.5") and HttpResponseBody has "addEventListener"
+| extend HasWebdriverCheck = HttpResponseBody has "navigator.webdriver"
+| extend HasHeadlessDetection = HttpResponseBody has_any ("headless", "HeadlessChrome", "Headless-browser")
+| extend HasInteractionWait = (HttpResponseBody has_any ("3500", "3.5") and HttpResponseBody has "addEventListener")
+| extend HasLureMarker = HttpResponseBody has_any ("Documento_Contrato_Signado.pdf", "0a4b2aff1c2ebf8b")
+| extend AntiBotIndicatorCount = (iff(HasWebdriverCheck, 1, 0)) + (iff(HasHeadlessDetection, 1, 0)) + (iff(HasInteractionWait, 1, 0))
+| where AntiBotIndicatorCount == 3 and HasLureMarker
+| project TimeGenerated, RemoteUrl, RemoteIP, AntiBotIndicatorCount, HasWebdriverCheck, HasHeadlessDetection, HasInteractionWait, HasLureMarker, HttpResponseBody
+| sort by TimeGenerated desc
+// false_positives: Very low. Requires simultaneous presence of all three anti-bot gating
+// techniques (navigator.webdriver check, headless-browser artifact detection, and an
+// interaction-wait fallback timer using addEventListener) combined with the specific
+// Documento_Contrato_Signado.pdf lure page marker or its associated hash string. Legitimate
+// bot-detection or CAPTCHA vendors are unlikely to combine all these exact markers with this
+// specific lure branding; residual risk limited to security researchers/scanners replaying
+// captured copies of this exact phishing kit.
