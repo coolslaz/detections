@@ -1,0 +1,8 @@
+// Detection: HVNC Backdoor Mutex Creation Pattern (AppUpdateHelper/WinSvc)
+// false_positives: Narrow regex match on Global\\AppUpdateHelper_[A-F0-9]+ or Global\\WinSvc_[A-F0-9]+ mutex names significantly reduces false positives; legitimate software rarely uses this exact naming convention with hex-only suffixes. Residual risk limited to custom internal tooling coincidentally using identical mutex naming scheme.
+DeviceEvents
+| where ActionType in ("NamedObjectCreated", "MutexCreated", "ProcessCreatedUsingWmiQuery") or ActionType has "Mutex"
+| extend MutexName = tostring(AdditionalFields.MutexName)
+| where isnotempty(MutexName)
+| where MutexName matches regex @"^Global\\(AppUpdateHelper|WinSvc)_[A-F0-9]+$"
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, MutexName, ActionType
