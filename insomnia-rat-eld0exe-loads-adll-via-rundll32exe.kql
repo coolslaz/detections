@@ -1,0 +1,7 @@
+DeviceProcessEvents
+| where FileName =~ "rundll32.exe"
+| where InitiatingProcessFileName =~ "eld0.exe"
+| where InitiatingProcessFolderPath has_any (@"\Users\", @"\ProgramData\", @"\Temp\", @"\AppData\")
+| where not(InitiatingProcessFolderPath has_any (@"\Windows\System32\", @"\Windows\SysWOW64\", @"\Program Files\", @"\Program Files (x86)\"))
+| where ProcessCommandLine matches regex @"(?i)[\\/]a\.dll\s*,"
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, FileName, ProcessCommandLine, AccountName
