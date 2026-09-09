@@ -1,0 +1,8 @@
+DeviceFileEvents
+| where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+| where FolderPath matches regex @"C:\\ShieldCrash_\{[0-9A-Fa-f-]+\}\\[^\\]+:.+" or InitiatingProcessCommandLine matches regex @"ShieldCrash_\{[0-9A-Fa-f-]+\}\\[^\\]+:.+"
+| where FileName has "ntdll.dll" or PreviousFileName has "ntdll.dll" or InitiatingProcessCommandLine has "ntdll.dll"
+| where InitiatingProcessFileName !in~ ("msiexec.exe", "TrustedInstaller.exe", "wuauclt.exe", "setup.exe", "svchost.exe", "MoUsoCoreWorker.exe", "OfficeClickToRun.exe", "UsoClient.exe")
+| project TimeGenerated, DeviceName, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName
+// Fallback: single-event match on process command line copying ntdll.dll into a ShieldCrash_{GUID} staging directory as an alternate data stream, excluding common installer/updater processes
+// DeviceProcessEvents | where ProcessCommandLine has "ntdll.dll" and ProcessCommandLine matches regex @"ShieldCrash_\{[0-9A-Fa-f-]+\}\\[^\\]+:.+" and FileName !in~ ("msiexec.exe", "TrustedInstaller.exe", "wuauclt.exe", "setup.exe", "svchost.exe", "MoUsoCoreWorker.exe", "OfficeClickToRun.exe", "UsoClient.exe")
