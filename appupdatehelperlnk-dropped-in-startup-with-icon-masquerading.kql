@@ -1,0 +1,9 @@
+DeviceFileEvents
+| where ActionType == "FileCreated"
+| where FolderPath has @"\Microsoft\Windows\Start Menu\Programs\Startup\"
+| where FileName =~ "AppUpdateHelper.lnk"
+| where InitiatingProcessFileName =~ "UpdateAssistant.exe"
+| where InitiatingProcessFolderPath has "SystemComponents" or InitiatingProcessCommandLine has "SystemComponents"
+| where InitiatingProcessCommandLine has "notepad.exe"
+| project TimeGenerated, DeviceName, InitiatingProcessAccountName, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, SHA256, InitiatingProcessSHA256
+// false_positives: Legitimate use of this exact filename, folder path, and icon-masquerading pattern (LNK targeting UpdateAssistant.exe under a SystemComponents path while displaying a notepad.exe icon) is highly unlikely; broader LNK creation in Startup by unrelated software will not match this narrowed rule.
