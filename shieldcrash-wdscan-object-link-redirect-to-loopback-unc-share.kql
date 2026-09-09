@@ -1,0 +1,16 @@
+// Detects creation of Object Manager symbolic links that redirect the Windows Defender WD_SCAN object to a loopback UNC share path, part of the ShieldCrash (CVE-2026-69414) exploit chain
+// Tightened: requires WD_SCAN object-link creation and loopback UNC redirect pattern to co-occur within the same correlation window per device, and excludes legitimate administrative loopback share usage
+let LoopbackUncPattern = dynamic([@"\??\UNC\localhost\C$\ShieldCrash_", @"\CLFS??\UNC\localhost\C$\ShieldCrash_"]);
+let AdminTools = dynamic(["net.exe", "net1.exe", "mmc.exe", "explorer.exe", "backup.exe"]);
+DeviceEvents
+| where ActionType has_any ("ObjectLinkCreated", "NamedObjectCreated", "ProcessEvent")
+| where AdditionalFields has "WD_SCAN"
+| where AdditionalFields has_any (LoopbackUncPattern)
+| where AdditionalFields contains "object link created"
+| where InitiatingProcessFileName !in~ (AdminTools)
+| where not(InitiatingProcessCommandLine has_any ("New-SmbMapping", "net use", "backup"))
+| extend Bucket = bin(TimeGenerated, 5m)
+| summarize LinkEvents = make_set(AdditionalFields, 10), EventCount = count(), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), InitiatingProcesses = make_set(InitiatingProcessFileName, 10), Accounts = make_set(InitiatingProcessAccountName, 10) by DeviceName, Bucket
+| where EventCount >= 2
+| project DeviceName, Bucket, FirstSeen, LastSeen, EventCount, LinkEvents, InitiatingProcesses, Accounts
+| sort by LastSeen desc
