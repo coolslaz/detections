@@ -1,0 +1,29 @@
+// Detects Windows Defender engine (MsMpEng.exe) crashing or restarting unexpectedly AND correlates it with another ShieldCrash/ShieldBreak (CVE-2026-69414) indicator on the same host within a short window, reducing false positives from unrelated Defender crashes
+let lookback = 1d;
+let window = 15m;
+let CrashEvents =
+    DeviceProcessEvents
+    | where TimeGenerated > ago(lookback)
+    | where (FileName =~ "WerFault.exe" and ProcessCommandLine has "MsMpEng.exe") or (FileName =~ "MsMpEng.exe")
+    | summarize Events = make_set(FileName, 5), Commands = make_set(ProcessCommandLine, 10), EventCount = count() by DeviceId, CrashTime = bin(TimeGenerated, 10m)
+    | where EventCount >= 2
+    | where Events has "WerFault.exe" or Events has "MsMpEng.exe"
+    | extend PossibleCrashRestart = iff(Commands has "MsMpEng.exe", true, false)
+    | where PossibleCrashRestart == true
+    | project DeviceId, CrashTime, Events, Commands;
+let ShieldCrashPoC =
+    DeviceProcessEvents
+    | where TimeGenerated > ago(lookback)
+    | where FileName =~ "ShieldCrash.exe" or ProcessCommandLine has "ShieldCrash.exe" or ProcessCommandLine has "config\\ELAM"
+    | project DeviceId, IndicatorTime = TimeGenerated, IndicatorType = "ShieldCrashPoCExecution", IndicatorDetail = ProcessCommandLine;
+let NamespaceTampering =
+    union DeviceProcessEvents, DeviceFileEvents
+    | where TimeGenerated > ago(lookback)
+    | where ProcessCommandLine has "ShieldCrash_" or ProcessCommandLine has "WD_TARGET_" or ProcessCommandLine has "WD_SHADOW_" or ProcessCommandLine has "WD_SCAN" or FileName startswith "ELAM." or FolderPath has "ShieldCrash_"
+    | project DeviceId, IndicatorTime = TimeGenerated, IndicatorType = "ObjectManagerNamespaceTampering", IndicatorDetail = coalesce(ProcessCommandLine, FileName);
+let Indicators = union ShieldCrashPoC, NamespaceTampering;
+CrashEvents
+| join kind=inner (Indicators) on DeviceId
+| where abs(datetime_diff('second', CrashTime, IndicatorTime)) <= 900
+| project DeviceId, CrashTime, Events, Commands, IndicatorTime, IndicatorType, IndicatorDetail
+| summarize CorrelatedIndicators = make_set(IndicatorType, 5), IndicatorDetails = make_set(IndicatorDetail, 10), FirstCrash = min(CrashTime), LastIndicator = max(IndicatorTime) by DeviceId
