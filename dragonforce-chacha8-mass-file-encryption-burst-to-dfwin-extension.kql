@@ -1,0 +1,10 @@
+DeviceFileEvents
+| where TimeGenerated > ago(1h)
+| where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+| where FileName endswith ".df_win"
+| where not(InitiatingProcessFileName in~ ("MsMpEng.exe", "SearchIndexer.exe", "SearchProtocolHost.exe", "MsSense.exe", "SenseIR.exe", "SenseCncProxy.exe", "backup.exe", "veeam.exe", "VeeamAgent.exe", "OneDrive.exe", "OneDriveSetup.exe", "rsync.exe", "robocopy.exe", "AcronisAgent.exe", "BackupExecAgent.exe", "CarboniteService.exe", "CrashPlanService.exe", "mfemms.exe", "mcshield.exe", "avastsvc.exe", "avpui.exe", "ekrn.exe", "savservice.exe"))
+| summarize EncryptedFileCount = count(), DistinctFolderCount = dcount(FolderPath), Folders = make_set(FolderPath, 25), FileNames = make_set(FileName, 25), TimeGenerated = arg_max(TimeGenerated, *) by DeviceId, InitiatingProcessAccountName, InitiatingProcessFileName, bin(TimeGenerated, 5m)
+| where EncryptedFileCount > 20
+| where DistinctFolderCount >= 2
+| project TimeGenerated, DeviceId, InitiatingProcessAccountName, InitiatingProcessFileName, EncryptedFileCount, DistinctFolderCount, Folders, FileNames
+| sort by EncryptedFileCount desc
