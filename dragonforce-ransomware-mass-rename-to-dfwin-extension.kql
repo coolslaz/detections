@@ -1,0 +1,9 @@
+DeviceFileEvents
+| where ActionType == "FileRenamed"
+| where FileName endswith ".df_win"
+| where not(InitiatingProcessFileName in~ ("MsMpEng.exe", "SearchIndexer.exe", "MsSense.exe", "SenseIR.exe", "MBAMService.exe", "CylanceSvc.exe", "backup.exe", "veeamagent.exe", "VeeamDeploymentSvc.exe", "rsync.exe", "robocopy.exe", "OneDrive.exe", "SyncEngine.exe", "DropboxClient.exe", "acronisagent.exe", "BackupExecAgent.exe"))
+| summarize RenameCount = count(), Files = make_set(FileName, 50), Folders = make_set(FolderPath, 50), DistinctFolders = dcount(FolderPath) by DeviceId, InitiatingProcessAccountName, InitiatingProcessFileName, TimeBucket = bin(TimeGenerated, 5m)
+| where RenameCount >= 30
+| where DistinctFolders >= 2
+| project TimeBucket, DeviceId, InitiatingProcessAccountName, InitiatingProcessFileName, RenameCount, DistinctFolders, Files, Folders
+| sort by RenameCount desc
