@@ -1,0 +1,19 @@
+let TimeWindow = 1h;
+let SuspiciousPathPattern = @"(ELAM\.\{[0-9A-Fa-f-]{36}\}|ShieldCrash_\{[0-9A-Fa-f-]{36}\}|WD_TARGET_\{[0-9A-Fa-f-]{36}\}|WD_SHADOW_\{[0-9A-Fa-f-]{36}\}|\\BERN($|\\)|\\ShieldCrash\{)";
+let SuspiciousFileEvents = DeviceFileEvents
+| where InitiatingProcessFileName =~ "MsMpEng.exe"
+| where InitiatingProcessAccountName has "SYSTEM"
+| where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+| where FolderPath has @"\Windows\System32\config\ELAM" or FileName matches regex SuspiciousPathPattern or FolderPath matches regex SuspiciousPathPattern
+// exclude routine Defender scheduled scans and signature update activity touching protected files
+| where not(FolderPath has_any (@"\ProgramData\Microsoft\Windows Defender\Definition Updates", @"\Program Files\Windows Defender\Platform", @"\ProgramData\Microsoft\Windows Defender\Scans"))
+| where not(InitiatingProcessCommandLine has_any ("MpSigStub", "SignatureUpdate", "-SignatureUpdate", "MpCmdRun"));
+let ShieldCrashIndicatorEvents = DeviceProcessEvents
+| where ProcessCommandLine has_any ("ShieldCrash", "ELAM", "WD_TARGET_", "WD_SHADOW_")
+| project DeviceName, IndicatorTime = TimeGenerated, IndicatorCommandLine = ProcessCommandLine, IndicatorFileName = FileName;
+SuspiciousFileEvents
+| extend IsTargetOutsideScanScope = (FolderPath matches regex SuspiciousPathPattern or FileName matches regex SuspiciousPathPattern)
+| join kind=leftouter (ShieldCrashIndicatorEvents) on DeviceName
+| where IsTargetOutsideScanScope or (isnotnull(IndicatorTime) and IndicatorTime between ((TimeGenerated - TimeWindow) .. (TimeGenerated + TimeWindow)))
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessAccountName, FileName, FolderPath, ActionType, InitiatingProcessCommandLine, IndicatorCommandLine, IndicatorFileName
+| sort by TimeGenerated desc
