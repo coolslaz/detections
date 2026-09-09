@@ -1,0 +1,21 @@
+// Detects EDR/AV YARA-rule matches for keylogging API imports (GetAsyncKeyState/GetKeyboardState)
+// associated with the HVNC backdoor masquerading as UpdateAssistant/AppUpdateHelper
+// Tightened to require the API-import signature PLUS a corroborating suspicious indicator
+// (unsigned/untrusted binary or execution from a non-standard user-writable path) to reduce
+// false positives from legitimate input-related software that also imports these APIs.
+let SuspiciousPathFragments = dynamic(["AppData\\Roaming", "AppData\\Local\\Programs", "AppData\\Local\\Temp"]);
+DeviceEvents
+| where ActionType in ("AntivirusDetection", "ThreatIntelligenceIndicatorEvent", "AsrRuleDetected")
+| extend AdditionalFields = parse_json(AdditionalFields)
+| where tostring(AdditionalFields.ThreatName) has "KeyloggerApi"
+    or tostring(AdditionalFields.SignatureName) has "KeyloggerApi"
+    or tostring(AdditionalFields.RuleName) has "KeyloggerApi"
+| where FileName has_any ("UpdateAssistant.exe", "AppUpdateHelper.exe") or InitiatingProcessFileName has_any ("UpdateAssistant.exe", "AppUpdateHelper.exe")
+| extend NonStandardPath = FolderPath has_any (SuspiciousPathFragments)
+| join kind=leftouter (
+    DeviceFileCertificateInfo
+    | project SHA1, IsSigned, IsTrusted, Signer
+) on $left.SHA1 == $right.SHA1
+| extend Unsigned = (IsSigned == false) or (IsTrusted == false) or isempty(Signer)
+| where NonStandardPath or Unsigned
+| project TimeGenerated, DeviceName, FileName, FolderPath, NonStandardPath, IsSigned, IsTrusted, Signer, InitiatingProcessFileName, InitiatingProcessCommandLine, ActionType, AdditionalFields
