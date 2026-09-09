@@ -1,0 +1,20 @@
+let timeWindow = 5m;
+let legitCloudClients = dynamic(["OneDrive.exe", "Dropbox.exe", "GoogleDriveFS.exe", "Box.exe", "BoxSync.exe", "BoxDrive.exe"]);
+let legitCloudPublishers = dynamic(["Microsoft Corporation", "Microsoft OneDrive", "Dropbox, Inc.", "Google LLC", "Box, Inc."]);
+let staging = DeviceFileEvents
+| where FolderPath matches regex @"C:\\ShieldCrash_\{[0-9A-Fa-f-]{36}\}"
+| where ActionType in ("FileCreated", "FolderCreated")
+| where InitiatingProcessFileName !in~ (legitCloudClients)
+| where InitiatingProcessVersionInfoCompanyName !in~ (legitCloudPublishers)
+| project StagingTime = TimeGenerated, DeviceId, FolderPath, FileName, ActionType, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessVersionInfoCompanyName;
+let cloudReg = DeviceEvents
+| where ActionType has_any ("CloudProviderRegistered", "PlaceholderCreated")
+| where AdditionalFields has "ShieldCrash" or AdditionalFields has "Cloud provider" or AdditionalFields has "Placeholder created"
+| where InitiatingProcessFileName !in~ (legitCloudClients)
+| where InitiatingProcessVersionInfoCompanyName !in~ (legitCloudPublishers)
+| project RegTime = TimeGenerated, DeviceId, RegActionType = ActionType, RegProcess = InitiatingProcessFileName, RegCommandLine = InitiatingProcessCommandLine;
+staging
+| join kind=inner cloudReg on DeviceId
+| where abs(datetime_diff('second', StagingTime, RegTime)) <= 300
+| where InitiatingProcessFileName =~ "ShieldCrash.exe" or FolderPath contains "ShieldCrash_"
+| project StagingTime, RegTime, DeviceId, FolderPath, FileName, ActionType, InitiatingProcessFileName, InitiatingProcessCommandLine, RegActionType, RegProcess, RegCommandLine
