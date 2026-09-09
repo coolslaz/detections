@@ -1,0 +1,25 @@
+// Detect device code authentication flow abuse: attacker obtains a token via device code approval
+// then replays the token/session from a different IP address AND different country, bypassing MFA.
+// Country mismatch (vs raw IP mismatch) filters benign IP churn from CGNAT, mobile carriers, and
+// VPN split-tunneling within the same country, plus a 2-minute minimum gap to avoid proxy IP flapping.
+// Uses EntraIdSignInEvents (AADSignInEventsBeta is being retired).
+let MinGap = 2m;
+let DeviceCodeAuths = EntraIdSignInEvents
+| where Timestamp > ago(7d)
+| where ErrorCode == 0
+| where AuthenticationProcessingDetails has "Device Code"
+| where isnotempty(Country)
+| project DeviceCodeTime = Timestamp, AccountObjectId, AccountDisplayName, ApplicationId, DeviceCodeIP = IPAddress, DeviceCodeCountry = Country, SessionId, ClientAppUsed;
+DeviceCodeAuths
+| join kind=inner (
+    EntraIdSignInEvents
+    | where Timestamp > ago(7d)
+    | where ErrorCode == 0
+    | where isnotempty(Country)
+    | project ReplayTime = Timestamp, AccountObjectId, ReplayIP = IPAddress, ReplayCountry = Country, SessionId, ReplayApplicationId = ApplicationId
+) on AccountObjectId, SessionId
+| where ReplayTime - DeviceCodeTime >= MinGap and ReplayTime - DeviceCodeTime <= 1h
+| where DeviceCodeIP != ReplayIP
+| where DeviceCodeCountry != ReplayCountry
+| project DeviceCodeTime, ReplayTime, AccountObjectId, AccountDisplayName, ApplicationId, DeviceCodeIP, ReplayIP, DeviceCodeCountry, ReplayCountry, SessionId, ClientAppUsed
+| sort by DeviceCodeTime desc
