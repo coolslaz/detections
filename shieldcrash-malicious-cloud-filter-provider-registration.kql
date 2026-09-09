@@ -1,0 +1,17 @@
+// Detects registration of a malicious Cloud Filter provider callback as used by the ShieldCrash (CVE-2026-69414) exploit chain
+// Looks for cloud provider attachment to a ShieldCrash_{GUID} staging path followed by callback success
+// Tightened to exclude known-legitimate signed cloud sync clients and require unsigned/unexpected-path registering binary
+DeviceEvents
+| where ActionType has_any ("CloudProviderRegistered", "CloudProviderAttached", "CloudProviderCallback") or AdditionalFields has_any ("Cloud provider", "Cloud provider callback success", "Attached cloud provider")
+| where AdditionalFields has "ShieldCrash_" or FolderPath has "ShieldCrash_"
+| where AdditionalFields has_any ("Cloud provider has been registered", "Attached cloud provider to", "Cloud provider callback success")
+| where InitiatingProcessFileName !in~ ("OneDrive.exe", "Dropbox.exe", "GoogleDriveFS.exe", "Box.exe", "BoxSync.exe", "boxdrive.exe")
+| where InitiatingProcessSHA1 !in ("")
+| join kind=leftouter (
+    DeviceFileCertificateInfo
+    | project InitiatingProcessSHA1 = SHA1, IsSigned, Signer
+) on InitiatingProcessSHA1
+| where isnull(IsSigned) or IsSigned == false or not(Signer has_any ("Microsoft Corporation", "Dropbox, Inc.", "Google LLC", "Box, Inc."))
+| where not(InitiatingProcessFolderPath has_any ("\\Program Files\\Microsoft OneDrive\\", "\\Program Files (x86)\\Microsoft OneDrive\\", "\\Program Files\\Dropbox\\", "\\Program Files\\Google\\Drive File Stream\\", "\\Program Files\\Box\\", "\\Program Files (x86)\\Box\\"))
+| project TimeGenerated, DeviceId, DeviceName, ActionType, FolderPath, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessSHA1, IsSigned, Signer, AdditionalFields
+| sort by TimeGenerated desc
