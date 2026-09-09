@@ -1,0 +1,24 @@
+// Detects the HVNC implant behavior chain: hidden desktop creation, screen capture,
+// and simulated input injection, as seen in UpdateAssistant.exe / AppUpdateHelper.exe.
+// Tightened to require the full API combination together (not any single call)
+// and to originate from a non-standard/unsigned process path, since these APIs
+// are individually used by many legitimate remote-access and screen-capture tools.
+DeviceEvents
+| where ActionType has "Api" or ActionType has "FunctionCall"
+| where FileName in~ ("UpdateAssistant.exe", "AppUpdateHelper.exe", "SysMaintenance.exe")
+| extend ApiName = tostring(AdditionalFields.ApiName)
+| where ApiName in~ ("CreateDesktopA", "SetThreadDesktop", "BitBlt", "GetDIBits", "SendInput")
+| join kind=inner (
+    DeviceProcessEvents
+    | where FileName in~ ("UpdateAssistant.exe", "AppUpdateHelper.exe", "SysMaintenance.exe")
+    | where InitiatingProcessSignatureStatus != "Signed" or InitiatingProcessSignatureStatus == "" or isnull(InitiatingProcessSignatureStatus)
+    | where InitiatingProcessFolderPath !startswith @"C:\Windows\" and InitiatingProcessFolderPath !startswith @"C:\Program Files\" and InitiatingProcessFolderPath !startswith @"C:\Program Files (x86)\"
+    | project DeviceId, InitiatingProcessId, InitiatingProcessFolderPath, InitiatingProcessSignatureStatus
+) on DeviceId, InitiatingProcessId
+| summarize DistinctApis = make_set(ApiName, 10), CallCount = count(), TimeGenerated = arg_max(TimeGenerated, TimeGenerated) by DeviceId, FileName, InitiatingProcessId, InitiatingProcessFolderPath, InitiatingProcessSignatureStatus, bin(TimeGenerated, 5m)
+| where array_length(DistinctApis) >= 4
+| where set_has_element(DistinctApis, "CreateDesktopA")
+    and set_has_element(DistinctApis, "SetThreadDesktop")
+    and (set_has_element(DistinctApis, "BitBlt") or set_has_element(DistinctApis, "GetDIBits"))
+    and set_has_element(DistinctApis, "SendInput")
+| project DeviceId, FileName, InitiatingProcessFolderPath, InitiatingProcessSignatureStatus, DistinctApis, CallCount, bin_Timestamp = bin(TimeGenerated, 5m)
