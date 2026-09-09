@@ -1,0 +1,41 @@
+// Detect remote service creation following network logon consistent with PsExec-style lateral movement
+// MITRE ATT&CK: T1543.003 (Create or Modify System Process: Windows Service), T1021.002 (SMB/Windows Admin Shares), T1569.002 (Service Execution)
+// FP reduction 1: tightened correlation window from 15m to 5m to cut coincidental logon/service-creation matches
+let lookback = 5m;
+let psexecServiceNames = dynamic(["PSEXESVC", "PAExec", "RemCom", "remcomsvc"]);
+let suspiciousPathPatterns = dynamic(["\\Temp\\", "\\Windows\\Temp\\", "\\AppData\\Local\\Temp\\", "\\\\\\\\"]);
+let suspiciousExtensions = dynamic([".tmp", ".dat", ".bat", ".ps1"]);
+// FP reduction 4: allowlist of common legitimate remote-management/deployment tools and their paths
+let allowlistServiceTerms = dynamic(["ccmsetup", "CcmExec", "SMS Agent", "BESClient", "BigFix", "PDQDeploy", "ManageEngine", "TeamViewer", "AnyDesk", "Veeam", "BackupExec", "WSUS", "Windows Server Update Services"]);
+let trustedInstallDirs = dynamic(["\\Program Files\\", "\\Windows\\System32\\"]);
+let NetworkLogons = SecurityEvent
+| where EventID == 4624
+| where LogonType == 3
+// FP reduction 2: restrict to NTLM or Kerberos authentication packages, matching PsExec-style admin-share access
+| where AuthenticationPackageName in~ ("NTLM", "Kerberos") or LogonProcessName =~ "NtLmSsp"
+| where isnotempty(IpAddress) and IpAddress != "-"
+| project LogonTime = TimeGenerated, Computer, LogonAccount = Account, SourceIp = IpAddress, TargetLogonId;
+let ServiceCreations = SecurityEvent
+| where EventID == 7045
+| extend ServiceName = tostring(EventData.ServiceName)
+| extend ServiceFileName = tostring(EventData.ImagePath)
+| extend ServiceStartType = tostring(EventData.StartType)
+| extend ServiceAccount = tostring(EventData.AccountName)
+| project ServiceCreationTime = TimeGenerated, Computer, ServiceName, ServiceFileName, ServiceStartType, ServiceAccount;
+ServiceCreations
+| join kind=inner (NetworkLogons) on Computer
+| where ServiceCreationTime - LogonTime between (0min .. lookback)
+| extend IsKnownPsExecFamily = ServiceName has_any (psexecServiceNames)
+| extend IsSuspiciousPath = ServiceFileName has_any (suspiciousPathPatterns)
+| extend IsSuspiciousExtension = ServiceFileName has_any (suspiciousExtensions)
+| extend IsUncPath = ServiceFileName startswith "\\\\"
+// FP reduction 5: on-demand start type is a corroborating signal (typical PsExec pattern) surfaced in output, not a hard filter
+| extend IsDemandStart = ServiceStartType =~ "demand-start" or ServiceStartType =~ "SERVICE_DEMAND_START" or ServiceStartType =~ "2"
+// FP reduction 4: drop known legitimate remote-management/deployment tools by name or path
+| where not(ServiceName has_any (allowlistServiceTerms)) and not(ServiceFileName has_any (allowlistServiceTerms))
+// FP reduction 4: services installed under trusted, signed install directories are excluded unless the binary also has a suspicious extension
+| where not(ServiceFileName has_any (trustedInstallDirs) and IsSuspiciousExtension == false)
+// FP reduction 3: require known PsExec-family naming, OR a UNC-path binary combined with a suspicious path pattern or extension (two corroborating weak signals) rather than any single weak signal
+| where IsKnownPsExecFamily == true or (IsUncPath == true and (IsSuspiciousPath == true or IsSuspiciousExtension == true))
+| project LogonTime, ServiceCreationTime, Computer, SourceIp, LogonAccount, ServiceAccount, ServiceName, ServiceFileName, ServiceStartType, IsKnownPsExecFamily, IsSuspiciousPath, IsSuspiciousExtension, IsUncPath, IsDemandStart
+| sort by ServiceCreationTime desc
