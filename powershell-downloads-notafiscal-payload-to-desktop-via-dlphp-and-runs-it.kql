@@ -1,0 +1,13 @@
+DeviceProcessEvents
+| where FileName in~ ("powershell.exe", "powershell_ise.exe")
+| where ProcessCommandLine has "WindowStyle" and ProcessCommandLine has "Hidden"
+| where ProcessCommandLine has "Invoke-WebRequest"
+| where ProcessCommandLine has "dl.php"
+| where ProcessCommandLine has "NotaFiscal"
+| where ProcessCommandLine has "nfe_valid_access_key"
+| where ProcessCommandLine has "USERPROFILE\\Desktop"
+| where ProcessCommandLine has "-OutFile"
+| where ProcessCommandLine has "Start-Process"
+| where ProcessCommandLine has "Invoke-WebRequest" and ProcessCommandLine has "Start-Process"
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
+// false_positives: Narrow scope - requires simultaneous match of dl.php URL with nfe_valid_access_key AND NotaFiscal parameters, a Desktop output path via -OutFile, and immediate Start-Process execution in a hidden-window PowerShell invocation. Legitimate NFe/tax-document tooling or IT scripts using this exact combination of URL parameters, output path, and execution pattern are highly unlikely; review any hits against known internal automation using dl.php-style NFe download endpoints.
