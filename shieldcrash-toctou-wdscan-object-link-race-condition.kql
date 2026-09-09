@@ -1,0 +1,22 @@
+// Detects repeated rapid deletion and recreation cycles of the WD_SCAN object manager link during a Windows Defender scan window
+// consistent with the ShieldCrash (CVE-2026-69414) TOCTOU exploit chain
+// Requires 3+ create/delete cycles within a short window to avoid alerting on normal object lifecycle churn
+DeviceEvents
+| where InitiatingProcessFileName =~ "ShieldCrash.exe" or FileName =~ "ShieldCrash.exe"
+| where AdditionalFields has "WD_SCAN" or AdditionalFields has "Link deleted." or AdditionalFields has "Link Created." or AdditionalFields has "ShieldCrash_"
+| extend LogLine = tostring(AdditionalFields)
+| where LogLine has "WD_SCAN" or LogLine has "Link deleted." or LogLine has "Link Created."
+| summarize 
+    Events = make_set(LogLine, 50),
+    DeletedCount = countif(LogLine has "Link deleted."),
+    CreatedCount = countif(LogLine has "Link Created."),
+    EventCount = count(),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated)
+    by DeviceId, InitiatingProcessId, bin(TimeGenerated, 10s)
+| where (Events has "WD_SCAN") and (Events has "Link deleted." and Events has "Link Created.")
+| extend CycleCount = min_of(DeletedCount, CreatedCount)
+| where CycleCount >= 3
+| extend RaceWindowSeconds = datetime_diff('second', LastSeen, FirstSeen)
+| where RaceWindowSeconds <= 5
+| project DeviceId, InitiatingProcessId, FirstSeen, LastSeen, RaceWindowSeconds, CycleCount, DeletedCount, CreatedCount, EventCount, Events
