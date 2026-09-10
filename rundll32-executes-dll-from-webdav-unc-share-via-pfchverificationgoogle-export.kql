@@ -1,0 +1,8 @@
+DeviceProcessEvents
+| where FileName =~ "rundll32.exe"
+| where ProcessCommandLine has "DavWWWRoot"
+| where ProcessCommandLine has_any ("pf.ch", "verification.google")
+| where ProcessCommandLine matches regex ",#[0-9]+"
+| where InitiatingProcessFileName !in~ ("msiexec.exe", "TiWorker.exe")
+| project TimeGenerated, DeviceId, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
+| order by TimeGenerated desc
