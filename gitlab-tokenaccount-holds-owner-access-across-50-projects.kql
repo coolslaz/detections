@@ -1,0 +1,23 @@
+// Detects a single GitLab personal access token or account enumerating/holding
+// Owner-level (access_level: 50) access across an unusually large number of
+// projects, indicating excessive standing privilege ripe for abuse if leaked.
+// Based on: token 'gitlab-triage' (id 18781368) returned access_level 50 on
+// 55 of 75 projects via GET /api/v4/projects?membership=true, including
+// gnutls/gnutls, nettle, libtasn1, libidn2, and ocserv.
+CloudAppEvents
+| where TimeGenerated > ago(7d)
+| where Application == "GitLab"
+| extend Details = parse_json(RawEventData)
+| extend AccessLevel = toint(Details.access_level)
+| extend ProjectPath = tostring(Details.path_with_namespace)
+| extend Scopes = tostring(Details.scopes)
+| where AccessLevel == 50
+| where Scopes has "api"
+| summarize
+    ProjectCount = dcount(ProjectPath),
+    Projects = make_set(ProjectPath, 100)
+    by AccountDisplayName, TimeBucket = bin(TimeGenerated, 1d)
+| where ProjectCount >= 50
+| extend ContainsSensitiveProjects = (Projects has "gnutls/gnutls" or Projects has "gnutls/nettle" or Projects has "gnutls/libtasn1" or Projects has "gnutls/libidn2" or Projects has "openconnect/ocserv")
+| project TimeBucket, AccountDisplayName, ProjectCount, ContainsSensitiveProjects, Projects
+| sort by ProjectCount desc
