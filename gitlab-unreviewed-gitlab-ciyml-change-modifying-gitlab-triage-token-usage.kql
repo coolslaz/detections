@@ -1,0 +1,12 @@
+// Detects commits modifying .gitlab-ci.yml that alter how the gitlab-triage tool invokes the sensitive API_TOKEN variable
+CloudAppEvents
+| where TimeGenerated > ago(30d)
+| where Application == "GitLab"
+| where RawEventData has ".gitlab-ci.yml"
+| where RawEventData has "gitlab-triage" and RawEventData has "API_TOKEN"
+| where RawEventData has "--source-id" and RawEventData has "--token"
+| extend HasORFlagChange = RawEventData matches regex @"(^|\s)-o(\s|$)"
+| extend MergeRequestId = tostring(parse_json(RawEventData).merge_request_id)
+| where isempty(MergeRequestId) or MergeRequestId == "null"
+| project TimeGenerated, Application, ActionType, AccountDisplayName, HasORFlagChange, RawEventData
+| sort by TimeGenerated desc
