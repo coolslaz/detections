@@ -1,0 +1,33 @@
+// Detects the Phantom Deal advance-payment fraud pattern by requiring multiple corroborating signals together:
+// an unusually large amount, a Hong Kong beneficiary, advance-retainer/M&A memo keywords, AND a beneficiary account
+// that is new/first-seen for the paying entity. Known/approved beneficiary accounts are excluded via a leftanti join
+// against a reference list, so single-signal matches (keyword-only or destination-only) no longer fire.
+let Lookback = 180d;
+let DetectionWindow = 30d;
+let AmountThreshold = 500000.0; // unusually large wire, aligned with the observed fraud amount of 626,735.45
+let FraudAmount = 626735.45;
+let MemoIndicators = dynamic(["Advance Retainer for Professional Services", "advance retainer", "intercompany receivable", "reimbursed later"]);
+let PaymentEvents = CloudAppEvents
+| where TimeGenerated > ago(Lookback)
+| where ActionType has_any ("PaymentInstructionCreated", "WireTransferInitiated")
+| extend Details = parse_json(tostring(RawEventData))
+| extend Memo = tostring(Details.Memo),
+         Beneficiary = tostring(Details.BeneficiaryName),
+         BeneficiaryAccountId = tostring(Details.BeneficiaryAccountId),
+         BeneficiaryCountry = tostring(Details.BeneficiaryCountry),
+         Amount = todouble(Details.Amount),
+         PayerEntity = AccountDisplayName
+| where isnotempty(BeneficiaryAccountId);
+let FirstSeenPerBeneficiary = PaymentEvents
+| summarize FirstSeen = min(TimeGenerated) by PayerEntity, BeneficiaryAccountId;
+let ApprovedVendorAccounts = (_GetWatchlist('ApprovedVendorAccounts') | project BeneficiaryAccountId = SearchKey);
+PaymentEvents
+| where TimeGenerated > ago(DetectionWindow)
+| where Amount >= AmountThreshold
+| where BeneficiaryCountry has "Hong Kong" or Beneficiary has "Hong Kong" or Memo has "Hong Kong"
+| where Memo has_any (MemoIndicators)
+| join kind=inner (FirstSeenPerBeneficiary) on PayerEntity, BeneficiaryAccountId
+| where FirstSeen > ago(DetectionWindow) // beneficiary account is new/first-seen for this payer within the window
+| join kind=leftanti (ApprovedVendorAccounts) on BeneficiaryAccountId // exclude known/approved vendor or beneficiary accounts
+| project TimeGenerated, PayerEntity, Beneficiary, BeneficiaryAccountId, BeneficiaryCountry, Amount, Memo, FirstSeen, ReportId, Application
+| sort by TimeGenerated desc
