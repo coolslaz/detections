@@ -1,0 +1,13 @@
+// Detect high-frequency automated requests to product/catalog pages consistent with catalog-scraping activity feeding fake-shop networks (e.g., DoppelCart)
+AppServiceHTTPLogs
+| where TimeGenerated > ago(1h)
+| where CsUriStem has_any ("/product", "/products", "/catalog", "/item", "/collections")
+| extend UserAgentLower = tolower(UserAgent)
+| where not(UserAgentLower has_any ("googlebot", "bingbot", "duckduckbot", "facebookexternalhit", "slackbot", "applebot", "yandexbot", "pingdom", "uptimerobot", "statuscake", "newrelic"))
+| extend IsBotUA = UserAgentLower has_any ("python-requests", "scrapy", "curl", "wget", "httpclient", "go-http-client", "headlesschrome", "phantomjs", "node-fetch", "axios", "bot", "crawler", "spider")
+| summarize RequestCount = count(), DistinctPages = dcount(CsUriStem), UserAgents = make_set(UserAgent, 10), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by CIp, IsBotUA
+| where RequestCount > 200 and DistinctPages > 20
+| where IsBotUA == true or RequestCount > 1000
+| extend DurationMinutes = datetime_diff('minute', LastSeen, FirstSeen)
+| where DurationMinutes <= 60
+| sort by RequestCount desc
