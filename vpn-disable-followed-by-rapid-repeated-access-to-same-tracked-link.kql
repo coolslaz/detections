@@ -1,0 +1,25 @@
+// Detects the Phantom Deal pattern: victim is told to disable VPN because a tracked/canary link 'won't open', then the same link is accessed repeatedly within minutes
+// Correlation is strictly scoped to the same account and a bounded time window between the VPN-disable event and the subsequent link-access burst
+let LookbackWindow = 14d;
+let RepeatWindow = 30m;
+let MinRepeatClicks = 3;
+let CorrelationWindow = 30m;
+// Step 1: identity sign-ins where a user's VPN/interactive session context changes (proxy for 'VPN disabled')
+let VpnContextChanges = SigninLogs
+| where TimeGenerated > ago(LookbackWindow)
+| where ResultType == 0
+| where NetworkLocationDetails has "VPN" or AuthenticationRequirement has "singleFactorAuthentication"
+| project AccountUpn = tolower(UserPrincipalName), VpnEventTime = TimeGenerated, SignInIPAddress = IPAddress;
+// Step 2: repeated clicks/accesses to the same tracked URL in a short window, consistent with a canary token or tracking link
+let RepeatedLinkAccess = UrlClickEvents
+| where TimeGenerated > ago(LookbackWindow)
+| summarize ClickCount = count(), FirstClick = min(TimeGenerated), LastClick = max(TimeGenerated), IPs = make_set(NetworkMessageId, 20) by AccountUpn = tolower(AccountUpn), Url
+| where ClickCount >= MinRepeatClicks
+| where (LastClick - FirstClick) <= RepeatWindow;
+// Step 3: for each account/url click burst, find the single closest preceding VPN-disable event for the SAME account within the bounded correlation window
+RepeatedLinkAccess
+| join kind=inner VpnContextChanges on AccountUpn
+| where FirstClick - VpnEventTime between (0min .. CorrelationWindow)
+| summarize arg_max(VpnEventTime, SignInIPAddress) by AccountUpn, Url, ClickCount, FirstClick, LastClick
+| project AccountUpn, Url, ClickCount, FirstClick, LastClick, VpnEventTime, SignInIPAddress
+| sort by FirstClick desc
