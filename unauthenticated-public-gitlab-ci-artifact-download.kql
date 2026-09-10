@@ -1,0 +1,12 @@
+// Detects unauthenticated retrieval of GitLab CI/CD job artifacts from a public project artifact download endpoint
+CommonSecurityLog
+| where TimeGenerated > ago(7d)
+| where RequestURL has "gitlab.com"
+| where RequestURL has "/artifacts"
+| where RequestURL matches regex @"/-/jobs/\d+/artifacts" or RequestURL matches regex @"/api/v4/projects/[^/]+/jobs/\d+/artifacts"
+| where RequestMethod =~ "GET"
+| where isempty(AdditionalExtensions) or not(AdditionalExtensions has_any ("PRIVATE-TOKEN", "Authorization", "Bearer"))
+| where DeviceAction in~ ("Allowed", "allow", "allowed")
+| extend ArtifactUrl = RequestURL, ClientIP = SourceIP, DestinationHost = DestinationHostName
+| project TimeGenerated, ClientIP, DestinationHost, ArtifactUrl, RequestMethod, DeviceAction
+| sort by TimeGenerated desc
