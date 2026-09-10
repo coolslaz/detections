@@ -1,0 +1,8 @@
+CommonSecurityLog
+| where TimeGenerated > ago(7d)
+| where RequestURL has "/api/v4/personal_access_tokens/self"
+| where RequestMethod =~ "GET"
+| extend TokenPrefix = extract(@"(glpat-[A-Za-z0-9]+)", 1, RequestURL)
+| extend TokenPrefix = iff(isempty(TokenPrefix), extract(@"(glpat-[A-Za-z0-9]+)", 1, tostring(AdditionalExtensions)), TokenPrefix)
+| project TimeGenerated, SourceIP, DestinationIP, RequestURL, RequestMethod, DeviceVendor, DeviceProduct, TokenPrefix
+| sort by TimeGenerated desc
