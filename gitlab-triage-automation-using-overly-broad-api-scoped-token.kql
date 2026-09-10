@@ -1,0 +1,12 @@
+// Detects CI/CD pipeline jobs invoking the gitlab-triage tool with a personal access token whose scopes include the broad 'api' permission rather than a narrower issue/MR-only permission
+CloudAppEvents
+| where TimeGenerated > ago(30d)
+| where Application == "GitLab"
+| where RawEventData has "gitlab-triage"
+| where RawEventData has "--token" and RawEventData has "API_TOKEN"
+| extend ParsedEvent = parse_json(RawEventData)
+| extend Scopes = tostring(ParsedEvent.scopes)
+| extend TokenName = tostring(ParsedEvent.name)
+| where Scopes has "api"
+| where TokenName == "gitlab-triage"
+| project TimeGenerated, Application, ActionType, TokenName, Scopes, RawEventData
