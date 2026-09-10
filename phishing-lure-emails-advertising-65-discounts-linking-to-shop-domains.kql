@@ -1,0 +1,12 @@
+let AllowlistedShopDomains = _GetWatchlist('AllowlistedShopDomains') | project Domain = tolower(SearchKey);
+EmailEvents
+| where Subject has_any ("65% off", "65% discount", "up to 65%", "65 percent off")
+| join kind=inner (
+    EmailUrlInfo
+    | where UrlDomain endswith ".shop"
+) on NetworkMessageId
+| where tolower(UrlDomain) !in (AllowlistedShopDomains)
+| summarize Recipients = make_set(RecipientEmailAddress, 50), Subjects = make_set(Subject, 20), Urls = make_set(Url, 50), TimeGenerated = arg_max(TimeGenerated, TimeGenerated), RecipientCount = dcount(RecipientEmailAddress) by UrlDomain, SenderFromAddress
+| where RecipientCount >= 5
+| project TimeGenerated, SenderFromAddress, RecipientCount, Recipients, Subjects, Urls, UrlDomain
+| order by RecipientCount desc
