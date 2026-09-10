@@ -1,0 +1,11 @@
+let NoisyManagementSources = dynamic(["ccmexec.exe","sccmagent.exe","ccmsetup.exe","screenconnect.exe","teamviewer.exe","anydesk.exe"]);
+DeviceProcessEvents
+| where InitiatingProcessFileName =~ "wmiprvse.exe"
+| where FileName has_any ("powershell.exe", "pwsh.exe", "cmd.exe", "cscript.exe", "wscript.exe", "mshta.exe")
+ or ProcessCommandLine has_any ("-enc", "-encodedcommand")
+ or FolderPath has_any (@"\Temp\", @"\AppData\Local\Temp\", @"\Windows\Temp\", @"\ProgramData\")
+| where not(FileName =~ "cmd.exe" and ProcessCommandLine has_all ("wmic", "process", "list"))
+| where not(tolower(InitiatingProcessAccountName) has_any (NoisyManagementSources))
+| where not(isnotempty(InitiatingProcessParentFileName) and InitiatingProcessParentFileName has_any (NoisyManagementSources))
+| project TimeGenerated, DeviceName, AccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, FolderPath, ProcessCommandLine, InitiatingProcessAccountName, InitiatingProcessParentFileName
+| order by TimeGenerated desc
