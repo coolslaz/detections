@@ -1,0 +1,7 @@
+let LegitimateProcesses = dynamic(["mofcomp.exe", "TrustedInstaller.exe", "MoUsoCoreWorker.exe", "ccmexec.exe"]);
+DeviceEvents
+| where ActionType in ("WmiBindingCreated", "WmiFilterBinding", "WmiCreateFilter", "WmiConsumerCreated", "WmiCreateConsumer")
+| where AdditionalFields has_any ("CommandLineEventConsumer", "ActiveScriptEventConsumer")
+| where InitiatingProcessFileName !in~ (LegitimateProcesses)
+| project TimeGenerated, DeviceName, ActionType, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName, AdditionalFields
+| sort by TimeGenerated desc
