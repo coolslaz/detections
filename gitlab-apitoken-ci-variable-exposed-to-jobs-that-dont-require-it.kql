@@ -1,0 +1,10 @@
+// Detects project-wide CI/CD variable (API_TOKEN) being made available to job scopes/environment dumps in jobs that are not the gitlab-triage automation job which is the only consumer requiring the 'api'-scoped token
+CloudAppEvents
+| where TimeGenerated > ago(30d)
+| where Application == "GitLab"
+| where RawEventData has "API_TOKEN"
+| extend JobName = tostring(parse_json(RawEventData).job_name)
+| where JobName !has "gitlab-triage"
+| where JobName in ("noprocfs", "Fedora", "connect-ios-script", "connect-script", "apple-ios")
+| project TimeGenerated, Application, ActionType, JobName, RawEventData
+| sort by TimeGenerated desc
