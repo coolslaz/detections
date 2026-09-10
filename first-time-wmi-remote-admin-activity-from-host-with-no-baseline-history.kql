@@ -1,0 +1,19 @@
+// Detect a device initiating WMI-based remote administration (wmic /node:, Invoke-WmiMethod, or wmiprvse.exe spawning suspicious children)
+// that has no prior 30-day history of such activity - indicating an unexpected source host performing remote administration.
+let lookback = 30d;
+let detectionWindow = 1d;
+let SuspiciousChildren = dynamic(["cmd.exe", "powershell.exe", "pwsh.exe", "rundll32.exe", "mshta.exe", "cscript.exe", "wscript.exe"]);
+let wmiActivity = DeviceProcessEvents
+| where TimeGenerated > ago(lookback)
+| where AccountName !in ("SYSTEM", "NETWORK SERVICE", "LOCAL SERVICE")
+| where (FileName =~ "wmic.exe" and ProcessCommandLine has "/node:")
+    or (ProcessCommandLine has "Invoke-WmiMethod")
+    or (InitiatingProcessFileName =~ "wmiprvse.exe" and FileName in~ (SuspiciousChildren));
+let baselineHosts = wmiActivity
+| where TimeGenerated between (ago(lookback) .. ago(detectionWindow))
+| summarize by DeviceName;
+wmiActivity
+| where TimeGenerated > ago(detectionWindow)
+| join kind=leftanti baselineHosts on DeviceName
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
+| sort by TimeGenerated desc
