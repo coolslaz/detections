@@ -1,0 +1,10 @@
+// Detect customer complaint emails landing in a legitimate support mailbox that reference orders/domains on unauthorized .shop storefronts (DoppelCart-style fake-shop impersonation)
+EmailEvents
+| where TimeGenerated > ago(7d)
+| where RecipientEmailAddress has_any ("support@", "help@", "customerservice@", "orders@")
+| where SenderFromDomain !has "contoso.com" // replace with the organization's own verified sending domain(s)
+| where Subject has_any ("order", "complaint", "refund", "never received", "wrong item", "return")
+| where Subject matches regex @"(?i)[a-z0-9-]+\.shop\b"
+| project TimeGenerated, NetworkMessageId, SenderFromAddress, SenderFromDomain, RecipientEmailAddress, Subject
+| summarize ComplaintCount = count(), Subjects = make_set(Subject, 20), Senders = make_set(SenderFromAddress, 20) by RecipientEmailAddress, bin(TimeGenerated, 1d)
+| where ComplaintCount >= 3
