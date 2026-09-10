@@ -1,0 +1,18 @@
+// Detects inbound email impersonating a known internal executive's display name from an external/unverified sender address,
+// combined with urgency or secrecy language consistent with Phantom Deal-style BPC fraud (forged NDAs, private-channel requests, wire fraud pressure)
+EmailEvents
+| where EmailDirection == "Inbound"
+| where SenderFromDomain != RecipientDomain
+| where isnotempty(SenderDisplayName)
+| where SenderFromDomain !endswith "gen.com"
+| where Subject has_any ("NDA", "confidential", "private email", "personal email", "keep this between us", "do not share", "urgent", "wire transfer", "MT103", "UETR", "proof of transfer", "swift")
+| extend PossibleImpersonatedExecutive = SenderDisplayName
+| project TimeGenerated, SenderDisplayName, SenderFromAddress, SenderFromDomain, RecipientEmailAddress, Subject, PossibleImpersonatedExecutive
+| join kind=inner (
+    IdentityInfo
+    | where isnotempty(AccountUPN)
+    | project KnownExecutiveName = AccountDisplayName, AccountUPN, KnownExecutiveDomain = tostring(split(AccountUPN, "@")[1])
+) on $left.PossibleImpersonatedExecutive == $right.KnownExecutiveName
+| where SenderFromDomain != KnownExecutiveDomain
+| where SenderFromAddress !endswith strcat("@", KnownExecutiveDomain)
+| project TimeGenerated, SenderDisplayName, SenderFromAddress, SenderFromDomain, RecipientEmailAddress, Subject, AccountUPN, KnownExecutiveDomain
