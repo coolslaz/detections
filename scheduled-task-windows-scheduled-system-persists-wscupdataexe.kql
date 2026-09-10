@@ -1,0 +1,5 @@
+DeviceProcessEvents
+| where (FileName in~ ("schtasks.exe") and ProcessCommandLine has "Windows Scheduled System" and ProcessCommandLine has "wsc_updata.exe" and ProcessCommandLine has "/create")
+   or (FolderPath has @"AppData\Local\Temp\wsc_updata.exe" and InitiatingProcessFileName =~ "svchost.exe" and InitiatingProcessCommandLine has "-s Schedule")
+| project TimeGenerated, DeviceName, AccountName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
+| order by TimeGenerated desc
