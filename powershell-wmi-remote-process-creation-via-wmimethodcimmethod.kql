@@ -1,0 +1,7 @@
+DeviceProcessEvents
+| where FileName in~ ("powershell.exe", "pwsh.exe")
+| where ProcessCommandLine has_any ("Invoke-WmiMethod", "Invoke-CimMethod", "Get-CimInstance", "Get-WmiObject")
+| where ProcessCommandLine has "Win32_Process"
+| where ProcessCommandLine has_any ("-ComputerName", "-CimSession", "Create(") or (ProcessCommandLine has "-MethodName" and ProcessCommandLine has "Create")
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
+| order by TimeGenerated desc
