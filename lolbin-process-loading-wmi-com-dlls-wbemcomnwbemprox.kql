@@ -1,0 +1,10 @@
+DeviceImageLoadEvents
+| where FileName in~ ("wbemcomn.dll", "wbemprox.dll")
+| where InitiatingProcessFileName in~ ("rundll32.exe", "regsvr32.exe", "mshta.exe", "cscript.exe", "wscript.exe", "certutil.exe", "winword.exe", "excel.exe", "outlook.exe")
+| project TimeGenerated, DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessId, FileName, FolderPath
+| join kind=inner (
+    DeviceProcessEvents
+    | project InitiatingProcessId, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessFolderPath
+) on InitiatingProcessId
+| summarize LoadedDlls = make_set(FileName, 10) by DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessId
+| where array_length(LoadedDlls) >= 1
