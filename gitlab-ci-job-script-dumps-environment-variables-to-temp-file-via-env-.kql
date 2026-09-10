@@ -1,0 +1,14 @@
+// Detects CI job activity referencing shell commands that redirect the full environment to a file, e.g. 'env > out.tmp' -- the pattern that leaked GnuTLS's GitLab token when a CI job dumped env vars to a public artifact.
+// MITRE ATT&CK: T1552.001
+// Tightened: exact Application match (was broad 'has' on both Application and RawEventData), narrowed
+// extension match to .tmp only (drops noisier .log/.txt debug-logging matches), and excludes redirects
+// to /dev/null (a common, benign no-op pattern).
+CloudAppEvents
+| where TimeGenerated > ago(30d)
+| where Application == "GitLab"
+| where RawEventData matches regex @"\benv\s*>\s*\S+\.tmp\b"
+| where RawEventData !has "/dev/null"
+| extend MatchedPattern = extract(@"(env\s*>\s*\S+)", 1, RawEventData)
+| project TimeGenerated, Application, ActionType, MatchedPattern, RawEventData
+| summarize Count = count(), SampleEvents = make_set(RawEventData, 5) by Application, bin(TimeGenerated, 1h)
+| where Count > 0
