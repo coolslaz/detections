@@ -1,0 +1,21 @@
+// Detect automated/non-browser scraping of product catalog and description pages
+// consistent with DoppelCart-style content harvesting for fake-shop replication (T1608)
+W3CIISLog
+| where TimeGenerated > ago(1d)
+| where csUriStem has_any ("/product", "/products", "/catalog", "/item", "/shop")
+| where not(csUserAgent has_any ("googlebot", "bingbot", "duckduckbot", "facebookexternalhit", "slackbot", "applebot", "yandexbot", "pingdom", "uptimerobot", "statuscake", "newrelic"))
+| where csUserAgent has_any ("python-requests", "curl", "Scrapy", "wget", "HttpClient", "Go-http-client", "libwww-perl", "aiohttp")
+ or isempty(csUserAgent)
+| summarize
+ RequestCount = count(),
+ DistinctPages = dcount(csUriStem),
+ FirstSeen = min(TimeGenerated),
+ LastSeen = max(TimeGenerated),
+ SampledUserAgents = make_set(csUserAgent, 5),
+ SampledPages = make_set(csUriStem, 10)
+ by cIP
+| where RequestCount > 200 and DistinctPages > 50
+| extend DurationMinutes = datetime_diff('minute', LastSeen, FirstSeen)
+| where DurationMinutes < 60
+| project cIP, RequestCount, DistinctPages, DurationMinutes, FirstSeen, LastSeen, SampledUserAgents, SampledPages
+| sort by RequestCount desc
