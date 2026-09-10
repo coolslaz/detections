@@ -1,0 +1,7 @@
+DeviceProcessEvents
+| where FileName in~ ("wmic.exe", "powershell.exe", "pwsh.exe")
+| where (FileName =~ "wmic.exe" and (ProcessCommandLine has_all ("qfe", "get") or ProcessCommandLine has_all ("computersystem", "get"))) or (FileName in~ ("powershell.exe", "pwsh.exe") and ProcessCommandLine has "Get-WmiObject" and ProcessCommandLine has "Win32_")
+| extend Bucket = bin(TimeGenerated, 15m)
+| summarize ReconCommandCount = count(), DistinctCommands = dcount(ProcessCommandLine), CommandSamples = make_set(ProcessCommandLine, 10), FileNames = make_set(FileName, 5), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by DeviceName, AccountName, Bucket
+| where DistinctCommands >= 3
+| sort by LastSeen desc
