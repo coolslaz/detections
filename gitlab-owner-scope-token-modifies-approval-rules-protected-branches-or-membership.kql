@@ -1,0 +1,18 @@
+// Detects GitLab audit/API events where an Owner-role account or token modifies
+// merge request approval rules, protected-branch settings, or project membership,
+// weakening code review controls on the default/release branch.
+CloudAppEvents
+| where TimeGenerated > ago(1d)
+| where Application == "GitLab"
+| extend Details = parse_json(RawEventData)
+| extend AccessLevel = toint(Details.access_level)
+| where AccessLevel == 50
+| where RawEventData has_any ("approval_rules", "protected_branches", "members")
+| where ActionType has_any ("update", "create", "destroy")
+| extend Change = case(
+    RawEventData has "approval_rules", "approval_rule_modified",
+    RawEventData has "protected_branches", "protected_branch_modified",
+    RawEventData has "members", "project_membership_modified",
+    "other")
+| project TimeGenerated, Application, ActionType, AccountDisplayName, IPAddress, AccessLevel, Change, RawEventData
+| sort by TimeGenerated desc
