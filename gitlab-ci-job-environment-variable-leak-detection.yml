@@ -1,0 +1,24 @@
+title: GitLab CI Job Environment Variable Leak Detection
+id: d6b2c7e1-8f5b-4c4f-9e7b-1a5c4e8d3b2a
+status: experimental
+description: Detects GitLab CI job shell commands that redirect the environment to a .tmp
+  file, a pattern identified in the GnuTLS GitLab token leak.
+author: Arnold Chan
+date: 2024-05-22
+tags:
+  - attack.t1552.001
+logsource:
+  category: cloud_app
+  product: gitlab
+detection:
+  selection_app:
+    Application: 'GitLab'
+  selection_pattern:
+    RawEventData|re: '\\benv\\s*>\\s*\\S+\\.tmp\\b'
+  filter_dev_null:
+    RawEventData|contains: '/dev/null'
+  condition: selection_app and selection_pattern and not filter_dev_null
+level: high
+falsepositives:
+  - Legitimate debugging redirects of environment output to .tmp files that are
+    never published as CI artifacts
