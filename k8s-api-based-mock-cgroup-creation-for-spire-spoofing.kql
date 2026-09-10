@@ -1,0 +1,20 @@
+// Detects mock-cgroup-creation and PID injection technique (SPIRE attestation spoofing) as observed via Kubernetes API audit logs.
+// This rule only detects the technique when executed through the Kubernetes API server (kubectl exec/attach sessions).
+// It will NOT detect cgroup manipulation performed via direct node/host shell access outside the API server -- that requires host-level telemetry (auditd/Falco) instead.
+AKSAudit
+| where Verb == "create"
+| extend ResourceType = tostring(ObjectRef.resource)
+| extend SubResource = tostring(ObjectRef.subresource)
+| where ResourceType == "pods"
+| where SubResource in ("exec", "attach")
+| extend PodName = tostring(ObjectRef.name)
+| extend Namespace = tostring(ObjectRef.namespace)
+| extend RequestUser = tostring(User.username)
+| extend SourceIP = tostring(SourceIps[0])
+| extend StatusCode = toint(ResponseStatus.code)
+| where StatusCode in (101, 200)
+| where RequestUri has "cgroup.procs"
+| where RequestUri has_any ("kubepods-burstable-pod", "kubepods-besteffort-pod", "kubepods-guaranteed-pod")
+| where RequestUri has_any ("mkdir", "echo")
+| where RequestUser !has "system:serviceaccount:spire-system:" and RequestUser !has "system:serviceaccount:kube-system:"
+| project TimeGenerated, PodName, Namespace, RequestUser, SourceIP, UserAgent, RequestUri, StatusCode, Verb, SubResource
