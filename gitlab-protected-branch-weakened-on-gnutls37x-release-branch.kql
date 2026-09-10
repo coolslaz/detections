@@ -1,0 +1,12 @@
+// Detects protected-branch configuration changes that weaken push/merge controls on the gnutls_3_7_x release branch
+CloudAppEvents
+| where TimeGenerated > ago(30d)
+| where Application == "GitLab"
+| where ActionType has_any ("protected_branch", "branch_protection", "update_protected_branch")
+| extend Details = parse_json(RawEventData)
+| where tostring(Details.name) == "gnutls_3_7_x"
+| extend developers_can_push = tostring(Details.developers_can_push)
+| extend developers_can_merge = tostring(Details.developers_can_merge)
+| extend can_push = tostring(Details.can_push)
+| where developers_can_merge =~ "true" or can_push =~ "true" or developers_can_push =~ "true"
+| project TimeGenerated, Application, ActionType, AccountDisplayName, developers_can_push, developers_can_merge, can_push, RawEventData
