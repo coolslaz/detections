@@ -1,0 +1,11 @@
+let SuspiciousChildren = dynamic(["cmd.exe","powershell.exe","rundll32.exe","mshta.exe"]);
+let NoisyManagementSources = dynamic(["ccmexec.exe","sccmagent.exe","ccmsetup.exe","screenconnect.exe","teamviewer.exe","anydesk.exe"]);
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where not(InitiatingProcessFileName has_any (NoisyManagementSources))
+| extend RemoteTarget = extract(@"/node:\s*""?([^\s""]+)", 1, ProcessCommandLine)
+| where (FileName =~ "wmic.exe" and ProcessCommandLine has "process" and ProcessCommandLine has "call" and ProcessCommandLine has "create" and ProcessCommandLine has "/node:" and isnotempty(RemoteTarget))
+ or (FileName =~ "powershell.exe" and ProcessCommandLine has "Invoke-WmiMethod" and ProcessCommandLine has "Create" and isnotempty(RemoteTarget))
+ or (InitiatingProcessFileName =~ "wmiprvse.exe" and FileName has_any (SuspiciousChildren))
+| project TimeGenerated, DeviceName, AccountName, FileName, InitiatingProcessFileName, ProcessCommandLine, RemoteTarget
+| sort by TimeGenerated desc
