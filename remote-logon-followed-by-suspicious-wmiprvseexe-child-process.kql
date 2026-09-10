@@ -1,0 +1,16 @@
+let TimeWindow = 30s;
+let SuspiciousChildren = dynamic(["cmd.exe","powershell.exe","pwsh.exe","rundll32.exe","mshta.exe","cscript.exe","wscript.exe"]);
+let RemoteLogons = DeviceLogonEvents
+| where LogonType in ("RemoteInteractive", "NetworkCleartext")
+| where isnotempty(RemoteIP) and RemoteIP != "::1" and RemoteIP != "127.0.0.1"
+| project LogonTime = TimeGenerated, DeviceId, DeviceName, AccountName, RemoteIP, LogonType;
+let WmiSpawns = DeviceProcessEvents
+| where InitiatingProcessFileName =~ "wmiprvse.exe"
+| where FileName has_any (SuspiciousChildren)
+| project SpawnTime = TimeGenerated, DeviceId, DeviceName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessAccountName;
+RemoteLogons
+| join kind=inner (WmiSpawns) on DeviceId
+| where SpawnTime between (LogonTime .. (LogonTime + TimeWindow))
+| extend SecondsBetween = datetime_diff('second', SpawnTime, LogonTime)
+| project LogonTime, SpawnTime, SecondsBetween, DeviceId, DeviceName, AccountName, RemoteIP, LogonType, InitiatingProcessFileName, FileName, ProcessCommandLine, InitiatingProcessAccountName
+| sort by SecondsBetween asc
