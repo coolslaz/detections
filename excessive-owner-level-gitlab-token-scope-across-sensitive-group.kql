@@ -1,0 +1,17 @@
+// Detects enumeration or logging of a GitLab personal access token / project response indicating
+// Owner-level (access_level 50) group_access combined with 'api' scope, exposing broad privilege
+// across sensitive projects such as gnutls/gnutls
+CloudAppEvents
+| where TimeGenerated > ago(30d)
+| where Application == "GitLab"
+| extend RawJson = parse_json(RawEventData)
+| extend AccessLevel = toint(RawJson.group_access.access_level)
+| extend NotificationLevel = toint(RawJson.group_access.notification_level)
+| extend Scopes = RawJson.scopes
+| extend ProjectAccess = RawJson.project_access
+| where AccessLevel == 50
+| where Scopes has "api"
+| where NotificationLevel == 4
+| where isnull(ProjectAccess) or tostring(ProjectAccess) == "null"
+| where RawEventData has "gnutls/gnutls"
+| project TimeGenerated, Application, ActionType, AccountDisplayName, IPAddress, AccessLevel, NotificationLevel, Scopes, RawEventData
