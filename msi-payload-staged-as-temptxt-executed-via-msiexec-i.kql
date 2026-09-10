@@ -1,0 +1,10 @@
+DeviceProcessEvents
+| where FileName =~ "msiexec.exe"
+| where ProcessCommandLine matches regex @'(?i)/i\s+"?[^\s"]*\\AppData\\Local\\Temp\\Temp\.txt'
+| join kind=leftouter (
+    DeviceFileEvents
+    | where FileName =~ "Temp.txt"
+    | where FolderPath has @"\AppData\Local\Temp\"
+    | where SHA256 == "56eda0ac82e06ee609b034306025e67df161c5877399c305c8eaea136e80c951"
+) on DeviceId
+| project TimeGenerated, DeviceId, DeviceName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, FolderPath1 = FolderPath, SHA256
