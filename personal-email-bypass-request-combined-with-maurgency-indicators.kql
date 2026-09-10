@@ -1,0 +1,14 @@
+EmailEvents
+| where TimeGenerated > ago(1d)
+| where EmailDirection == "Inbound"
+| where isnotempty(Subject)
+| extend PersonalEmailRequest = Subject has_any ("private email", "personal email", "personal address", "private address", "send me your private", "send me your personal")
+| extend MAKeywords = Subject has_any ("NDA", "non-disclosure", "acquisition", "merger", "M&A", "due diligence", "deal", "wire transfer", "MT103", "UETR", "proof of transfer")
+| extend UrgencySecrecyKeywords = Subject has_any ("urgent", "confidential", "strictly confidential", "do not share", "keep this between us", "time sensitive", "asap", "discreet", "secrecy")
+| extend SenderDomain = tostring(split(SenderFromAddress, "@")[1])
+| extend RecipientDomain = tostring(split(RecipientEmailAddress, "@")[1])
+| extend ExternalSender = SenderDomain != RecipientDomain
+| where PersonalEmailRequest
+| where MAKeywords or UrgencySecrecyKeywords
+| where ExternalSender
+| project TimeGenerated, NetworkMessageId, SenderFromAddress, RecipientEmailAddress, Subject, PersonalEmailRequest, MAKeywords, UrgencySecrecyKeywords, ExternalSender
