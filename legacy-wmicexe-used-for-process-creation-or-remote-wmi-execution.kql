@@ -1,0 +1,7 @@
+let NoisyManagementSources = dynamic(["ccmexec.exe", "sccmagent.exe", "ccmsetup.exe", "screenconnect.exe", "teamviewer.exe", "anydesk.exe"]);
+DeviceProcessEvents
+| where FileName =~ "wmic.exe"
+| extend RemoteTarget = extract(@"/node:(\S+)", 1, ProcessCommandLine)
+| where ProcessCommandLine has_all ("process", "call", "create") or isnotempty(RemoteTarget)
+| where InitiatingProcessFileName !in~ (NoisyManagementSources)
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, RemoteTarget, InitiatingProcessFileName, InitiatingProcessAccountName, InitiatingProcessCommandLine
