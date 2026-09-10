@@ -1,0 +1,11 @@
+// Detects a direct commit push to the protected release branch 'gnutls_3_7_x' that has no associated merge request
+// This bypasses merge-request review even though the pusher's role satisfies the branch's Maintainer-only push restriction
+CloudAppEvents
+| where TimeGenerated > ago(30d)
+| where Application == "GitLab"
+| where ActionType has_any ("push", "repository_update")
+| where RawEventData has "gnutls_3_7_x"
+| extend MergeRequestId = tostring(parse_json(RawEventData).merge_request_id)
+| where isempty(MergeRequestId) or MergeRequestId == "null"
+| project TimeGenerated, Application, ActionType, AccountDisplayName, IPAddress, RawEventData
+| sort by TimeGenerated desc
