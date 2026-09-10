@@ -1,0 +1,8 @@
+// Detects GitLab personal access token usage from multiple distinct source IPs or from IPs observed in the leaked gitlab-triage token incident, inconsistent with expected CI runner infrastructure
+CloudAppEvents
+| where TimeGenerated > ago(7d)
+| where Application == "GitLab"
+| where RawEventData has "gitlab-triage" or RawEventData has "18781368"
+| summarize DistinctIPs = make_set(IPAddress, 10), IPCount = dcount(IPAddress), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), EventCount = count() by AccountDisplayName, TimeBucket = bin(TimeGenerated, 1h)
+| where IPCount >= 3 or DistinctIPs has_any ("157.211.46.80", "34.24.184.9")
+| project AccountDisplayName, DistinctIPs, IPCount, EventCount, FirstSeen, LastSeen
