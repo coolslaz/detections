@@ -1,0 +1,17 @@
+// Detect enumeration of all projects/access levels reachable by a GitLab token via Projects API with membership=true
+// Tightened: exact Application match (was a 3-way 'has' OR across Application/ApplicationId/RawEventData),
+// and added a distinct-project-count threshold via aggregation so routine 'my projects' dashboard loads
+// (a handful of projects) don't alias with bulk enumeration (dozens+ projects returned to one caller/hour).
+// MITRE ATT&CK: T1087.004, T1526, T1213
+CloudAppEvents
+| where TimeGenerated > ago(1d)
+| where Application == "GitLab"
+| where RawEventData has "/api/v4/projects" and RawEventData has "membership=true"
+| extend RequestUri = tostring(parse_json(RawEventData).uri)
+| extend AccessLevel = tostring(parse_json(RawEventData).access_level)
+| extend ProjectPath = tostring(parse_json(RawEventData).path_with_namespace)
+| where RequestUri has "/api/v4/projects" and RequestUri has "membership=true"
+| summarize DistinctProjects = dcount(ProjectPath), Projects = make_set(ProjectPath, 100), CallCount = count(), IPs = make_set(IPAddress, 5) by AccountDisplayName, TimeBucket = bin(TimeGenerated, 1h)
+| where DistinctProjects >= 20
+| project TimeBucket, AccountDisplayName, DistinctProjects, CallCount, IPs, Projects
+| sort by DistinctProjects desc
