@@ -1,0 +1,16 @@
+// Detects inbound emails referencing PwC/KPMG advisory branding where the sending domain is NOT a verified corporate domain but instead a lookalike (contains pwc/kpmg) or otherwise mismatched domain, combined with fraud indicators (fraudulent WhatsApp Business phone number or wire-transfer proof language), consistent with Phantom Deal impersonation tactics
+EmailEvents
+| where TimeGenerated > ago(30d)
+| where EmailDirection == "Inbound"
+| where SenderDisplayName has_any ("PwC", "PricewaterhouseCoopers", "KPMG") or Subject has_any ("PwC", "KPMG")
+| extend SenderFromDomain = tolower(SenderDomain)
+| where SenderFromDomain !in ("pwc.com", "kpmg.com")
+| where SenderFromDomain has_any ("pwc", "kpmg") // lookalike domain containing brand name but not the verified corporate domain
+| where Body has_any ("+1 (838) 448-6365", "838-448-6365", "8384486365") or Body has_any ("proof of transfer", "MT103", "UETR") or Subject has_any ("proof of transfer", "MT103", "UETR")
+| project TimeGenerated, SenderDisplayName, SenderFromAddress, SenderDomain, RecipientEmailAddress, Subject, NetworkMessageId
+| union (
+IdentityLogonEvents
+| where TimeGenerated > ago(30d)
+| where AdditionalFields has_any ("+1 (838) 448-6365", "838-448-6365", "8384486365")
+| project TimeGenerated, AccountName, AdditionalFields
+)
