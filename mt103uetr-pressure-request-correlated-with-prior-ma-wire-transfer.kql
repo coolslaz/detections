@@ -1,0 +1,19 @@
+// Detects SWIFT MT103/UETR proof-of-transfer pressure emails that follow a preceding large wire-transfer/payment email in the same thread with M&A/deal context, consistent with Phantom Deal fraud tactics
+let MandAKeywords = dynamic(["NDA", "non-disclosure", "acquisition", "merger", "M&A", "deal", "confidential"]);
+let WireKeywords = dynamic(["wire transfer", "payment instruction", "swift", "transfer", "beneficiary"]);
+let MT103Requests = EmailEvents
+| where Subject has_any ("MT103", "UETR", "proof of wire transfer", "proof of transfer", "swift mt103")
+ or Subject has_all ("swift", "proof")
+| where SenderMailFromDomain != RecipientDomain
+| extend SuspiciousPhrase = iff(Subject has "MT103" and Subject has "UETR", "MT103+UETR combined request", iff(Subject has "MT103", "MT103 request", "UETR request"))
+| project MT103Time = TimeGenerated, MT103NetworkMessageId = NetworkMessageId, SenderFromAddress, SenderMailFromDomain, RecipientEmailAddress, RecipientDomain, MT103Subject = Subject, SuspiciousPhrase;
+let PriorWireEmails = EmailEvents
+| where Subject has_any (WireKeywords) or Subject has_any (MandAKeywords)
+| where Subject has_any (MandAKeywords)
+| where Subject has_any (WireKeywords)
+| project WireTime = TimeGenerated, WireNetworkMessageId = NetworkMessageId, SenderFromAddress, SenderMailFromDomain, RecipientEmailAddress, RecipientDomain, WireSubject = Subject;
+MT103Requests
+| join kind=inner (PriorWireEmails) on SenderFromAddress, RecipientEmailAddress
+| where MT103Time - WireTime between (0min .. 72h)
+| project MT103Time, WireTime, MT103NetworkMessageId, WireNetworkMessageId, SenderFromAddress, SenderMailFromDomain, RecipientEmailAddress, RecipientDomain, MT103Subject, WireSubject, SuspiciousPhrase
+| sort by MT103Time desc
