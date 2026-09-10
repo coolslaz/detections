@@ -1,0 +1,17 @@
+let IsPhishUrl = (u: string) { u contains "passkeyhelpdesk.com" or u contains "secure-passkey.com" or u contains "setupmypasskey.com" or u contains "add-passkey.com" or u contains "integratedsso.com" or u contains "oktasession.com" or u contains "keysyncos.com" or u contains "oskeysync.com" or u contains "oskeysetup.com" or u contains "oskeyregister.com" or u contains "syncmykey.com" or u contains "myconnectkey.com" or u contains "oskeyconnect.com" or u contains "validationsetupac.com" or u contains "portalsetuphub.com" };
+let DeviceNetwork = DeviceNetworkEvents
+| where isnotempty(RemoteUrl)
+| where IsPhishUrl(RemoteUrl)
+| project TimeGenerated, DeviceName, ActionType, RemoteUrl, RemoteIP, InitiatingProcessFileName, Source = "DeviceNetworkEvents";
+let DeviceDns = DeviceEvents
+| where ActionType in ("DnsQueryResponse", "ConnectionSuccess", "DnsEvent")
+| extend QueryName = tostring(column_ifexists("RemoteUrl", ""))
+| where isnotempty(QueryName)
+| where IsPhishUrl(QueryName)
+| project TimeGenerated, DeviceName, ActionType, QueryName, InitiatingProcessFileName, Source = "DeviceEvents";
+let UrlClicks = UrlClickEvents
+| where isnotempty(Url)
+| where IsPhishUrl(Url)
+| project TimeGenerated, AccountUpn, NetworkMessageId, Url, ActionType, Source = "UrlClickEvents";
+union DeviceNetwork, DeviceDns, UrlClicks
+| sort by TimeGenerated desc
