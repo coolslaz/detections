@@ -1,0 +1,10 @@
+// Detects fraudulent wire transfer requests exceeding €600,000 directed to Hong Kong beneficiaries referencing confidential acquisition deals.
+// Note: in this environment LedgerTransactionLogs only exposes TimeGenerated and a free-text Message field (no structured Currency/Amount/Beneficiary columns), so all indicators are matched against Message text and the amount is extracted from it.
+LedgerTransactionLogs
+| where TimeGenerated > ago(30d)
+| where Message has "EUR"
+| where Message has "Hong Kong"
+| where Message has_any ("confidential acquisition", "Advance Retainer for Professional Services")
+| extend ExtractedAmount = toreal(replace_string(extract(@"(\d{1,3}(?:,\d{3})*(?:\.\d+)?)", 1, Message), ",", ""))
+| where ExtractedAmount >= 600000
+| project TimeGenerated, Message, ExtractedAmount
