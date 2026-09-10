@@ -1,0 +1,12 @@
+// Detects .gitlab-ci.yml content (surfaced via connected-app telemetry) configuring job artifacts with
+// 'untracked: true' combined with 'when: always', which uploads all
+// untracked files (including accidental secret dumps) as public CI artifacts.
+CloudAppEvents
+| where TimeGenerated > ago(30d)
+| where Application == "GitLab"
+| where RawEventData has ".gitlab-ci.yml"
+| where RawEventData has_any ("untracked: true", "untracked:true")
+| where RawEventData has "when: always"
+| extend HasExpireIn = RawEventData has "expire_in: 1 day"
+| project TimeGenerated, Application, ActionType, AccountDisplayName, HasExpireIn, RawEventData
+| sort by TimeGenerated desc
