@@ -1,0 +1,21 @@
+let timeWindow = 15m;
+let lookback = 1d;
+let droppedFiles = DeviceFileEvents
+| where TimeGenerated > ago(lookback)
+| where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+| where FolderPath startswith "/tmp/"
+| where FileName !endswith ".log" and FileName !endswith ".tmp" and FileName !endswith ".jar" and FileName !endswith ".cache" and FileName !endswith ".lock" and FileName !endswith ".pid" and FileName !endswith ".conf" and FileName !endswith ".json" and FileName !endswith ".txt" and FileName !endswith ".yaml" and FileName !endswith ".properties"
+| where InitiatingProcessFileName has_any ("curl", "wget", "sh", "bash")
+| project DropTime = TimeGenerated, DeviceId, DeviceName, FolderPath, FileName, SHA256, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessId;
+droppedFiles
+| join kind=inner (
+    DeviceNetworkEvents
+    | where TimeGenerated > ago(lookback)
+    | where ActionType == "ConnectionSuccess"
+    | where RemoteIPType == "Public"
+    | where not(RemoteUrl has_any ("githubusercontent.com", "registry.npmjs.org", "pypi.org", "deb.debian.org", "jfrog.io", "bintray.com"))
+    | project ConnTime = TimeGenerated, DeviceId, RemoteIP, RemotePort, RemoteUrl, InitiatingProcessFileName, InitiatingProcessId
+) on DeviceId, InitiatingProcessId
+| where ConnTime between (DropTime .. (DropTime + timeWindow))
+| project DropTime, ConnTime, DeviceId, DeviceName, FolderPath, FileName, SHA256, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteIP, RemotePort, RemoteUrl
+| sort by DropTime desc
