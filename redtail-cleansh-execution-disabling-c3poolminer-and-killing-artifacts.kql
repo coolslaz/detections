@@ -1,0 +1,29 @@
+let ProcessTable = DeviceProcessEvents;
+let FileTable = DeviceFileEvents;
+ProcessTable
+| where FileName in~ ("clean.sh", "bash", "sh")
+| where ProcessCommandLine has "clean.sh"
+    or SHA256 == "197c74408e15bd1168105f564f96aace4fd4819961b724630bf5a6be4878daf8"
+    or (ProcessCommandLine has "c3pool_miner" and ProcessCommandLine has_any ("kill", "pkill", "stop", "disable", "systemctl"))
+| extend MatchedIndicator = case(
+    SHA256 == "197c74408e15bd1168105f564f96aace4fd4819961b724630bf5a6be4878daf8", "clean.sh known hash",
+    ProcessCommandLine has "c3pool_miner" and ProcessCommandLine has_any ("kill", "pkill"), "c3pool_miner process kill",
+    ProcessCommandLine has "c3pool_miner" and ProcessCommandLine has_any ("systemctl", "stop", "disable"), "c3pool_miner service disable/stop",
+    "clean.sh execution")
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, SHA256, InitiatingProcessFileName, InitiatingProcessCommandLine, MatchedIndicator
+// Companion: detect clean.sh's cron/startup filtering and cleanup of security artifacts under /tmp, /var/tmp, /dev/shm
+| union (
+    ProcessTable
+    | where ProcessCommandLine has_any ("crontab", "/etc/crontab", "/etc/cron.d")
+    | where ProcessCommandLine has_any ("wget", "curl", "base64 -d", "base64 --decode", "nc ", "bash -i")
+    | extend MatchedIndicator = "cron filtering for suspicious commands"
+    | project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, SHA256, InitiatingProcessFileName, InitiatingProcessCommandLine, MatchedIndicator
+  )
+| union (
+    FileTable
+    | where ActionType in ("FileDeleted")
+    | where FolderPath startswith "/tmp" or FolderPath startswith "/var/tmp" or FolderPath startswith "/dev/shm"
+    | where InitiatingProcessCommandLine has "clean.sh"
+    | extend MatchedIndicator = "removal of /tmp, /var/tmp, /dev/shm contents by clean.sh"
+    | project TimeGenerated, DeviceName, AccountName=InitiatingProcessAccountName, FileName, ProcessCommandLine=InitiatingProcessCommandLine, SHA256=InitiatingProcessSHA256, InitiatingProcessFileName, InitiatingProcessCommandLine, MatchedIndicator
+  )
