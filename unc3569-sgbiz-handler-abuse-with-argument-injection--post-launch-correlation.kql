@@ -1,0 +1,64 @@
+// Detect malicious sgbiz: protocol handler invocation where biz_helper.exe is launched
+// with attacker-controlled -url= parameters showing argument injection (extra flags, embedded URLs,
+// script-like content) pointing to non-Sogou domains, correlated with a suspicious child process
+// or network connection shortly after launch (UNC3569 / GRAYRABBIT chain)
+let lookback = 5m;
+let SuspiciousBizHelper = DeviceProcessEvents
+| where FileName =~ "biz_helper.exe"
+| where ProcessCommandLine has "sgbiz:" or ProcessCommandLine has "-url="
+| extend ExtractedUrl = extract(@"-url[=\s]+([^\s]+)", 1, ProcessCommandLine)
+| where isnotempty(ExtractedUrl)
+// Exclude routine Sogou IME operation pointing to legitimate Sogou domains
+| where not(ExtractedUrl has_any ("sogou.com", "pinyin.sogou.com", "input.shouji.sogou.com"))
+// Require anomalous argument injection: extra flags beyond normal -page=/-url=, embedded URL schemes,
+// or script-like content indicating command-line parameter injection rather than a normal invocation
+| where ProcessCommandLine matches regex @"(-{1,2}[a-zA-Z_-]+=){2,}|eval\(.*?\)"
+    or ProcessCommandLine has_any ("http://", "https://", "javascript:", "<script", "%3Cscript")
+    or ExtractedUrl has_any ("http://", "https://", "javascript:", "<script", "%3Cscript")
+| project
+    BizTime = TimeGenerated,
+    DeviceId,
+    DeviceName,
+    AccountName,
+    AccountDomain,
+    FileName,
+    ProcessCommandLine,
+    ExtractedUrl,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    FolderPath,
+    ProcessId,
+    BizProcessId = ProcessId;
+let SuspiciousChildProcess = DeviceProcessEvents
+| where InitiatingProcessFileName =~ "biz_helper.exe" or InitiatingProcessFileName =~ "SGMyInput.exe" or InitiatingProcessFileName =~ "SGWebRender.exe"
+| where FileName has_any ("7z.exe", "powershell.exe", "cmd.exe", "rundll32.exe", "regsvr32.exe", "mshta.exe")
+| project ChildTime = TimeGenerated, DeviceId, ChildFileName = FileName, ChildProcessCommandLine = ProcessCommandLine, ChildInitiatingProcessFileName = InitiatingProcessFileName;
+let SuspiciousNetwork = DeviceNetworkEvents
+| where InitiatingProcessFileName has_any ("biz_helper.exe", "SGMyInput.exe", "SGWebRender.exe")
+| where not(RemoteUrl has_any ("sogou.com", "pinyin.sogou.com", "input.shouji.sogou.com"))
+| project NetTime = TimeGenerated, DeviceId, RemoteUrl, RemoteIP, InitiatingProcessFileName;
+SuspiciousBizHelper
+| join kind=leftouter (SuspiciousChildProcess) on DeviceId
+| where isnotempty(ChildTime) and ChildTime between (BizTime .. (BizTime + lookback))
+| join kind=leftouter (SuspiciousNetwork) on DeviceId
+| where isnotempty(NetTime) or isnotempty(ChildTime)
+| where isempty(NetTime) or NetTime between (BizTime .. (BizTime + lookback))
+| project
+    BizTime,
+    DeviceId,
+    DeviceName,
+    AccountName,
+    AccountDomain,
+    FileName,
+    ProcessCommandLine,
+    ExtractedUrl,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    FolderPath,
+    BizProcessId,
+    ChildTime,
+    ChildFileName,
+    ChildProcessCommandLine,
+    NetTime,
+    RemoteUrl,
+    RemoteIP
