@@ -1,0 +1,10 @@
+// Detects administrator-privileged actions (account creation, permission changes, token issuance, plugin/Groovy execution) performed under the "token:anonymous" identity -- the signature left behind when CVE-2026-42018 and CVE-2026-42016 are chained to escalate an unauthenticated Artifactory token to administrator scope. Assumes Artifactory audit logs are forwarded to Log Analytics via the Syslog table. Scoped to the artifactory process source, the exact token:anonymous identity string, and successful (non-denied) outcomes to reduce noise from probing/failed attempts.
+let lookback = 1d;
+Syslog
+| where TimeGenerated > ago(lookback)
+| where ProcessName has "artifactory"
+| where SyslogMessage has "token:anonymous"
+| where SyslogMessage has_any ("CREATE_USER", "UPDATE_USER", "CREATE_TOKEN", "UPDATE_PERMISSIONTARGET", "EXECUTE_PLUGIN", "GROOVY", "DELETE_USER", "CREATE_APIKEY")
+| where not(SyslogMessage has_any ("DENIED", "FAILED", "UNAUTHORIZED", "FORBIDDEN"))
+| project TimeGenerated, Computer, ProcessName, SyslogMessage
+| sort by TimeGenerated desc
