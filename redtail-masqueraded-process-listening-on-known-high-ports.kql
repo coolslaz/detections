@@ -1,0 +1,14 @@
+DeviceNetworkEvents
+| where ActionType == "ListeningConnectionCreated"
+| where LocalIP == "0.0.0.0"
+| where LocalPort in (39983, 40219, 39539)
+| where InitiatingProcessFileName has_any ("php-fpm", "postgres")
+| where InitiatingProcessSHA256 in~ (
+    "efa731b59f9e2f277336072fe5c72b488793c842e2efeedf5cb571a0eeb224e2",
+    "3edfb02c0e6b2fe4894425cd0d4d2507f7cb11e0958674422729366a0d885c7",
+    "b3232d2cd03b051c59aef952ecfea3358c172351a27a989df31720395c3cbb4a",
+    "e2bc7981064d3c9ed898a0f62d659fdc2fc9646dee47a9ca92b9b28b96c27a3b",
+    "63be5f38b520b3143732962a5f8fec1f9abd1f483dbc741ed324e58f955dd35e"
+  )
+  or InitiatingProcessFolderPath has "/var/lib/cowrie/downloads"
+| project TimeGenerated, DeviceId, DeviceName, LocalIP, LocalPort, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessId, InitiatingProcessSHA256, InitiatingProcessCommandLine
