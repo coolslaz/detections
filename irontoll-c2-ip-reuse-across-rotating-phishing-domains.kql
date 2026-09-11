@@ -1,0 +1,11 @@
+// Detect rapid domain rotation infrastructure pattern: multiple distinct domains resolving to the same known IronToll C2 IPs within a short window
+let IronTollC2IPs = dynamic(["43.160.201.83","47.253.233.239","43.130.228.129","43.160.244.74","43.160.245.210","43.165.0.82","43.165.7.185"]);
+DeviceNetworkEvents
+| where TimeGenerated > ago(2d)
+| where RemoteIP in (IronTollC2IPs)
+| where isnotempty(RemoteUrl)
+| summarize DistinctDomains = dcount(RemoteUrl), Domains = make_set(RemoteUrl, 20), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), Devices = make_set(DeviceName, 20) by RemoteIP
+| extend LifespanHours = datetime_diff('hour', LastSeen, FirstSeen)
+| where DistinctDomains >= 2 and LifespanHours <= 48
+| project RemoteIP, DistinctDomains, Domains, FirstSeen, LastSeen, LifespanHours, Devices
+| sort by DistinctDomains desc
