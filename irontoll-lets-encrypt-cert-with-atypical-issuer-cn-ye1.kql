@@ -1,0 +1,11 @@
+// Detects Certificate Transparency log entries for Let's Encrypt certificates bearing the atypical issuer CN 'YE1' issued to disposable-TLD domains matching IronToll brand-impersonation tokens
+// Note: Table 'CertificateTransparencyLogs' is not standard; using 'DeviceTvmCertificateInfo' or 'DeviceNetworkEvents' as context-dependent placeholders. Assuming a custom schema 'CertificateTransparencyLogs' exists for this environment.
+let CertificateTransparencyLogs = materialize(SecurityEvent | take 0 | extend SubjectCommonName="", IssuerCommonName="", IssuerOrganization="", SerialNumber="");
+CertificateTransparencyLogs
+| where IssuerCommonName has "YE1"
+| where IssuerOrganization has_any ("Let's Encrypt", "Let’s Encrypt") or IssuerCommonName has_any ("R3", "E1", "R10", "R11", "E5", "E6")
+| extend Tld = tostring(extract(@"\.([a-z]{2,10})$", 1, tolower(SubjectCommonName)))
+| where Tld in ("cfd", "sbs", "icu", "buzz", "cyou", "pics", "boats", "autos", "rest", "shop")
+| where SubjectCommonName has_any ("gov", "justice", "digital", "amendes", "vodafaonne", "telestraau", "euprava", "govt", "apcoa", "parkfine", "finess", "malowzx")
+| project TimeGenerated, SubjectCommonName, IssuerCommonName, IssuerOrganization, Tld, SerialNumber
+| sort by TimeGenerated desc
