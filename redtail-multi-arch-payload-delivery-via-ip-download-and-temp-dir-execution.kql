@@ -1,0 +1,30 @@
+let timeframe = 1h;
+let ArchCheck = DeviceProcessEvents
+| where TimeGenerated > ago(timeframe)
+| where ProcessCommandLine has "uname" and ProcessCommandLine has "-m"
+| project TimeGenerated, DeviceId, DeviceName, FileName, ProcessCommandLine, AccountName, Behavior = "arch_check";
+let IPDownload = DeviceProcessEvents
+| where TimeGenerated > ago(timeframe)
+| where FileName in~ ("curl", "wget")
+| where ProcessCommandLine matches regex @"https?://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?/"
+| project TimeGenerated, DeviceId, DeviceName, FileName, ProcessCommandLine, AccountName, Behavior = "ip_download";
+let ChmodTemp = DeviceProcessEvents
+| where TimeGenerated > ago(timeframe)
+| where FileName =~ "chmod" and ProcessCommandLine has "+x"
+| where ProcessCommandLine has_any ("/tmp/", "/var/tmp/", "/dev/shm/")
+| project TimeGenerated, DeviceId, DeviceName, FileName, ProcessCommandLine, AccountName, Behavior = "chmod_tempdir";
+let ExecTemp = DeviceProcessEvents
+| where TimeGenerated > ago(timeframe)
+| where FolderPath has_any ("/tmp/", "/var/tmp/", "/dev/shm/")
+| project TimeGenerated, DeviceId, DeviceName, FileName, ProcessCommandLine, AccountName, Behavior = "exec_from_tempdir";
+union ArchCheck, IPDownload, ChmodTemp, ExecTemp
+| summarize ArchCheckCount = countif(Behavior == "arch_check"),
+ IPDownloadCount = countif(Behavior == "ip_download"),
+ ChmodTempCount = countif(Behavior == "chmod_tempdir"),
+ ExecTempCount = countif(Behavior == "exec_from_tempdir"),
+ Events = make_list(pack("Timestamp", TimeGenerated, "FileName", FileName, "ProcessCommandLine", ProcessCommandLine, "AccountName", AccountName, "Behavior", Behavior), 50),
+ StartTime = min(TimeGenerated), EndTime = max(TimeGenerated)
+ by DeviceId, DeviceName
+| where ArchCheckCount > 0 and IPDownloadCount > 0 and ChmodTempCount > 0 and ExecTempCount > 0
+| project DeviceId, DeviceName, StartTime, EndTime, ArchCheckCount, IPDownloadCount, ChmodTempCount, ExecTempCount, Events
+| order by EndTime desc
