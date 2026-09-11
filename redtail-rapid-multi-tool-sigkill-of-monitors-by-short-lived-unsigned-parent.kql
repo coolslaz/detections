@@ -1,0 +1,37 @@
+let ShellNames = dynamic(["bash","sh","zsh","dash","ksh","csh","tcsh"]);
+let Events = DeviceProcessEvents
+| where TimeGenerated > ago(1d);
+Events
+| where FileName in~ ("kill", "strace", "inotifywait", "sudo", "timeout")
+| where ProcessCommandLine has "SIGKILL" or ProcessCommandLine matches regex @"kill\s+(-9|-SIGKILL)\s+\d+"
+| where ProcessCommandLine has_any ("inotifywait", "strace", "/usr/bin/strace")
+| extend TargetTool = case(
+    ProcessCommandLine has "inotifywait", "inotifywait",
+    ProcessCommandLine has_any ("strace", "/usr/bin/strace"), "strace",
+    "unknown"
+  )
+| where TargetTool != "unknown"
+| where InitiatingProcessFileName !in~ (ShellNames)
+| where isnotnull(InitiatingProcessCreationTime)
+| where datetime_diff('second', TimeGenerated, InitiatingProcessCreationTime) < 300
+| summarize KillTimes = make_list(TimeGenerated, 20), DistinctTools = make_set(TargetTool, 10), ToolKillCount = dcount(TargetTool), FirstKill = min(TimeGenerated), LastKill = max(TimeGenerated), DeviceName = any(DeviceName), InitiatingProcessCommandLine = any(InitiatingProcessCommandLine), InitiatingProcessAccountName = any(InitiatingProcessAccountName), InitiatingProcessParentFileName = any(InitiatingProcessParentFileName) by DeviceId, InitiatingProcessFileName, InitiatingProcessId, InitiatingProcessCreationTime
+| where ToolKillCount >= 2
+| where datetime_diff('second', LastKill, FirstKill) <= 60
+| union (
+    Events
+    | where InitiatingProcessFileName in~ ("redtail.x86_64", "redtail.arm7", "redtail.arm8", "redtail.i686", "redtail.riscv")
+    | where FileName in~ ("kill", "strace", "inotifywait", "sudo", "timeout")
+    | extend TargetTool = case(
+        ProcessCommandLine has "inotifywait", "inotifywait",
+        ProcessCommandLine has_any ("strace", "/usr/bin/strace"), "strace",
+        "unknown"
+      )
+    | where TargetTool != "unknown"
+    | where InitiatingProcessFileName !in~ (ShellNames)
+    | where isnotnull(InitiatingProcessCreationTime)
+    | where datetime_diff('second', TimeGenerated, InitiatingProcessCreationTime) < 300
+    | summarize KillTimes = make_list(TimeGenerated, 20), DistinctTools = make_set(TargetTool, 10), ToolKillCount = dcount(TargetTool), FirstKill = min(TimeGenerated), LastKill = max(TimeGenerated), DeviceName = any(DeviceName), InitiatingProcessCommandLine = any(InitiatingProcessCommandLine), InitiatingProcessAccountName = any(InitiatingProcessAccountName), InitiatingProcessParentFileName = any(InitiatingProcessParentFileName) by DeviceId, InitiatingProcessFileName, InitiatingProcessId, InitiatingProcessCreationTime
+    | where ToolKillCount >= 2
+    | where datetime_diff('second', LastKill, FirstKill) <= 60
+)
+| sort by LastKill desc
