@@ -1,0 +1,10 @@
+// Detects requests to the GitLab repository commits API containing path traversal sequences, indicative of exploitation attempts against known actively-exploited GitLab vulnerabilities
+CommonSecurityLog
+| where isnotempty(RequestURL)
+| where RequestURL has "/api/v4/projects/" and RequestURL has "repository/commits"
+| where RequestMethod == "GET"
+| extend CommitsPathSuffix = extract(@"repository/commits/?(.*)", 1, RequestURL)
+| extend TraversalDepth = countof(CommitsPathSuffix, "../") + countof(CommitsPathSuffix, "%2e%2e%2f") + countof(CommitsPathSuffix, "%2e%2e/") + countof(CommitsPathSuffix, "..%2f")
+| where TraversalDepth >= 2
+| project TimeGenerated, SourceIP, DestinationIP, RequestURL, DeviceAction, RequestMethod, DeviceProduct, TraversalDepth
+| sort by TimeGenerated desc
