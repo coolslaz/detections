@@ -1,0 +1,10 @@
+DeviceFileEvents
+| where FolderPath has_any ("/proc/cpuinfo", "/proc/cmdline", "/sys/devices/system/node", "/sys/devices/virtual/dmi/id")
+| where ActionType in ("FileAccessed", "FileOpened", "FileRead")
+| where isnotempty(InitiatingProcessFileName)
+| where not(InitiatingProcessFileName has_any ("systemd", "systemd-udevd", "auditd", "rsyslogd", "chronyd", "cron", "crond", "top", "htop", "ps", "sar", "collectd", "telegraf", "node_exporter", "prometheus", "datadog-agent", "nagios", "zabbix_agentd", "snmpd"))
+| where InitiatingProcessFolderPath has_any ("/tmp", "/var/tmp", "/dev/shm", "/var/lib/cowrie/downloads") or InitiatingProcessFileName matches regex @"^redtail\.(x86_64|arm7|arm8|i686|riscv)$"
+| summarize ProfiledPaths = make_set(FolderPath, 20), PathCount = dcount(FolderPath), AccessCount = count(), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by DeviceId, InitiatingProcessFileName, InitiatingProcessId, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessSHA256
+| where PathCount >= 8
+| where LastSeen - FirstSeen <= 30s
+| project FirstSeen, LastSeen, DeviceId, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessId, InitiatingProcessCommandLine, InitiatingProcessSHA256, PathCount, AccessCount, ProfiledPaths
