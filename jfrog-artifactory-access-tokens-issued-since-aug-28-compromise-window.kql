@@ -1,0 +1,9 @@
+// Detects JFrog Artifactory access-token issuance events on/after the suspected compromise window (2026-08-28) where the token is tied to the anonymous identity, granted administrator scope, or has no attributable initiating user -- the anomaly pattern Fastly's remediation guidance calls out, rather than ordinary CI/CD token issuance.
+let CompromiseWindowStart = datetime(2026-08-28);
+Syslog
+| where TimeGenerated >= CompromiseWindowStart
+| where ProcessName has "artifactory"
+| where SyslogMessage has_any ("TOKEN_CREATE", "TOKEN_ISSUE", "CREATE_TOKEN")
+| where SyslogMessage has_any ("token:anonymous", "anonymous") or SyslogMessage has "applied-permissions/admin"
+| project TimeGenerated, Computer, ProcessName, SyslogMessage
+| sort by TimeGenerated asc
