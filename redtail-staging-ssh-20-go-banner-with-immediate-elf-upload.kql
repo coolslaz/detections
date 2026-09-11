@@ -1,0 +1,18 @@
+// Detects SSH sessions where SSH-2.0-Go banner co-occurs with an immediate ELF binary upload consistent with RedTail deployment staging
+// Data source: Cowrie honeypot / SSH session logs (NDR,EDR)
+let redtailFiles = dynamic(["setup.sh", "clean.sh", "redtail.x86_64", "redtail.arm7", "redtail.arm8", "redtail.i686", "redtail.riscv"]);
+let suspiciousIps = dynamic(["130.12.180.51", "130.12.180.1"]);
+let suspiciousDevices = DeviceNetworkEvents | where RemoteIP in (suspiciousIps) | distinct DeviceId;
+let bannerEvents = DeviceNetworkEvents
+| where RemotePort == 22
+| where InitiatingProcessCommandLine has "SSH-2.0-Go"
+| project BannerTime = TimeGenerated, DeviceId, RemoteIP, InitiatingProcessCommandLine;
+let uploadEvents = DeviceFileEvents
+| where ActionType == "FileCreated"
+| where FileName has_any (redtailFiles) or InitiatingProcessAccountSid in (suspiciousIps) or DeviceId in (suspiciousDevices)
+| project UploadTime = TimeGenerated, DeviceId, DeviceName, FileName, ActionType;
+bannerEvents
+| join kind=inner (uploadEvents) on DeviceId
+| where UploadTime - BannerTime between (0s .. 30s)
+| project BannerTime, UploadTime, DeviceId, RemoteIP, InitiatingProcessCommandLine, FileName, ActionType
+| sort by BannerTime asc
