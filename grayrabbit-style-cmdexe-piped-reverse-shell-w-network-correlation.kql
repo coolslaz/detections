@@ -1,0 +1,47 @@
+// Detect GRAYRABBIT backdoor spawning cmd.exe with piped stdio handles for an interactive reverse shell,
+// launched from an unusual/non-standard parent process (not explorer.exe, not known admin/RMM/backup/monitoring/CI tooling),
+// and correlated with an outbound network connection from the same initiating process within a short time window.
+let SuspiciousParents = DeviceProcessEvents
+| where FileName =~ "cmd.exe"
+    and ProcessCommandLine !contains "/c "
+    // exclude common legitimate launchers/admin tools
+    and InitiatingProcessFileName !in~ (
+        "explorer.exe", "cmd.exe", "powershell.exe", "WindowsTerminal.exe", "conhost.exe",
+        "TeamViewer.exe", "AnyDesk.exe", "mstsc.exe", "msiexec.exe", "svchost.exe", "taskeng.exe",
+        "schtasks.exe", "services.exe", "WmiPrvSE.exe"
+    )
+    // exclude known CI/build agent and backup/monitoring processes triggering automation
+    and not(InitiatingProcessFileName has_any (
+        "jenkins", "gitlab-runner", "AzureDevOps", "TeamCityAgent", "GitHubActionsRunner",
+        "Veeam", "BackupExec", "Zabbix", "Nagios", "Datadog", "SolarWinds", "PDQ", "Ninite", "SCOM"
+    ))
+    // exclude scheduled task / CI invocation patterns in the command line itself
+    and not(InitiatingProcessCommandLine has_any ("schtasks", "Scheduled Task", "/RunAsSelf", "jenkins", "gitlab-runner", "azure-pipelines"))
+    // GRAYRABBIT-related loader chain remains a strong indicator when present
+    or InitiatingProcessFileName in~ ("7z.exe", "SGMyInput.exe", "SGWebRender.exe", "biz_helper.exe")
+| project TimeGenerated, DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine,
+    InitiatingProcessId, FileName, ProcessCommandLine, ProcessId, AccountName, FolderPath;
+SuspiciousParents
+| join kind=inner (
+    DeviceNetworkEvents
+    | where InitiatingProcessId != 0
+    | project NetTimeGenerated = TimeGenerated, DeviceId, InitiatingProcessId, RemoteIP, RemotePort, RemoteUrl
+) on DeviceId, InitiatingProcessId
+| where abs(datetime_diff('second', NetTimeGenerated, TimeGenerated)) <= 300
+| project
+    TimeGenerated,
+    DeviceId,
+    DeviceName,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    InitiatingProcessId,
+    FileName,
+    ProcessCommandLine,
+    ProcessId,
+    AccountName,
+    FolderPath,
+    RemoteIP,
+    RemotePort,
+    RemoteUrl,
+    NetTimeGenerated
+| order by TimeGenerated desc
