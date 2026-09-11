@@ -1,0 +1,17 @@
+let GroovyPluginWrites = DeviceFileEvents
+| where TimeGenerated > ago(1d)
+| where ActionType == "FileCreated"
+| where FileName endswith ".groovy"
+| where FolderPath has "plugins"
+| where FolderPath has_any ("artifactory", "jfrog")
+| project TimeGenerated, DeviceId, DeviceName, FileName, FolderPath, InitiatingProcessAccountName, InitiatingProcessFileName, SHA256, ReportId;
+let SuspiciousChildProcesses = DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where InitiatingProcessFolderPath has_any ("artifactory", "jfrog")
+| where FileName in~ ("sh", "bash", "cmd.exe", "powershell.exe", "wget", "curl", "nc")
+| where not(ProcessCommandLine has_any ("logrotate", "healthcheck", "backup.sh"))
+| project TimeGenerated, DeviceId, DeviceName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessAccountName, ReportId;
+GroovyPluginWrites
+| join kind=inner (SuspiciousChildProcesses) on DeviceId
+| where (TimeGenerated1 - TimeGenerated) between (0min .. 10min)
+| project PluginWriteTime = TimeGenerated, ChildProcessTime = TimeGenerated1, DeviceId, DeviceName, FileName, FolderPath, InitiatingProcessAccountName, ChildProcessFileName = FileName1, ProcessCommandLine, InitiatingProcessFileName1
