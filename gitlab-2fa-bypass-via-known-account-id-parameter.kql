@@ -1,0 +1,12 @@
+// Detects authentication events on GitLab that succeed without completing the 2FA challenge, referencing an account_id parameter directly - consistent with the January 2FA bypass vulnerability
+// Sourced from CommonSecurityLog (CEF-forwarded GitLab application logs)
+CommonSecurityLog
+| where isnotempty(RequestURL)
+| where RequestURL has "account_id"
+| where RequestURL has_any ("2fa_bypass", "skip_two_factor")
+| where DeviceAction in ("allow", "Allowed", "200")
+| extend AccountId = extract(@"account_id[=:]([A-Za-z0-9_-]+)", 1, RequestURL)
+| where isnotempty(AccountId)
+| summarize AttemptCount = count(), DistinctAccountIds = dcount(AccountId), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by SourceIP, DestinationIP
+| where AttemptCount >= 3
+| project SourceIP, DestinationIP, AttemptCount, DistinctAccountIds, FirstSeen, LastSeen
