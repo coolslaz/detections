@@ -1,0 +1,8 @@
+// Detects reconnaissance shell commands (file listing/directory enumeration) executed as child processes of the JFrog Artifactory service process, consistent with abuse of the Groovy plugin execution endpoint
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where InitiatingProcessFileName in~ ("java.exe", "java", "artifactoryService", "artifactory")
+| where FileName in~ ("sh", "bash", "cmd.exe", "powershell.exe")
+| where ProcessCommandLine has_any ("ls -la", "ls -al", "find /", "find .", "cat /etc", "/c dir", "/c type")
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, AccountName
+| sort by TimeGenerated desc
