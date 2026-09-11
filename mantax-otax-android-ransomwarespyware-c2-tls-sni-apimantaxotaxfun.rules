@@ -1,0 +1,7 @@
+alert tls $HOME_NET any -> $EXTERNAL_NET any (msg:"Mantax Otax Android Ransomware/Spyware C2 TLS SNI (apimantax.otax.fun)"; flow:to_server,established; tls.sni; content:"apimantax.otax.fun"; nocase; fast_pattern; metadata: author Arnold Chan, malware Mantax_Otax, technique Dynamic_Resolution, attack_id T1660; classtype:trojan-activity; reference:url,https://www.bleepingcomputer.com/news/security/new-android-malware-encrypts-files-steals-data-and-harasses-victims/; sid:1000101; rev:1;)
+
+alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"Mantax Otax Android Ransomware/Spyware C2 HTTP Host (apimantax.otax.fun)"; flow:to_server,established; http.host; content:"apimantax.otax.fun"; nocase; fast_pattern; metadata: author detections.ai, malware Mantax_Otax, technique Dynamic_Resolution, attack_id T1660; classtype:trojan-activity; sid:1000102; rev:1;)
+
+alert tls $HOME_NET any -> $EXTERNAL_NET any (msg:"Mantax Otax possible dynamic C2 config fetch via GitHub raw content"; flow:to_server,established; tls.sni; content:"raw.githubusercontent.com"; nocase; fast_pattern; metadata: author detections.ai, malware Mantax_Otax, technique Dynamic_Resolution, attack_id T1660; classtype:trojan-activity; sid:1000103; rev:1;)
+
+alert tls $HOME_NET any -> $EXTERNAL_NET any (msg:"Mantax Otax possible dynamic C2 config fetch via GitHub API"; flow:to_server,established; tls.sni; content:"api.github.com"; nocase; fast_pattern; metadata: author detections.ai, malware Mantax_Otax, technique Dynamic_Resolution, attack_id T1660; classtype:trojan-activity; sid:1000104; rev:1;)
