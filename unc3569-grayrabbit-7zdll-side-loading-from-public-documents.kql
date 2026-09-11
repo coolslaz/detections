@@ -1,0 +1,52 @@
+let TimeWindow = 5m;
+let DropWindow = 10m;
+DeviceProcessEvents
+| where FileName =~ "7z.exe"
+| where FolderPath has_any ("C:\\Users\\Public\\Documents", "c:\\users\\public\\documents")
+| where ProcessCommandLine has_all ("a", "c:\\users\\public\\documents\\p.7z", "c:\\users\\public\\documents\\p")
+| where FolderPath !has "Program Files\\7-Zip" and FolderPath !has "Program Files (x86)\\7-Zip"
+| project ProcTimestamp = TimeGenerated, DeviceId, DeviceName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, ProcessSHA1 = SHA1
+| join kind=inner (
+    DeviceImageLoadEvents
+    | where FileName =~ "7z.dll"
+    | where FolderPath has_any ("C:\\Users\\Public\\Documents", "c:\\users\\public\\documents")
+    | where FolderPath !has "Program Files\\7-Zip" and FolderPath !has "Program Files (x86)\\7-Zip"
+    | project DeviceId, DllLoadTimestamp = TimeGenerated, DllFileName = FileName, DllFolderPath = FolderPath, DllSHA1 = SHA1
+) on DeviceId
+| where DllLoadTimestamp between (ProcTimestamp .. (ProcTimestamp + TimeWindow))
+// Exclude cases where either 7z.exe or 7z.dll is signed by the trusted 7-Zip publisher
+| join kind=leftouter (
+    DeviceFileCertificateInfo
+    | where Signer has "Igor Pavlov" or Signer has "7-Zip"
+    | project CertSHA1 = SHA1, Signer, IsTrusted
+) on $left.ProcessSHA1 == $right.CertSHA1
+| join kind=leftouter (
+    DeviceFileCertificateInfo
+    | where Signer has "Igor Pavlov" or Signer has "7-Zip"
+    | project DllCertSHA1 = SHA1, DllSigner = Signer, DllIsTrusted = IsTrusted
+) on $left.DllSHA1 == $right.DllCertSHA1
+| where (isnull(Signer) or IsTrusted != true) and (isnull(DllSigner) or DllIsTrusted != true)
+// Require the DLL to have been dropped shortly before it was loaded (not a legitimately pre-existing/relocated copy)
+| join kind=inner (
+    DeviceFileEvents
+    | where FileName =~ "7z.dll"
+    | where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+    | where FolderPath has_any ("C:\\Users\\Public\\Documents", "c:\\users\\public\\documents")
+    | where FolderPath !has "Program Files\\7-Zip" and FolderPath !has "Program Files (x86)\\7-Zip"
+    | project DeviceId, DllFolderPath = FolderPath, DllDropTimestamp = TimeGenerated
+) on DeviceId, DllFolderPath
+| where DllDropTimestamp <= DllLoadTimestamp and (DllLoadTimestamp - DllDropTimestamp) <= DropWindow
+| project
+    ProcTimestamp,
+    DeviceId,
+    DeviceName,
+    FileName,
+    FolderPath,
+    ProcessCommandLine,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    DllLoadTimestamp,
+    DllFileName,
+    DllFolderPath,
+    DllDropTimestamp
+| order by ProcTimestamp desc
