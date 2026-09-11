@@ -1,0 +1,43 @@
+// Exclude known legitimate inventory/monitoring agents that legitimately probe DMI/virt indicators
+let ProcessEvents = DeviceProcessEvents
+| where isnotempty(DeviceName) and isnotempty(DeviceId)
+| where FileName in~ ("cat", "grep", "dmidecode", "sh", "bash")
+| where ProcessCommandLine has_any (
+    "/sys/devices/virtual/dmi/id/product_uuid",
+    "/sys/devices/virtual/dmi/id/chassis_serial",
+    "/sys/devices/virtual/dmi/id/product_serial",
+    "/sys/devices/virtual/dmi/id/sys_vendor",
+    "/sys/devices/virtual/dmi/id/board_vendor",
+    "/sys/devices/virtual/dmi/id/bios_vendor",
+    "/proc/cpuinfo",
+    "/proc/cmdline",
+    "QEMU",
+    "SeaBIOS",
+    "Q35",
+    "hypervisor"
+)
+| where InitiatingProcessFileName !in~ ("ansible", "ansible-playbook", "python", "python3", "datadog-agent", "dd-agent", "systemd", "systemd-detect-virt", "cron", "crond", "monit", "puppet", "chef-client")
+| where not(InitiatingProcessCommandLine has_any ("ansible", "datadog", "dd-agent", "puppet", "chef"))
+| project Timestamp = TimeGenerated, DeviceId, DeviceName, InitiatingProcessAccountName, InitiatingProcessId, InitiatingProcessFileName, InitiatingProcessCreationTime, InitiatingProcessCommandLine, FileName, ProcessCommandLine;
+let FileEvents = DeviceFileEvents
+| where isnotempty(DeviceName)
+| where FolderPath has_any (
+    "/sys/devices/virtual/dmi/id/product_uuid",
+    "/sys/devices/virtual/dmi/id/chassis_serial",
+    "/sys/devices/virtual/dmi/id/product_serial",
+    "/sys/devices/virtual/dmi/id/sys_vendor",
+    "/sys/devices/virtual/dmi/id/board_vendor",
+    "/proc/cpuinfo"
+)
+| where InitiatingProcessFileName !in~ ("ansible", "ansible-playbook", "python", "python3", "datadog-agent", "dd-agent", "systemd", "systemd-detect-virt", "cron", "crond", "monit", "puppet", "chef-client")
+| where not(InitiatingProcessCommandLine has_any ("ansible", "datadog", "dd-agent", "puppet", "chef"))
+| project Timestamp = TimeGenerated, DeviceId, DeviceName, InitiatingProcessAccountName, InitiatingProcessId, InitiatingProcessFileName, InitiatingProcessCreationTime, InitiatingProcessCommandLine, FileName = InitiatingProcessFileName, ProcessCommandLine = InitiatingProcessCommandLine;
+// Complementary file-read based detection for direct /proc and /sys access without a shell wrapper
+union ProcessEvents, FileEvents
+// Require multiple distinct profiling command invocations from the same short-lived, non-standard parent process in a tight time window
+| summarize DistinctCommands = dcount(FileName), Commands = make_set(FileName, 10), CommandLines = make_set(ProcessCommandLine, 20), FirstSeen = min(Timestamp), LastSeen = max(Timestamp), EventCount = count()
+    by DeviceId, DeviceName, InitiatingProcessId, InitiatingProcessFileName, InitiatingProcessAccountName, InitiatingProcessCreationTime, bin(Timestamp, 2m)
+| extend ParentLifetimeSeconds = datetime_diff('second', LastSeen, InitiatingProcessCreationTime)
+| where DistinctCommands >= 3
+| where ParentLifetimeSeconds <= 300
+| sort by LastSeen desc
