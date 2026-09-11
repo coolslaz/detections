@@ -1,0 +1,24 @@
+let TimeWindow = 5m;
+let FlushEvents = DeviceProcessEvents
+| where FileName =~ "iptables"
+| where ProcessCommandLine has "-F"
+| project DeviceId, DeviceName, AccountName, FlushTime=TimeGenerated, FlushCommandLine=ProcessCommandLine;
+let AcceptEvents = DeviceProcessEvents
+| where FileName =~ "iptables"
+| where ProcessCommandLine has_all ("-I", "INPUT", "-p", "tcp", "--dport", "-j", "ACCEPT")
+| extend DportValue = extract(@"--dport\s+(\d+)", 1, ProcessCommandLine)
+| where isnotempty(DportValue) and toint(DportValue) > 1024
+| project DeviceId, DeviceName, AccountName, AcceptTime=TimeGenerated, AcceptCommandLine=ProcessCommandLine, Port=toint(DportValue);
+let FlushThenAccept = FlushEvents
+| join kind=inner AcceptEvents on DeviceId
+| where AcceptTime > FlushTime and (AcceptTime - FlushTime) <= TimeWindow
+| project DeviceId, DeviceName, AccountName, FlushTime, FlushCommandLine, AcceptTime, AcceptCommandLine, Port;
+let SuspiciousListeners = DeviceNetworkEvents
+| where ActionType in ("ListeningConnectionCreated", "InboundConnectionAccepted")
+| where InitiatingProcessFolderPath has_any ("/tmp/", "/var/tmp/", "/dev/shm/", "/var/lib/cowrie/")
+| project DeviceId, ListenTime=TimeGenerated, LocalPort, ListenProcessName=InitiatingProcessFileName, ListenProcessPath=InitiatingProcessFolderPath, ListenProcessId=InitiatingProcessId;
+FlushThenAccept
+| join kind=inner SuspiciousListeners on DeviceId
+| where LocalPort == Port
+| where ListenTime between ((AcceptTime - 1m) .. (AcceptTime + TimeWindow))
+| project DeviceId, DeviceName, AccountName, FlushTime, FlushCommandLine, AcceptTime, AcceptCommandLine, Port, ListenTime, ListenProcessName, ListenProcessPath, ListenProcessId
