@@ -1,0 +1,15 @@
+// Detects newly registered domains matching IronToll disposable-infrastructure signature:
+// low-reputation/disposable TLD + active phishing threat-intel indicator.
+// Note: WHOIS-level attributes (MX record absence, DNSSEC status, registrar/nameserver overlap
+// with NameSilo/dnsowl or NameMart/domainnamens) are not present in the standard
+// ThreatIntelligenceIndicator schema and would require joining an external WHOIS/passive-DNS
+// enrichment source (e.g. a watchlist) if available in your tenant.
+ThreatIntelligenceIndicator
+| where TimeGenerated > ago(7d)
+| where Active == true
+| where isnotempty(DomainName)
+| extend TLD = tostring(split(DomainName, ".")[-1])
+| where TLD in ("cfd", "sbs", "icu", "buzz", "cyou", "pics", "boats", "bond", "shop", "lat", "rest", "work", "autos", "xyz", "fit", "forum", "fun", "hair", "help", "homes", "reisen", "skin", "courses", "bar", "biz", "casa", "my.id")
+| where ThreatType in ("Phishing", "MaliciousUrl", "Malware")
+| project TimeGenerated, DomainName, TLD, ThreatType, ConfidenceScore, Description, Url, IndicatorId
+| sort by TimeGenerated desc
