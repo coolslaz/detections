@@ -1,0 +1,14 @@
+DeviceProcessEvents
+| where FileName has_any ("php-fpm", "postgres") or ProcessCommandLine has_any ("php-fpm: pool www", "postgres: user")
+| where FolderPath startswith "/" // restrict to Unix-style paths (Linux/macOS Defender sensors); excludes Windows-style C:\\ paths
+| where SHA256 in~ ("63be5f38b520b3143732962a5f8fec1f9abd1f483dbc741ed324e58f955dd35e", "efa731b59f9e2f277336072fe5c72b488793c842e2efeedf5cb571a0eeb224e2", "3edfb02c0e6b2fe4894425cd0d4d2507f7cb11e0958674422729366a0d885c7e", "b3232d2cd03b051c59aef952ecfea3358c172351a27a989df31720395c3cbb4a", "e2bc7981064d3c9ed898a0f62d659fdc2fc9646dee47a9ca92b9b28b96c27a3b")
+| join kind=inner (DeviceInfo | where OSPlatform =~ "Linux" | distinct DeviceId) on DeviceId
+| extend MaskedName = FileName
+// Collapse repeated forks/restarts of the SAME malicious binary on the SAME host into a single alert row.
+// php-fpm pool workers and postgres backend workers respawn per request/connection, so an infected binary
+// can otherwise fire one match per fork -- this dedupes on host+hash+path over the query lookback window.
+| summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), ExecutionCount = count(), ProcessIds = make_set(ProcessId, 20), Accounts = make_set(InitiatingProcessAccountName, 10) by DeviceId, DeviceName, FileName, FolderPath, ProcessCommandLine, SHA256
+| project FirstSeen, LastSeen, ExecutionCount, DeviceName, FileName, FolderPath, ProcessCommandLine, SHA256, ProcessIds, Accounts
+// Executable hash matches known RedTail multi-architecture payloads while process presents as php-fpm/postgres
+// Detects prctl(PR_SET_NAME) masquerading technique where /proc/<PID>/exe SHA-256 does not match legitimate php-fpm/postgres binaries
+// Explicitly scoped to Linux endpoints via DeviceInfo.OSPlatform join, since RedTail targets Linux (x86/ARM/RISC-V)
