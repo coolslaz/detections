@@ -1,0 +1,10 @@
+// Detects a redtail.x86_64 (or other architecture variant) process terminating a previously running instance of itself via /proc executable path enumeration followed by a kill signal
+DeviceProcessEvents
+| where FileName in~ ("redtail.x86_64", "redtail.arm7", "redtail.arm8", "redtail.i686", "redtail.riscv", "redtail.arm", "redtail.arm64")
+| where ProcessCommandLine has "redtail" and ProcessCommandLine has "/proc"
+| join kind=inner (
+    DeviceProcessEvents
+    | where ProcessCommandLine has "kill"
+    | where InitiatingProcessFileName in~ ("redtail.x86_64", "redtail.arm7", "redtail.arm8", "redtail.i686", "redtail.riscv", "redtail.arm", "redtail.arm64")
+) on DeviceId
+| project TimeGenerated, DeviceId, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, ProcessId, InitiatingProcessId, AccountName
