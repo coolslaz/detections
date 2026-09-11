@@ -1,0 +1,14 @@
+// Detect emails delivering links to IronToll government-impersonation traffic-fine/payment portals
+// harvesting license plate and payment card data (Egyptian 'مصر الرقمية' and Moroccan Ministry of Justice lures)
+let ironTollDomains = dynamic(["digitalgov.autos","amendes-justice-gov.rest","vodafaonne.shop","telestraau","euprava-gov","apcoafine.cfd","apcoa-fine.cfd","q-parkfine.cfd","finess.cfd","malowzx.sbs"]);
+let trafficFineKeywords = dynamic(["مصر الرقمية","مخالفة مرورية","مخالفات المرور","Ministère de la Justice","غرامات مخالفات السير","traffic fine","traffic violation","license plate","رقم اللوحة"]);
+let EmailData = EmailUrlInfo
+| where UrlDomain has_any (ironTollDomains)
+| join kind=inner (EmailEvents | where Subject has_any (trafficFineKeywords)) on NetworkMessageId
+| project TimeGenerated, SenderFromAddress, RecipientEmailAddress, Subject, Url, UrlDomain, NetworkMessageId;
+let ClickData = UrlClickEvents
+| where Url has_any (ironTollDomains)
+| project TimeGenerated, AccountUpn, Url, ActionType, IsClickedThrough, NetworkMessageId;
+EmailData
+| union ClickData
+| sort by TimeGenerated desc
