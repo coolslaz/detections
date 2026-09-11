@@ -1,0 +1,24 @@
+let TimeWindow = 2m;
+DeviceProcessEvents
+| where FileName in~ ("setup.sh", "sh", "bash")
+| where ProcessCommandLine has "setup.sh"
+| project DeviceId, ScriptTime = TimeGenerated
+| join kind=inner (
+    DeviceFileEvents
+    | where FolderPath has_any ("/tmp/", "/var/tmp/", "/dev/shm/")
+    | where FileName startswith "."
+    | where FileName matches regex @"^\.[A-Za-z0-9_-]+$"
+    | where ActionType == "FileCreated"
+    | project DeviceId, HiddenFileCreatedTime = TimeGenerated, HiddenFileName = FileName, HiddenFolderPath = FolderPath
+) on DeviceId
+| where HiddenFileCreatedTime between (ScriptTime .. (ScriptTime + TimeWindow))
+| join kind=inner (
+    DeviceFileEvents
+    | where ActionType == "FileDeleted"
+    | where FileName matches regex @"^redtail\.(x86_64|arm7|arm8|i686|riscv)$"
+    | project DeviceId, DeletedTime = TimeGenerated, DeletedFileName = FileName, DeletedFolderPath = FolderPath
+) on DeviceId
+| where DeletedTime between (ScriptTime .. (ScriptTime + TimeWindow))
+| where abs(datetime_diff('second', DeletedTime, HiddenFileCreatedTime)) <= 120
+| project ScriptTime, DeviceId, HiddenFileCreatedTime, HiddenFileName, HiddenFolderPath, DeletedTime, DeletedFileName, DeletedFolderPath
+| sort by ScriptTime asc
