@@ -1,0 +1,1 @@
+alert dns any any -> any any (msg:"GRAYRABBIT C2 DNS query for mail.uaiubifas.top"; flow:to_server; dns.query; content:"mail.uaiubifas.top"; nocase; fast_pattern; startswith; endswith; metadata: author Arnold Chan, technique Non-Standard_Port, tactic Command_and_Control, attack_id T1095; classtype:trojan-activity; sid:1000101; rev:2;)
