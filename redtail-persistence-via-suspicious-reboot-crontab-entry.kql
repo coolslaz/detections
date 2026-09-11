@@ -1,0 +1,20 @@
+let SuspiciousPathRegex = @"(/tmp/|/var/tmp/|/dev/shm/|/\.[a-zA-Z0-9_.-]+)";
+let ObfuscationRegex = @"(base64\s+-d|base64\s+--decode|echo\s+[A-Za-z0-9+/=]{20,}\s*\|\s*base64|openssl\s+enc|\$(base64|eval\s*\$(|xxd\s+-r)))";
+let ProcessActivity = DeviceProcessEvents
+| where FileName in~ ("crontab", "sh", "bash")
+| where FolderPath has_any ("/var/spool/cron/crontabs", "/etc/crontab") or ProcessCommandLine has "/var/spool/cron/crontabs"
+| where ProcessCommandLine has "@reboot"
+// covers root crontab and per-user crontabs under /var/spool/cron/crontabs/<user>
+| where ProcessCommandLine matches regex @"/var/spool/cron/crontabs/(root|[a-zA-Z0-9_.-]+)" or ProcessCommandLine has "/etc/crontab"
+// reduce FPs: legitimate @reboot entries for backup/maintenance are common; require the crontab command to reference a suspicious path (/tmp, /var/tmp, /dev/shm, or a hidden dot-prefixed filename) or contain base64/obfuscation syntax
+| where ProcessCommandLine matches regex SuspiciousPathRegex or ProcessCommandLine matches regex ObfuscationRegex
+| extend CrontabTarget = extract(@"/var/spool/cron/crontabs/([a-zA-Z0-9_.-]+)", 1, ProcessCommandLine)
+| project TimeGenerated, DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, CrontabTarget, AccountName, ActionType = "ProcessExecuted", FolderPath = "N/A", InitiatingProcessAccountName = "N/A";
+let FileActivity = DeviceFileEvents
+| where FolderPath has_any ("/var/spool/cron/crontabs", "/etc/crontab")
+| where ActionType in ("FileCreated", "FileModified", "FileDeleted", "FileRenamed")
+| where FileName matches regex SuspiciousPathRegex or FileName matches regex ObfuscationRegex
+| project TimeGenerated, DeviceId, DeviceName, InitiatingProcessFileName = "N/A", InitiatingProcessCommandLine = "N/A", FileName, ProcessCommandLine = "N/A", CrontabTarget = "N/A", AccountName = "N/A", ActionType, FolderPath, InitiatingProcessAccountName;
+ProcessActivity
+| union FileActivity
+| sort by TimeGenerated asc
