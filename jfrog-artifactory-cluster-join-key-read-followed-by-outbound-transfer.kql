@@ -1,0 +1,28 @@
+// Detects read access to Artifactory system.yaml/join key configuration followed by unexpected outbound network activity
+let lookback = 1d;
+let joinKeyAccess = DeviceFileEvents
+| where TimeGenerated > ago(lookback)
+| where ActionType in ("FileOpened", "FileRead")
+| where FileName has_any ("system.yaml", "join.key", "joinKey")
+| where FolderPath has_any ("artifactory", "jfrog")
+| project JoinKeyTime = TimeGenerated, DeviceId, DeviceName, FileName, FolderPath, InitiatingProcessAccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessId;
+let joinKeyApiAccess = DeviceProcessEvents
+| where TimeGenerated > ago(lookback)
+| where ProcessCommandLine has_any ("api/system/configuration", "joinKey", "join.key", "system.yaml")
+| where InitiatingProcessFolderPath has_any ("artifactory", "jfrog")
+| project ApiTime = TimeGenerated, DeviceId, DeviceName, ProcessCommandLine, AccountName = InitiatingProcessAccountName, FileName = FileName, InitiatingProcessId;
+let suspiciousOutbound = DeviceNetworkEvents
+| where TimeGenerated > ago(lookback)
+| where ActionType == "ConnectionSuccess"
+| where RemoteIPType == "Public"
+| where not(RemoteUrl has_any ("jfrog.io", "bintray.com", "jcenter.bintray.com", "repo.jfrog.org", "releases.jfrog.io"))
+| project OutTime = TimeGenerated, DeviceId, DeviceName, RemoteIP, RemoteUrl, RemotePort, InitiatingProcessFileName, InitiatingProcessId;
+joinKeyAccess
+| join kind=inner (suspiciousOutbound) on DeviceId, InitiatingProcessId
+| where OutTime between (JoinKeyTime .. (JoinKeyTime + 15m))
+| project JoinKeyTime, OutTime, DeviceId, DeviceName, FileName, FolderPath, InitiatingProcessAccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteIP, RemoteUrl, RemotePort
+| union (joinKeyApiAccess
+| join kind=inner (suspiciousOutbound) on DeviceId, InitiatingProcessId
+| where OutTime between (ApiTime .. (ApiTime + 15m))
+| project JoinKeyTime = ApiTime, OutTime, DeviceId, DeviceName, FileName, FolderPath = "", InitiatingProcessAccountName = AccountName, InitiatingProcessFileName, InitiatingProcessCommandLine = ProcessCommandLine, RemoteIP, RemoteUrl, RemotePort)
+| sort by JoinKeyTime desc
