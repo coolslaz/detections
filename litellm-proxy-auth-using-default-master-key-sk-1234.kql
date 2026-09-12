@@ -1,0 +1,10 @@
+// Detects authentication to a LiteLLM proxy using the known default master key (sk-1234), consistent with
+// exploitation of instances left with the default credential (present in ~9.6% of scanned internet-facing
+// deployments per Wiz research). Narrowed to actual credential usage (Bearer sk-1234) rather than any bare
+// reference to the string or generic unauthenticated requests, which produced excessive noise.
+ContainerLogV2
+| where TimeGenerated > ago(1d)
+| where PodName has "litellm" or ContainerName has "litellm"
+| where LogMessage has "Bearer sk-1234"
+| project TimeGenerated, PodName, ContainerName, LogMessage
+| sort by TimeGenerated desc
