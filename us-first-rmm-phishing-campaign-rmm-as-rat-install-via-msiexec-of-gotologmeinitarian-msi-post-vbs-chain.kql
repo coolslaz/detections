@@ -1,0 +1,15 @@
+DeviceProcessEvents
+| where FileName =~ "msiexec.exe"
+| where ProcessCommandLine has_any ("MSILogMeInResolve_Unattended.msi", "LogMeInResolve_Unattended.msi", "GoToResolve", "LogMeInRescue", "ITarian", "GotoResolve", "LOGMEINRESCUE")
+// silent/unattended install flags used by the phishing-kit VBS dropper (opp-4) - require BOTH quiet and no-restart together, not just one generic flag
+| where (ProcessCommandLine has_any ("/quiet", "/qn") and ProcessCommandLine has "/norestart")
+// installer staged in a user-writable temp/download path, not a software distribution cache
+| where ProcessCommandLine matches regex @"(?i)\\(temp|appdata\\local\\temp|downloads|users\\public)\\"
+| where InitiatingProcessFileName in~ ("wscript.exe", "cscript.exe", "powershell.exe")
+// correlate: the calling script itself must also be running out of the same user-writable temp/download staging area (archive-extraction pattern, opp-3/opp-16), not a legitimate script share
+| where InitiatingProcessFolderPath matches regex @"(?i)\\(temp|appdata\\local\\temp|downloads|users\\public)\\"
+// exclude legitimate managed-software deployment paths (SCCM/Intune/ConfigMgr) to cut FPs
+| where not(InitiatingProcessFolderPath has_any ("ccmcache", "ccm\\", "configuration manager", "microsoft intune", "intunemanagementextension"))
+| where not(ProcessCommandLine has_any ("ccmcache", "ccm\\", "configuration manager"))
+| project TimeGenerated, DeviceId, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessFolderPath
+| sort by TimeGenerated desc
