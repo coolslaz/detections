@@ -1,0 +1,24 @@
+// Detect urgent ACH/wire redirection requests sent to finance/accounts-payable staff
+// consistent with BEC payment fraud lacking out-of-band verification
+EmailEvents
+| where TimeGenerated > ago(7d)
+| where RecipientEmailAddress has_any ("ap@", "accountspayable@", "accounts-payable@", "finance@", "payments@", "treasury@")
+| where Subject has_any ("ACH", "wire transfer", "wire payment", "payment update", "banking details", "remittance", "invoice", "urgent payment", "payment due")
+| where Subject has_any ("urgent", "asap", "immediately", "today", "due")
+| join kind=leftouter (
+    EmailAttachmentInfo
+    | where TimeGenerated > ago(7d)
+) on NetworkMessageId
+| extend PossibleAmount = extract(@"\$?\s?([4-9][0-9],[0-9]{3}(\.[0-9]{2})?)", 1, Subject)
+| extend ReplyToAddress = tostring(parse_json(AdditionalFields).ReplyToAddress)
+| extend ReplyToDomain = tostring(split(ReplyToAddress, "@")[1])
+// Require concrete fraud evidence: a dollar-amount pattern in the subject, or a Reply-To domain
+// that differs from the From domain (classic BEC reply-hijack indicator)
+| where isnotempty(PossibleAmount) or (isnotempty(ReplyToDomain) and ReplyToDomain != SenderFromDomain)
+| where SenderFromDomain != RecipientDomain
+// Distinguish fraud from routine external vendor billing: sender display name impersonates an
+// internal executive or a known vendor (e.g. ServiceNow) while the sending domain is unaffiliated,
+// OR the Reply-To domain diverges from the From domain
+| where SenderDisplayName has_any ("ServiceNow", "CEO", "CFO", "President", "Controller", "Finance", "Treasurer") or (isnotempty(ReplyToDomain) and ReplyToDomain != SenderFromDomain)
+| project TimeGenerated, SenderDisplayName, SenderFromAddress, SenderFromDomain, ReplyToAddress, ReplyToDomain, RecipientEmailAddress, RecipientDomain, Subject, PossibleAmount, FileName, ThreatTypes, NetworkMessageId
+| sort by TimeGenerated desc
