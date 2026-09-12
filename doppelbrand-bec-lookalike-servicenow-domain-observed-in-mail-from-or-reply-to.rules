@@ -1,0 +1,11 @@
+alert smtp any any -> $HOME_NET any (msg:"DoppelBrand: BEC lookalike ServiceNow domain observed in MAIL FROM or Reply-To"; flow:to_server,established; content:"service-nowinc.com"; nocase; pcre:"/^(MAIL FROM|Reply-To)\s*:[^\r\n]*service-nowinc\.com/mi"; classtype:trojan-activity; metadata: author Arnold Chan, mitre_technique_id T1583.001, mitre_technique_id T1566.002, mitre_technique_id T1585.002; sid:1000101; rev:2;)
+
+alert smtp any any -> $HOME_NET any (msg:"BEC lookalike domainlify.net observed in MAIL FROM or Reply-To"; flow:to_server,established; content:"domainlify.net"; nocase; pcre:"/^(MAIL FROM|Reply-To)\s*:[^\r\n]*domainlify\.net/mi"; classtype:trojan-activity; metadata: author detections.ai, mitre_technique_id T1583.001, mitre_technique_id T1566.002, mitre_technique_id T1585.002; sid:1000102; rev:2;)
+
+alert dns any any -> any any (msg:"DNS query for BEC lookalike ServiceNow domain service-nowinc.com"; dns.query; content:"service-nowinc.com"; nocase; classtype:trojan-activity; metadata: author detections.ai, mitre_technique_id T1583.001, mitre_technique_id T1585.002; sid:1000103; rev:1;)
+
+alert dns any any -> any any (msg:"DNS query for BEC lookalike domain domainlify.net"; dns.query; content:"domainlify.net"; nocase; classtype:trojan-activity; metadata: author detections.ai, mitre_technique_id T1583.001, mitre_technique_id T1585.002; sid:1000104; rev:1;)
+
+alert tls any any -> any any (msg:"TLS SNI match for BEC lookalike ServiceNow domain service-nowinc.com"; tls.sni; content:"service-nowinc.com"; nocase; classtype:trojan-activity; metadata: author detections.ai, mitre_technique_id T1583.001, mitre_technique_id T1585.002; sid:1000105; rev:1;)
+
+alert tls any any -> any any (msg:"TLS SNI match for BEC lookalike domain domainlify.net"; tls.sni; content:"domainlify.net"; nocase; classtype:trojan-activity; metadata: author detections.ai, mitre_technique_id T1583.001, mitre_technique_id T1585.002; sid:1000106; rev:1;)
