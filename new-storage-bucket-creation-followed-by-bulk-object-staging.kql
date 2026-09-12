@@ -1,0 +1,22 @@
+// Detect creation of a new cloud storage bucket followed shortly by a burst of large object uploads (in-victim exfiltration staging)
+// Tuning rationale: routine CI/CD deploys, IaC provisioning, and data-lake ingestion commonly create a bucket and
+// bulk-upload dozens-to-hundreds of objects within minutes, so a low PutObject threshold over a wide window is noisy.
+// This version raises the threshold, tightens the correlation window to 2h, excludes AWS-service-principal bucket
+// creations (e.g. CloudTrail/Config log-delivery buckets), and requires the upload burst to be both narrow in source
+// IP diversity and attributable to the same identity that created the bucket -- consistent with a single scripted actor.
+let BucketCreations = AWSCloudTrail
+| where EventName == "CreateBucket"
+| where UserIdentityType != "AWSService"
+| project CreationTime = TimeGenerated, BucketName = tostring(RequestParameters.bucketName), CreatorIdentity = UserIdentityArn, CreatorAccountId = RecipientAccountId, SourceIPCreate = SourceIpAddress;
+let PutBursts = AWSCloudTrail
+| where EventName == "PutObject"
+| extend BucketName = tostring(RequestParameters.bucketName)
+| summarize PutCount = count(), DistinctUploaders = dcount(UserIdentityArn), DistinctIPCount = dcount(SourceIpAddress), FirstPut = min(TimeGenerated), LastPut = max(TimeGenerated), SourceIPs = make_set(SourceIpAddress, 10), UploaderIdentities = make_set(UserIdentityArn, 5) by BucketName, RecipientAccountId;
+BucketCreations
+| join kind=inner (PutBursts) on BucketName
+| where FirstPut between (CreationTime .. (CreationTime + 2h))
+| where PutCount > 200
+| where DistinctIPCount <= 3
+| where set_has_element(UploaderIdentities, CreatorIdentity)
+| project CreationTime, BucketName, CreatorIdentity, CreatorAccountId, SourceIPCreate, PutCount, DistinctUploaders, DistinctIPCount, FirstPut, LastPut, SourceIPs
+| sort by PutCount desc
