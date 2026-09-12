@@ -1,0 +1,11 @@
+// Tightened: dropped the TokenElevationTypeDefault OR-branches. That's a Windows UAC token-elevation
+// state, not a Linux root-privilege indicator -- "Default" is the normal elevation type for nearly all
+// ordinary processes, so it matched almost everything. Now requires the AND-combination of a known
+// LiteLLM parent process, a shell/id child process, and an actual root account.
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where InitiatingProcessFileName in~ ("uvicorn", "litellm", "python", "python3")
+| where FileName in~ ("sh", "bash", "id")
+| where AccountName in~ ("root")
+| where ProcessCommandLine has_any ("id", "/bin/sh", "/bin/bash")
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, AccountName, InitiatingProcessAccountName
