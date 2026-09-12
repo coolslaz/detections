@@ -1,0 +1,7 @@
+DeviceProcessEvents
+| where FileName =~ "bun.exe" or FileName =~ "bun"
+| where ProcessCommandLine has "run index.js"
+| where ProcessCommandLine has "node_modules" or InitiatingProcessFolderPath has "node_modules"
+| where InitiatingProcessFileName in~ ("npm.exe", "npm", "node.exe", "node", "cmd.exe", "sh", "bash")
+| where InitiatingProcessCommandLine matches regex "(?i)\\bnpm(\\.exe|\\.cmd)?\\s+(install|i|ci)\\b" or InitiatingProcessCommandLine has "preinstall"
+| project TimeGenerated, DeviceId, DeviceName, FileName, ProcessCommandLine, FolderPath, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, AccountName
