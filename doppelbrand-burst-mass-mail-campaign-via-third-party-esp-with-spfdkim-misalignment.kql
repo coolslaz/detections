@@ -1,0 +1,16 @@
+// Detect high-volume burst phishing sends routed through third-party bulk email infrastructure
+// with SPF/DKIM alignment anomalies, consistent with Operation DoppelBrand-style mass mailing
+// Requires combined auth-failure + burst/mass-send evidence to reduce false positives from
+// legitimate high-volume senders with auth misconfigurations
+let KnownESPSenders = dynamic(["uinsure.co.uk","tivityhealth.com","lumalisboa.com","mctci.com","nuf.co.jp","lohnsteuerhilfe-aktuell-verein.de","tovimbatista.pt","eemusicclass.co.uk","lifeones.com"]);
+let EmailCountThreshold = 10000;
+let DistinctRecipientsThreshold = 500;
+EmailEvents
+| where TimeGenerated > ago(7d)
+| extend SenderDomainLower = tolower(SenderFromDomain)
+| extend AuthDetails = parse_json(AuthenticationDetails)
+| extend SPFResult = tostring(AuthDetails.SPF), DKIMResult = tostring(AuthDetails.DKIM), DMARCResult = tostring(AuthDetails.DMARC)
+| where SenderDomainLower has_any (KnownESPSenders) or SPFResult !~ "Pass" or DKIMResult !~ "Pass" or DMARCResult !~ "Pass"
+| summarize EmailCount = count(), DistinctRecipients = dcount(RecipientEmailAddress), DistinctOrgs = dcount(RecipientObjectId) by SenderDomainLower, SPFResult, DKIMResult, DMARCResult, TimeBucket = bin(TimeGenerated, 1h)
+| where EmailCount > EmailCountThreshold and DistinctRecipients >= DistinctRecipientsThreshold
+| sort by TimeBucket asc, EmailCount desc
