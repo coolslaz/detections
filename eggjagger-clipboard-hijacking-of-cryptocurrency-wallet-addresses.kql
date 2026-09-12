@@ -1,0 +1,12 @@
+// Detects clipboard access/modification events where content is altered to contain cryptocurrency wallet address patterns, consistent with EggJagger clipjacking behavior
+DeviceEvents
+| where ActionType has "Clipboard"
+| extend ClipboardContent = tostring(AdditionalFields.ClipboardData)
+| where isnotempty(ClipboardContent)
+| where ClipboardContent matches regex @"^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}$" // Bitcoin address pattern
+    or ClipboardContent matches regex @"^0x[a-fA-F0-9]{40}$" // Ethereum address pattern
+| where InitiatingProcessFileName !in~ ("electrum.exe", "exodus.exe", "metamask.exe", "keepass.exe", "keepassxc.exe", "bitwarden.exe", "1password.exe", "ledger live.exe", "ledgerlive.exe", "trezor bridge.exe", "trezor-bridge.exe", "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe")
+| extend TimeBucket = bin(TimeGenerated, 10m)
+| summarize ClipboardWrites = count(), DistinctAddresses = dcount(ClipboardContent), Addresses = make_set(ClipboardContent, 20), Timestamps = make_list(TimeGenerated, 20) by DeviceId, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessId, TimeBucket
+| where DistinctAddresses >= 2 // at least 2 distinct wallet-address-like strings from the same process within a 10-minute window, indicating monitor-and-replace behavior rather than manual copying
+| project DeviceId, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessId, TimeBucket, ClipboardWrites, DistinctAddresses, Addresses, Timestamps
