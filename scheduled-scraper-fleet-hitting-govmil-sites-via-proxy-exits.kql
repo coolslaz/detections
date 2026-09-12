@@ -1,0 +1,31 @@
+// Detects a standing fleet of scheduled scraping agents targeting government/military domains
+// through commercial proxy exit nodes with anti-bot bypass (browser-automation / headless clients)
+let timeWindow = 1d;
+let govMilPattern = @"(\.[gG][oO][vV]$|\.[gG][oO][vV]\.|\.[mM][iI][lL]$|\.[mM][iI][lL]\.)";
+let botLikeUA = dynamic(["headlessChrome","puppeteer","playwright","scrapy"]);
+let ScrapeActivity = DeviceNetworkEvents
+| where TimeGenerated > ago(timeWindow)
+| where RemoteUrl matches regex govMilPattern or RemoteIPType == "Public"
+| where isnotempty(RemoteUrl)
+| where RemoteUrl matches regex govMilPattern
+| extend HourBucket = bin(TimeGenerated, 1h)
+| summarize RequestCount = count(),
+            DistinctDomains = dcount(RemoteUrl),
+            DistinctSourceIPs = dcount(LocalIP),
+            HourlyBuckets = dcount(HourBucket),
+            SampleUrls = make_set(RemoteUrl, 10),
+            LatestTime = max(TimeGenerated)
+          by DeviceId, RemotePort, bin(TimeGenerated, timeWindow);
+ScrapeActivity
+| where HourlyBuckets >= 6
+| where RequestCount > 250
+| where DistinctDomains >= 10
+| join kind=inner (
+    DeviceNetworkEvents
+    | where TimeGenerated > ago(timeWindow)
+    | where InitiatingProcessCommandLine has_any (botLikeUA)
+    | project DeviceId, InitiatingProcessCommandLine, RemoteIP
+) on DeviceId
+| summarize arg_max(LatestTime, *) by DeviceId, RemotePort
+| project TimeGenerated = LatestTime, DeviceId, RemotePort, RequestCount, DistinctDomains, DistinctSourceIPs, HourlyBuckets, SampleUrls, InitiatingProcessCommandLine, RemoteIP
+| sort by RequestCount desc
