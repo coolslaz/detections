@@ -1,0 +1,15 @@
+// Detects LiteLLM session JWTs issued or validated using the default master key sk-1234 as the HS256 signing secret
+// Evidence: LiteLLM uses the master key as the static HS256 secret for signing session JWTs; default sk-1234 allows forging arbitrary user sessions
+// Assumes the LiteLLM proxy runs as a container with access/audit logging to stdout, ingested via Azure
+// Monitor Container Insights into ContainerLogV2 (the original 'customlog' table did not exist).
+// Tightened to require HS256 AND the literal default key co-occurring on an auth/session endpoint log
+// line, rather than matching either condition alone.
+ContainerLogV2
+| where TimeGenerated > ago(1d)
+| where ContainerName has "litellm"
+| where LogMessage has_any ("/login", "/session", "/sso", "/auth", "/user/session")
+| where LogMessage has "HS256"
+| where LogMessage has "sk-1234"
+| extend SessionId = extract(@"session[_-]?id\s*[:=]\s*([A-Za-z0-9\-]+)", 1, LogMessage)
+| project TimeGenerated, PodName, ContainerName, SessionId, LogMessage
+| sort by TimeGenerated desc
