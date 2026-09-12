@@ -1,0 +1,1 @@
+(event.type = 'Email' AND src.ip.address matches '^160\.79\.(10[4-9]|11[0-1])\.') OR (event.type = 'Identity' AND event.login.ipAddress matches '^160\.79\.(10[4-9]|11[0-1])\.') OR (event.type = 'Network' AND dst.ip.address matches '^160\.79\.(10[4-9]|11[0-1])\.') OR (event.type = 'CloudAudit' AND src.ip.address matches '^160\.79\.(10[4-9]|11[0-1])\.')
