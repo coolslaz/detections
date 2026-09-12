@@ -1,0 +1,1 @@
+(index=email_index earliest=-30d) | where cidrmatch("160.79.104.0/21", SenderIPv4) | append [ search (index=entra_index OR index=device_network_index OR index=graph_api_index OR index=cloud_app_index) earliest=-30d | where cidrmatch("160.79.104.0/21", IPAddress) OR cidrmatch("160.79.104.0/21", RemoteIP) OR cidrmatch("160.79.104.0/21", IpAddress) ]
