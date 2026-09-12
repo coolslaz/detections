@@ -1,0 +1,9 @@
+AWSCloudTrail
+| where EventSource == "s3.amazonaws.com"
+| where EventName in ("PutObject", "CompleteMultipartUpload")
+| where UserAgent has "rclone"
+| extend ObjectKey = tostring(parse_json(RequestParameters).key)
+| summarize PutCount = count(), DistinctKeys = dcount(ObjectKey), UserAgent = any(UserAgent), EventName = any(EventName) by UserIdentityArn, SourceIpAddress, TimeGenerated = bin(TimeGenerated, 1h)
+| where PutCount > 20
+| project TimeGenerated, UserIdentityArn, SourceIpAddress, UserAgent, EventName, PutCount, DistinctKeys
+| sort by TimeGenerated desc
