@@ -1,0 +1,17 @@
+// Detects requests reaching a LiteLLM proxy that are assigned the PROXY_ADMIN role despite missing/absent authentication credentials
+// Indicates the proxy has no master_key configured, causing LiteLLM's auth handler to globally grant PROXY_ADMIN to every request
+// Tightened: dropped the broad substring match (AdditionalExtensions has "PROXY_ADMIN") in favor of the
+// parsed field only, and fixed non-existent AuthorizationHeader/RequestProtocol/UserAgent CommonSecurityLog
+// columns by reading the credential/role fields from the structured AdditionalExtensions payload.
+CommonSecurityLog
+| where DeviceVendor == "LiteLLM"
+| where isnotempty(RequestURL)
+| extend AssignedRole = tostring(parse_json(AdditionalExtensions).AssignedRole)
+| extend AuthHeader = tostring(parse_json(AdditionalExtensions).AuthorizationHeader)
+| extend JwtToken = tostring(parse_json(AdditionalExtensions).JwtToken)
+| extend OAuth2Token = tostring(parse_json(AdditionalExtensions).OAuth2Token)
+| where AssignedRole =~ "PROXY_ADMIN"
+| where isempty(AuthHeader)
+| where isempty(JwtToken) and isempty(OAuth2Token)
+| project TimeGenerated, SourceIP, RequestURL, Protocol, AssignedRole, AuthHeader
+| sort by TimeGenerated desc
