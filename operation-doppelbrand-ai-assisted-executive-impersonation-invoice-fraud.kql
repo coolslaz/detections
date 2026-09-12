@@ -1,0 +1,44 @@
+// Operation DoppelBrand - AI-assisted executive impersonation and invoice fraud detection
+// MITRE ATT&CK: T1566, T1566.001, T1566.003, T1036, T1656, T1657, T1583.001, T1585.002
+let knownFraudDomains = dynamic(["service-nowinc.com", "domainlify.net"]);
+let knownFraudSenders = dynamic([
+ "gomez@service-nowinc.com",
+ "notifications@uinsure.co.uk",
+ "info@tivityhealth.com",
+ "no-reply@lumalisboa.com",
+ "noreply@mctci.com",
+ "info@nuf.co.jp",
+ "info@lohnsteuerhilfe-aktuell-verein.de",
+ "info@tovimbatista.pt",
+ "contact@eemusicclass.co.uk",
+ "info@lifeones.com"
+]);
+// Two independent lure-phrase categories must BOTH be present (co-occurrence), not any single generic word,
+// since "invoice"/"payment"/"approved" alone are extremely common in legitimate business email.
+let paymentTermsRegex = @"(?i)\b(ach|wire transfer|due bill|bank transfer)\b";
+let invoiceTermsRegex = @"(?i)\b(invoice|subscription|payment approved|please process)\b";
+let execTitles = dynamic(["CEO", "CFO", "President", "Chief Executive Officer", "Chief Financial Officer"]);
+// Allowlist: internal/trusted sending domains to exclude from the heuristic branch (edit for your org).
+let trustedDomains = dynamic([]);
+// Branch 1: exact match on known DoppelBrand IOC domains or sender addresses
+let KnownIOCHits = EmailEvents
+| where SenderFromAddress in~ (knownFraudSenders)
+ or SenderFromDomain in~ (knownFraudDomains)
+| extend DetectionReason = "Known Operation DoppelBrand IOC (domain or sender address match)";
+// Branch 2: heuristic - executive impersonation display name + financial lure subject + reply-to lookalike domain
+let HeuristicHits = EmailEvents
+| where SenderDisplayName has_any (execTitles)
+| where Subject matches regex paymentTermsRegex and Subject matches regex invoiceTermsRegex
+| extend EnvelopeDomain = tostring(split(SenderMailFromAddress, "@")[1])
+| where isnotempty(EnvelopeDomain) and isnotempty(SenderFromDomain)
+ // Real P1/P2 mismatch only — exclude legitimate subdomain relationships (e.g. mail.contoso.com vs contoso.com)
+ // that commonly arise from ESPs/bulk-mail infra and would otherwise be noisy false positives.
+ and EnvelopeDomain != SenderFromDomain
+ and not(EnvelopeDomain endswith strcat(".", SenderFromDomain))
+ and not(SenderFromDomain endswith strcat(".", EnvelopeDomain))
+ and SenderFromDomain !in~ (trustedDomains)
+ and EnvelopeDomain !in~ (trustedDomains)
+| extend DetectionReason = "Executive display name + co-occurring ACH/wire + invoice lure terms + genuine envelope/header sender domain mismatch (P1/P2)";
+union KnownIOCHits, HeuristicHits
+| project Timestamp, SenderFromAddress, SenderFromDomain, SenderMailFromAddress, SenderDisplayName, RecipientEmailAddress, Subject, DetectionReason
+| sort by Timestamp desc
