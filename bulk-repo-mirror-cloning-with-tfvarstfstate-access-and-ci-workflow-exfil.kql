@@ -1,0 +1,23 @@
+// Detects estate-scale repository mirror-cloning combined with repeated secret-file targeting (tfvars/tfstate) and repeated CI workflow exfiltration
+// Excludes known CI/CD service accounts and backup/migration automation identities that legitimately clone/mirror many repos on a schedule
+let KnownAutomationAccounts = dynamic([]); // populate with AccountObjectId values of approved CI/CD, backup, and migration automation identities
+CloudAppEvents
+| where TimeGenerated > ago(1d)
+| where Application has_any ("GitHub", "GitLab", "Bitbucket", "Azure DevOps")
+| where AccountObjectId !in (KnownAutomationAccounts)
+| extend FileNameLower = tolower(tostring(RawEventData.ObjectName))
+| extend ActionTypeLower = tolower(ActionType)
+| where ActionTypeLower has_any ("clone", "mirror", "download_zip", "repo.download", "git.clone", "repository.export")
+   or FileNameLower has_any (".tfvars", ".tfstate", "terraform.tfstate", "secrets.tfvars")
+   or (ActionTypeLower has_any ("workflow", "actions.run", "ci.job") and ActionTypeLower has_any ("download", "export", "artifact"))
+| summarize
+    RepoActions = count(),
+    DistinctRepos = dcount(tostring(RawEventData.RepositoryName)),
+    TfSecretHits = countif(FileNameLower has_any (".tfvars", ".tfstate")),
+    WorkflowExfilHits = countif(ActionTypeLower has_any ("workflow", "actions.run", "ci.job") and ActionTypeLower has_any ("download", "export", "artifact")),
+    ActionsSample = make_set(ActionType, 10),
+    RepoSample = make_set(tostring(RawEventData.RepositoryName), 10)
+    by AccountObjectId, AccountDisplayName, IPAddress, bin(TimeGenerated, 1h)
+| where DistinctRepos >= 20 or TfSecretHits >= 5 or WorkflowExfilHits >= 5
+| where RepoActions >= 15
+| sort by DistinctRepos desc
