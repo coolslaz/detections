@@ -1,0 +1,30 @@
+// Detects SSRF-driven access to cloud instance metadata service (IMDS) or ECS task-metadata endpoints
+// from web server/application runtime processes (SSRF-shaped access) to steal temporary credentials
+// Excludes known legitimate metadata-client agents and requires repeated access from an unexpected process
+let IMDSAddresses = dynamic(["169.254.169.254"]);
+let LegitimateMetadataClients = dynamic(["ssm-agent", "amazon-ssm-agent", "kubelet", "cloud-init", "waagent", "WALinuxAgent", "ecs-agent"]);
+let SsrfShapedProcesses = dynamic(["w3wp.exe", "java", "java.exe", "node", "node.exe", "python", "python.exe", "python3", "httpd", "httpd.exe", "nginx", "nginx.exe", "tomcat", "tomcat.exe", "php-fpm", "chrome.exe", "msedge.exe", "firefox.exe"]);
+union isfuzzy=true
+(
+    DeviceNetworkEvents
+    | where RemoteIP in (IMDSAddresses)
+    | where RemoteUrl has_any ("latest/meta-data", "latest/api/token", "v1/credentials", "v2/credentials", "task-metadata") or isempty(RemoteUrl)
+    | where not(InitiatingProcessFileName has_any (LegitimateMetadataClients))
+    | where InitiatingProcessFileName has_any (SsrfShapedProcesses)
+    | extend Indicator = "IMDS/task-metadata network connection", Actor = InitiatingProcessFileName
+    | project Timestamp, DeviceId, DeviceName, ActionType, RemoteIP, RemoteUrl, Actor, Indicator
+),
+(
+    CloudAppEvents
+    | where isnotempty(RawEventData)
+    | where RawEventData has "169.254.169.254"
+    | where RawEventData has_any ("latest/meta-data", "latest/api/token", "v1/credentials", "v2/credentials", "task-metadata")
+    | where not(RawEventData has_any (LegitimateMetadataClients))
+    | where RawEventData has_any (SsrfShapedProcesses)
+    | extend Indicator = "IMDS/task-metadata request via cloud app event", Actor = tostring(RawEventData)
+    | project Timestamp, DeviceId="", DeviceName=Application, ActionType=ActionType, RemoteIP="169.254.169.254", RemoteUrl=Actor, Actor, Indicator
+)
+| where Indicator has_any ("IMDS", "task-metadata")
+| summarize FirstSeen = min(Timestamp), LastSeen = max(Timestamp), Requests = count(), RemoteUrls = make_set(RemoteUrl, 10), Actors = make_set(Actor, 10) by DeviceId, DeviceName, RemoteIP
+| where Requests >= 5
+| sort by LastSeen desc
