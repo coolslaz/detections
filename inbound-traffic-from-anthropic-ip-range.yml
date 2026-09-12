@@ -1,0 +1,27 @@
+title: Inbound Traffic from Anthropic IP Range
+status: experimental
+description: Detects inbound traffic, sign-ins, and email activity originating from the
+  Anthropic IP range 160.79.104.0/21.
+logsource:
+    category: network_traffic
+    product: cloud
+detection:
+    selection_entra:
+        EventID: SignIn
+        IPAddress|cidr: '160.79.104.0/21'
+    selection_network:
+        ActionType: 'InboundConnectionAccepted'
+        RemoteIP|cidr: '160.79.104.0/21'
+    selection_graph:
+        IpAddress|cidr: '160.79.104.0/21'
+    selection_m365:
+        IPAddress|cidr: '160.79.104.0/21'
+    selection_email:
+        SenderIPv4|cidr: '160.79.104.0/21'
+    condition: selection_entra or selection_network or selection_graph or selection_m365 or selection_email
+level: medium
+falsepositives:
+  - Legitimate use of Anthropic API services by organizational employees or
+    developers.
+  - Authorized third-party integrations or cloud services that proxy traffic through
+    Anthropic infrastructure.
