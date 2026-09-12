@@ -1,0 +1,30 @@
+// Title: Host-Based Burst of 'oai'-Branded Gem Push Commands (GemStuffer Campaign)
+// REBUILT: pivoted off RubyGems' own audit/publish logs (not ingested in this environment) onto
+// the requesting host's endpoint telemetry instead - detects a single device/account invoking the
+// 'gem push' CLI in a high-velocity burst against 'oai'-branded package files. This is the host-side
+// observable equivalent of the same behavior; DeviceProcessEvents is a native, schema-recognized table.
+// NOTE: this necessarily drops the original ContactEmail/KnownContactEmail signal - an account's
+// RubyGems-registered contact email is server-side metadata with no equivalent in process telemetry.
+DeviceProcessEvents
+| where TimeGenerated > ago(2d)
+| where FileName in~ ("gem", "gem.cmd", "gem.bat", "gem.exe")
+| where ProcessCommandLine matches regex @"(?i)(^|\s)push(\s|$)"
+// Same bounded-token 'oai' matching as before: requires a distinct token at a - _ or string edge,
+// or an explicit 'openai' mention, instead of a bare substring that also matches unrelated words.
+| where ProcessCommandLine matches regex @"(?i)([-_/\\]|^)(chat)?oai([-_.]|$)" or ProcessCommandLine has "openai"
+| extend GemFile = extract(@"push\s+([^\s]+\.gem)", 1, ProcessCommandLine)
+| summarize
+ PublishCount = count(),
+ DistinctGemFiles = dcount(GemFile),
+ SampleCommandLines = make_set(ProcessCommandLine, 20),
+ FirstSeen = min(TimeGenerated),
+ LastSeen = max(TimeGenerated)
+ by DeviceId, DeviceName, AccountName
+// Same AND-based burst thresholds as before: volume AND package diversity, not either alone -
+// filters out a single legitimate account/CI job pushing many versions of ONE package.
+| where PublishCount >= 20 and DistinctGemFiles >= 10
+// Burst window tightened to 6h - a real automated-agent burst is concentrated in minutes/hours,
+// not spread evenly across the full 2-day lookback.
+| where datetime_diff('hour', LastSeen, FirstSeen) <= 6
+| project DeviceId, DeviceName, AccountName, PublishCount, DistinctGemFiles, SampleCommandLines, FirstSeen, LastSeen
+| sort by PublishCount desc
