@@ -1,0 +1,52 @@
+// Detects scheduled, non-interactive scraper jobs that fire without operator interaction,
+// generate high-volume periodic outbound requests to many distinct external hosts (news/social/forum sources),
+// stage collected output with no human in the loop, AND exhibit confirmed anti-bot/proxy-rotation bypass behavior.
+// Thresholds raised to exclude routine scheduled system activity (OS update checks, telemetry/monitoring agents,
+// backup software, package managers, CDN/NTP sync) that legitimately contacts many distinct hosts on a schedule.
+let lookback = 1d;
+let KnownLegitScheduledBinaries = dynamic([
+    "backupexec", "veeam", "crowdstrike", "sentinelone", "qualys", "rapid7",
+    "chef-client", "puppet", "ansible", "ccmexec.exe", "sccm", "wuauclt.exe",
+    "windowsupdate", "googet", "unattended-upgrade", "apt-get", "yum", "dnf",
+    "msiexec.exe", "ninite", "chocolatey"
+]);
+let ScheduledLaunchers = 
+    DeviceProcessEvents
+    | where TimeGenerated > ago(lookback)
+    | where InitiatingProcessFileName in~ ("taskeng.exe", "schtasks.exe", "cron", "crond", "systemd")
+        or ProcessCommandLine has_any ("schtasks", "crontab", "cron.d", "at.exe")
+    | where not(FileName has_any (KnownLegitScheduledBinaries))
+    | where not(ProcessCommandLine has_any (KnownLegitScheduledBinaries))
+    | project TimeGenerated, DeviceId, ScheduledProcess = FileName, ScheduledCommandLine = ProcessCommandLine, ScheduledPID = ProcessId;
+let PeriodicScrapeCandidates = 
+    DeviceNetworkEvents
+    | where TimeGenerated > ago(lookback)
+    | where isnotempty(RemoteUrl) or isnotempty(RemoteIP)
+    | summarize RequestCount = count(),
+                DistinctHosts = dcount(RemoteUrl),
+                FirstSeen = min(TimeGenerated),
+                LastSeen = max(TimeGenerated),
+                Intervals = make_list(TimeGenerated, 500)
+              by DeviceId, InitiatingProcessFileName, InitiatingProcessId
+    // Raised well above what OS update checks, telemetry/monitoring agents, backup jobs, package managers,
+    // and CDN/NTP sync produce on a routine schedule.
+    | where RequestCount > 500 and DistinctHosts > 50
+    | extend DurationMinutes = datetime_diff('minute', LastSeen, FirstSeen)
+    | where DurationMinutes > 0
+    | extend RequestsPerMinute = todouble(RequestCount) / DurationMinutes
+    | where RequestsPerMinute > 2.0;
+let AntiBotBypassSignals = 
+    DeviceNetworkEvents
+    | where TimeGenerated > ago(lookback)
+    | where isnotempty(RemoteUrl)
+    | where RemoteUrl has_any ("proxy", "captcha", "antibot", "rate-limit", "rl-bypass")
+        or InitiatingProcessCommandLine has_any ("user-agent", "rotate-proxy", "headless", "puppeteer", "playwright", "selenium")
+    | project TimeGenerated, DeviceId, InitiatingProcessFileName, InitiatingProcessId, RemoteUrl, InitiatingProcessCommandLine;
+PeriodicScrapeCandidates
+| join kind=inner (ScheduledLaunchers) on DeviceId
+// Require an actual anti-bot-bypass or proxy-rotation signal to fire - without this, the rule alerted on
+// ordinary scheduled system/network activity that merely happened to contact many hosts periodically.
+| join kind=inner (AntiBotBypassSignals) on DeviceId, InitiatingProcessId
+| project DeviceId, ScheduledProcess, ScheduledCommandLine, InitiatingProcessFileName, RequestCount, DistinctHosts,
+          RequestsPerMinute, FirstSeen, LastSeen, RemoteUrl, InitiatingProcessCommandLine
+| sort by RequestCount desc
