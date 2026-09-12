@@ -1,0 +1,16 @@
+EmailEvents
+| where TimeGenerated > ago(1d)
+| join kind=leftouter (
+    EmailAttachmentInfo
+    | project NetworkMessageId
+) on NetworkMessageId
+| extend SenderDomain = tostring(split(SenderFromAddress, "@")[1])
+| extend RecipientDomain = tostring(split(RecipientEmailAddress, "@")[1])
+| extend ReplyToDomain = tostring(split(extractjson("$.ReplyToAddress", AdditionalFields), "@")[1])
+| where isnotempty(SenderDisplayName)
+| where SenderDisplayName has_any ("CEO", "CFO", "President", "Chief Executive Officer", "Chief Financial Officer")
+| where SenderDomain != RecipientDomain
+| where isnotempty(ReplyToDomain) and ReplyToDomain != SenderDomain
+| where Subject has_any ("wire", "ACH", "payment", "invoice", "urgent", "transfer", "account update")
+| where not(ReplyToDomain startswith "mail." or ReplyToDomain startswith "notifications." or ReplyToDomain startswith "support." or ReplyToDomain startswith "ticket.")
+| project TimeGenerated, NetworkMessageId, SenderDisplayName, SenderFromAddress, SenderDomain, ReplyToDomain, RecipientEmailAddress, RecipientDomain, Subject
