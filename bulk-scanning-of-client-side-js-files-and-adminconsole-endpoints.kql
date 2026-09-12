@@ -1,0 +1,11 @@
+// Detects public-surface mining: automated bulk requests to client-side JS assets and unauthenticated admin/console/config endpoints from a single source, consistent with scripted secret-harvesting and endpoint enumeration
+W3CIISLog
+| where TimeGenerated > ago(1h)
+| where csUriStem has_any (".js", "/admin", "/console", "/.env", "/config", "/manage", "/actuator")
+| where scStatus in (200, 401, 403)
+| where not(csUserAgent has_any ("Googlebot", "bingbot", "AppInsightsAvailability", "Pingdom", "UptimeRobot", "StatusCake"))
+| summarize DistinctPaths = dcount(csUriStem), RequestCount = count(), UserAgents = make_set(csUserAgent, 10), Paths = make_set(csUriStem, 25) by cIP, TimeGenerated=bin(TimeGenerated, 10m)
+| where DistinctPaths >= 25 and RequestCount >= 100
+| where array_length(UserAgents) <= 2
+| project TimeGenerated, cIP, DistinctPaths, RequestCount, UserAgents, Paths
+| sort by RequestCount desc
