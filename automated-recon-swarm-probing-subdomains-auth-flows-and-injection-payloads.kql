@@ -1,0 +1,23 @@
+// Detects an autonomous agent swarm rapidly enumerating subdomains/endpoints, probing auth flows, and testing injection payload classes from a single source in a short window
+AGWAccessLogs
+| where isnotempty(ClientIp)
+| where not(UserAgent matches regex @"(?i)(qualys|nessus|tenable|rapid7|nexpose|burp\s*suite|owasp\s*zap|zaproxy|acunetix)")
+| extend Uri = RequestUri
+| extend IsAuthFlow = Uri matches regex @"(?i)(login|signin|auth|oauth|token|session|password|register)"
+| extend IsInjectionProbe = Uri matches regex @"(?i)('|--|union select|<script|%27|%3Cscript|\.\./|/etc/passwd|xp_cmdshell|sleep|or 1=1)"
+| summarize
+    DistinctHosts = dcount(Host),
+    DistinctEndpoints = dcount(Uri),
+    AuthFlowHits = countif(IsAuthFlow),
+    InjectionProbeHits = countif(IsInjectionProbe),
+    TotalRequests = count(),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated),
+    SampleUris = make_set(Uri, 20)
+  by ClientIp, TimeGenerated=bin(TimeGenerated, 5m)
+| where DistinctHosts >= 5 and DistinctEndpoints >= 25 and TotalRequests >= 100
+| where AuthFlowHits > 0 and InjectionProbeHits > 0
+| extend RequestsPerSecond = TotalRequests / ((datetime_diff('second', LastSeen, FirstSeen) + 1))
+| where RequestsPerSecond >= 2
+| project ClientIp, TimeGenerated, DistinctHosts, DistinctEndpoints, AuthFlowHits, InjectionProbeHits, TotalRequests, RequestsPerSecond, FirstSeen, LastSeen, SampleUris
+| sort by TotalRequests desc
