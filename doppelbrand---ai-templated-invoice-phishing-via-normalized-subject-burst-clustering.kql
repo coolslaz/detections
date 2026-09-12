@@ -1,0 +1,40 @@
+// Schema limitation: this EmailEvents table has no raw Body/HTML content column,
+// so template markers/comments embedded in message HTML cannot be inspected directly.
+// As the closest available proxy, we normalize the Subject line (stripping embedded
+// email addresses and long digit sequences used for per-victim placeholder substitution,
+// e.g. invoice numbers/amounts) to collapse AI-generated template variants onto a single
+// cluster key, then flag templates blasted to many distinct recipients/orgs in a short burst.
+// To reduce false positives from legitimate bulk mail (newsletters, product announcements,
+// system notifications), we require the normalized subject to contain a financial/fraud-
+// relevant keyword and require the sender's domain to be external to the recipient's
+// organization (i.e. not an internal/same-domain sender), which is the pattern observed
+// in Operation DoppelBrand's lookalike-domain ServiceNow invoice impersonation.
+EmailEvents
+| where TimeGenerated > ago(14d)
+| where isnotempty(Subject)
+| extend NormalizedSubject = tostring(replace_regex(
+    replace_regex(Subject, @"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", "<EMAIL>"),
+    @"[0-9]{4,}", "<NUM>"))
+| where NormalizedSubject matches regex @"(?i)(invoice|payment|ach|wire|subscription|due|urgent)"
+| extend RecipientOrgDomain = tostring(split(RecipientEmailAddress, "@")[1])
+| extend SenderDomain = tostring(split(SenderFromAddress, "@")[1])
+| where isnotempty(SenderDomain) and isnotempty(RecipientOrgDomain)
+| where SenderDomain != RecipientOrgDomain
+| summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated),
+            DistinctRecipients = dcount(RecipientEmailAddress),
+            DistinctOrgs = dcount(RecipientOrgDomain),
+            DistinctSenderDomains = dcount(SenderDomain),
+            Recipients = make_set(RecipientEmailAddress, 50),
+            Orgs = make_set(RecipientOrgDomain, 50),
+            Senders = make_set(SenderFromAddress, 50),
+            SenderDomains = make_set(SenderDomain, 50),
+            SampleSubjects = make_set(Subject, 10),
+            MessageCount = count()
+  by NormalizedSubject, bin(TimeGenerated, 3d)
+| where DistinctRecipients >= 25 and DistinctOrgs >= 5
+| where datetime_diff("day", LastSeen, FirstSeen) <= 3
+// External sender clusters should map to a small number of lookalike/spoofed sending
+// domains rather than a large diverse set typical of legitimate multi-tenant bulk platforms.
+| where DistinctSenderDomains <= 5
+| project NormalizedSubject, FirstSeen, LastSeen, MessageCount, DistinctRecipients, DistinctOrgs, DistinctSenderDomains, Senders, SenderDomains, Orgs, SampleSubjects
+| sort by DistinctOrgs desc, DistinctRecipients desc
