@@ -1,0 +1,35 @@
+// Detects an automated binary-reversing / exploit-development loop:
+// firmware unpacking + headless decompiler automation + repeated iteration
+// consistent with an AI-driven pipeline surveying appliance firmware images
+// and walking decompilation/cross-reference chains to find zero-days.
+// NOTE: This rule requires correlated vulnerability-knowledge-base artifact writes
+// alongside tool usage to reduce false positives from legitimate authorized
+// reverse-engineering/firmware research teams using binwalk, Ghidra, IDA, radare2.
+// Security/RE team workstations or accounts performing sanctioned research should
+// be allowlisted via an environment-specific exclusion list (e.g. a known-good
+// DeviceName/AccountName watchlist) to further suppress expected activity.
+let firmwareTools = dynamic(["binwalk", "firmware-mod-kit", "unblob", "squashfs-tools", "unsquashfs"]);
+let decompilerTools = dynamic(["ghidra", "analyzeHeadless", "ida64", "ida.exe", "idat64", "radare2", "r2", "binaryninja", "decompiler"]);
+DeviceProcessEvents
+| where TimeGenerated > ago(30d)
+| where FileName has_any (firmwareTools) or ProcessCommandLine has_any (firmwareTools)
+ or FileName has_any (decompilerTools) or ProcessCommandLine has_any (decompilerTools)
+ or ProcessCommandLine has_any ("cross-reference", "xref", "headless")
+| summarize ToolInvocations = count(),
+ DistinctTools = dcount(FileName),
+ FirstSeen = min(TimeGenerated),
+ LastSeen = max(TimeGenerated),
+ Tools = make_set(FileName, 20),
+ SampleCommandLines = make_set(ProcessCommandLine, 10)
+ by DeviceId, DeviceName, AccountName
+| where ToolInvocations >= 20 and DistinctTools >= 3
+| where datetime_diff('hour', LastSeen, FirstSeen) >= 1
+| join kind=inner (
+ DeviceFileEvents
+ | where TimeGenerated > ago(30d)
+ | where FileName has_any ("vuln", "findings", "knowledge_base", "vulndb", "xref_index", "MEMORY.md")
+ | summarize VulnKBWrites = count(), VulnKBFiles = make_set(FileName, 10) by DeviceId
+ ) on DeviceId
+| where VulnKBWrites >= 1
+| project DeviceName, AccountName, ToolInvocations, DistinctTools, Tools, VulnKBWrites, VulnKBFiles, FirstSeen, LastSeen, SampleCommandLines
+| sort by ToolInvocations desc
