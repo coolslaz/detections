@@ -1,0 +1,24 @@
+// Detects exploitation of JFrog Artifactory's JRuby-backed RubyGems processing to steal a code-signing key followed by forged administrator credential activity
+let SigningKeyAccess = CloudAppEvents
+// Scoped strictly to the Artifactory application - the prior 'or RawEventData has artifactory'
+// matched any event whose raw payload merely mentioned the word, well beyond actual Artifactory activity.
+| where Application has "Artifactory"
+| where RawEventData has_any ("rubygems", "jruby", "gemspec")
+| where RawEventData has_any ("signing key", "signingkey", "code-signing", "sign_key")
+| project SigningTime = TimeGenerated, AccountId, IPAddress, ActivityObjects, RawEventData
+| extend Actor = tostring(AccountId);
+let ForgedAdminActivity = CloudAppEvents
+// Require the admin-forgery signal to also be within Artifactory, so the join can't pair a
+// signing-key access with an unrelated admin action in a completely different cloud app.
+| where Application has "Artifactory"
+| where RawEventData has_any ("administrator", "admin credentials", "forged", "impersonat")
+| where ActionType has_any ("AddUser", "RoleAssignment", "PrivilegeEscalation", "UpdateUser")
+| project AdminTime = TimeGenerated, AccountId, IPAddress, ActionType, RawEventData
+| extend Actor = tostring(AccountId);
+SigningKeyAccess
+| join kind=inner (ForgedAdminActivity) on Actor
+// Tightened correlation window from 4h to 1h - a genuine key-theft-to-privilege-abuse chain
+// happens quickly; a wider window mostly just increases coincidental pairings.
+| where AdminTime - SigningTime between (0m .. 1h)
+| project SigningTime, AdminTime, Actor, IPAddress, ActionType, RawEventData
+| sort by SigningTime desc
