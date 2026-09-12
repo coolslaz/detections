@@ -1,0 +1,21 @@
+// Detects automated directory fuzzing against exposed storage buckets/file shares
+// targeting .env and key files, indicative of severity-ranked dir fuzzing tooling
+// Tightened to reduce FPs from legitimate SAS-based bulk-transfer tools (AzCopy, Data Factory, backup/migration jobs)
+// and to prioritize anonymous access as the stronger signal over SAS-authenticated access
+let SuspiciousExtensions = dynamic([".env", ".pem", ".key", ".pfx", ".p12", "id_rsa", ".ppk", "credentials.json", "config.json", ".aws/credentials"]);
+let KnownBulkTools = dynamic(["azcopy", "azure-storage", "adf", "datafactory", "microsoft-hadoop-azure", "azure data factory"]);
+StorageBlobLogs
+| where TimeGenerated > ago(1h)
+| where AuthenticationType =~ "Anonymous" or AuthenticationType =~ "SAS"
+| where OperationName in ("GetBlob", "GetBlobProperties", "ListBlobs")
+| extend RequestedPath = tostring(Uri)
+| where RequestedPath has_any (SuspiciousExtensions)
+| extend UserAgentLower = tolower(tostring(UserAgentHeader))
+| extend IsKnownBulkTool = UserAgentLower has_any (KnownBulkTools)
+| where not(IsKnownBulkTool)
+| extend AccessClass = iff(AuthenticationType =~ "Anonymous", "Anonymous", "SAS")
+| summarize RequestCount = count(), DistinctPaths = dcount(RequestedPath), Paths = make_set(RequestedPath, 50), UserAgents = make_set(UserAgentLower, 10) by CallerIpAddress, AccountName, AccessClass, bin(TimeGenerated, 5m)
+| where (AccessClass == "Anonymous" and RequestCount >= 10 and DistinctPaths >= 5) or (AccessClass == "SAS" and RequestCount >= 30 and DistinctPaths >= 15)
+| extend Severity = iff(AccessClass == "Anonymous", "High", "Medium")
+| project TimeGenerated, CallerIpAddress, AccountName, AccessClass, Severity, RequestCount, DistinctPaths, Paths, UserAgents
+| sort by Severity asc, RequestCount desc
