@@ -1,0 +1,19 @@
+// NOTE: EmailEvents in this environment has no raw body/text column (EmailText/Body do not exist).
+// Literal in-body phrase matching (e.g. "sorry for the delay", "no need to copy me") is therefore not achievable.
+// This rule uses the closest available proxy: a forwarded/reply-style Subject combined with invoice/approval
+// keywords co-occurring with a stronger financial/urgency term, an EXTERNAL sender domain relative to the
+// recipient, inbound external delivery, and a PDF/HTML attachment consistent with a spoofed invoice.
+EmailEvents
+| where TimeGenerated > ago(7d)
+| where EmailDirection == "Inbound"
+| extend SubjectLower = tolower(Subject)
+| where SubjectLower has_any ("re:", "fwd:", "fw:")
+| where SubjectLower has_any ("invoice", "approval")
+| where SubjectLower has_any ("wire", "ach", "payment", "urgent", "asap", "immediately")
+| extend RecipientDomain = tostring(split(RecipientEmailAddress, "@")[1])
+| where tolower(SenderFromDomain) != tolower(RecipientDomain)
+| join kind=inner (
+ EmailAttachmentInfo
+ | where FileType in ("pdf", "htm", "html")
+) on NetworkMessageId
+| project TimeGenerated, NetworkMessageId, SenderFromAddress, SenderFromDomain, SenderDisplayName, RecipientEmailAddress, RecipientDomain, Subject, FileName, FileType, EmailAction
