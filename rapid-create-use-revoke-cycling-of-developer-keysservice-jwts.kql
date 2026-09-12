@@ -1,0 +1,39 @@
+// Detects developer API keys / service principal credentials repeatedly created and revoked within minutes,
+// and sustained bursts of service-account JWT/refresh-token rotation from multiple source IPs used to evade detection windows
+let lookback = 1d;
+let maxLifetimeMinutes = 15;
+let minCycleCount = 2; // require repeated create-revoke cycling, not a single benign CI/CD pipeline run
+// Populate with known CI/CD service principal / actor identifiers (e.g. federated OIDC deploy accounts) to suppress benign automation
+let knownCiCdActors = dynamic([]);
+let Adds = AuditLogs
+| where TimeGenerated > ago(lookback)
+| where ActivityDisplayName == "Add service principal credentials"
+| extend TargetId = tostring(TargetResources[0].id)
+| extend TargetName = tostring(TargetResources[0].displayName)
+| extend ActorUpn = tostring(InitiatedBy.user.userPrincipalName)
+| project AddTime = TimeGenerated, TargetId, TargetName, ActorUpn;
+let Removes = AuditLogs
+| where TimeGenerated > ago(lookback)
+| where ActivityDisplayName == "Remove service principal credentials"
+| extend TargetId = tostring(TargetResources[0].id)
+| project RemoveTime = TimeGenerated, TargetId;
+let Pairs = Adds
+| join kind=inner (Removes) on TargetId
+| where RemoveTime > AddTime and datetime_diff("minute", RemoveTime, AddTime) <= maxLifetimeMinutes
+| extend DiffMinutes = datetime_diff("minute", RemoveTime, AddTime)
+| summarize arg_min(DiffMinutes, RemoveTime) by TargetId, TargetName, AddTime, ActorUpn
+| project TargetId, TargetName, AddTime, RemoveTime, ActorUpn;
+let CredentialLifecycle = Pairs
+| summarize CycleCount = count(), FirstCreate = min(AddTime), LastRevoke = max(RemoveTime), ActorSet = make_set(ActorUpn, 5) by TargetId, TargetName
+| where CycleCount >= minCycleCount
+| where not(ActorSet has_any (knownCiCdActors))
+| project TargetId, TargetName, ActorSet, CreateTime = FirstCreate, RevokeTime = LastRevoke, LifetimeMinutes = datetime_diff("minute", LastRevoke, FirstCreate), DetectionType = "CreateRevokeCycle", CycleCount, RefreshCount = long(null), DistinctIPs = long(null);
+let JwtRotationBurst = AADServicePrincipalSignInLogs
+| where TimeGenerated > ago(lookback)
+| where isnotempty(ServicePrincipalId)
+| summarize RefreshCount = count(), DistinctIPs = dcount(IPAddress), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by ServicePrincipalId, ServicePrincipalName, bin(TimeGenerated, 10m)
+| where RefreshCount >= 20 and DistinctIPs >= 3
+| project TargetId = ServicePrincipalId, TargetName = ServicePrincipalName, ActorSet = dynamic([]), CreateTime = FirstSeen, RevokeTime = LastSeen, LifetimeMinutes = datetime_diff("minute", LastSeen, FirstSeen), DetectionType = "JwtRefreshRotationBurst", CycleCount = long(null), RefreshCount, DistinctIPs;
+CredentialLifecycle
+| union JwtRotationBurst
+| sort by CreateTime desc
