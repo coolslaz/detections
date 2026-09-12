@@ -1,0 +1,20 @@
+rule inbound_traffic_from_anthropic_ip_range_yaral {
+  meta:
+    description = "Detects activity from Anthropic network range across multiple event types"
+    severity = "Medium"
+    author = "Arnold Chan"
+    false_positive1 = "Legitimate integration or business partnership between the organization and Anthropic services."
+    false_positive2 = "Authorized administrative or developer access from Anthropic systems or hosted services."
+events:
+    $e.metadata.event_type = "USER_LOGIN" or
+    $e.metadata.event_type = "NETWORK_CONNECTION" or
+    $e.metadata.event_type = "API_ACTIVITY" or
+    $e.metadata.event_type = "APP_ACTIVITY" or
+    $e.metadata.event_type = "EMAIL"
+
+    net.ip_in_range_cidr($e.principal.ip, "160.79.104.0/21") or
+    net.ip_in_range_cidr($e.target.ip, "160.79.104.0/21")
+
+  condition:
+    $e
+}
