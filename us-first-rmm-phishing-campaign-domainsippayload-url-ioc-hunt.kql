@@ -1,0 +1,26 @@
+// dedicated, attacker-registered infrastructure only - excludes shared multi-tenant platforms to avoid substring FPs on generic hosting
+let highConfidenceDomains = dynamic(["fillingconfirmation.vercel.app","sharedconfirmationslip.vercel.app","officialsummarybycra.vercel.app","2026t4form17718.vercel.app","crataxsummary1007341.vercel.app","statemendetailsfilessenderderf.netlify.app","togotoresolve.com","docshared.org","dashboarduat.paynnow.com","swoop2.me","letsgo2.me","net2me.me","quavix.vu","cevora.vu","xorlira.vu","commonerdays.vercel.app"]);
+// legitimate multi-tenant/public infra abused for staging or evasion checks - alone these are too noisy (gofile.io/backblazeb2.com are public file hosts, api.telegram.org is a widely-used public API) - only meaningful when correlated with a confirmed indicator
+let genericStagingIndicators = dynamic(["gofile.io","f004.backblazeb2.com","api.telegram.org"]);
+let maliciousIP = "46.62.197.232";
+let payloadUrl = "https://commonerdays.vercel.app/LogMeInResolve_Unattended.msi";
+let netHighConfHits = DeviceNetworkEvents
+| where RemoteUrl has_any (highConfidenceDomains) or RemoteIP == maliciousIP or RemoteUrl has payloadUrl
+| extend MatchType = case(RemoteUrl has payloadUrl, "PayloadURL", RemoteIP == maliciousIP, "MaliciousIP", "MaliciousDomain")
+| project TimeGenerated, DeviceId, DeviceName, AccountName = InitiatingProcessAccountName, RemoteUrl, RemoteIP, InitiatingProcessFileName, InitiatingProcessCommandLine, MatchType;
+let procHighConfHits = DeviceProcessEvents
+| where ProcessCommandLine has_any (highConfidenceDomains) or ProcessCommandLine has payloadUrl or ProcessCommandLine has maliciousIP
+| extend MatchType = case(ProcessCommandLine has payloadUrl, "PayloadURL", ProcessCommandLine has maliciousIP, "MaliciousIP", "MaliciousDomain")
+| project TimeGenerated, DeviceId, DeviceName, AccountName, RemoteUrl = ProcessCommandLine, RemoteIP = maliciousIP, InitiatingProcessFileName, InitiatingProcessCommandLine, MatchType;
+let confirmedHits = netHighConfHits | union procHighConfHits;
+// gate the noisy generic infra: only surface a hit on gofile.io/backblazeb2.com/telegram if the SAME device also touched a confirmed indicator within +/-60 minutes
+let genericHitsRaw = DeviceNetworkEvents
+| where RemoteUrl has_any (genericStagingIndicators)
+| project TimeGenerated, DeviceId, DeviceName, AccountName = InitiatingProcessAccountName, RemoteUrl, RemoteIP, InitiatingProcessFileName, InitiatingProcessCommandLine, MatchType = "GenericInfra-CorrelatedOnly";
+let correlatedGenericHits = genericHitsRaw
+| join kind=inner (confirmedHits | project ConfirmedDeviceId = DeviceId, ConfirmedTime = TimeGenerated) on $left.DeviceId == $right.ConfirmedDeviceId
+| where abs(datetime_diff('minute', TimeGenerated, ConfirmedTime)) <= 60
+| project TimeGenerated, DeviceId, DeviceName, AccountName, RemoteUrl, RemoteIP, InitiatingProcessFileName, InitiatingProcessCommandLine, MatchType;
+confirmedHits
+| union correlatedGenericHits
+| sort by TimeGenerated desc
