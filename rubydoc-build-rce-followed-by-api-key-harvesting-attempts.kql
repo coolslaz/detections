@@ -1,0 +1,18 @@
+// Detects post-RCE credential-harvesting activity tied to known malicious RubyGems packages
+// (pwnp999, exfiltestwand3, hacksvn1778554764) observed abusing RubyDoc.info build environment RCE
+let maliciousPackages = dynamic(["pwnp999", "exfiltestwand3", "hacksvn1778554764"]);
+let ProcessEvents = DeviceProcessEvents
+| where ProcessCommandLine has_any (maliciousPackages)
+| where ProcessCommandLine has_any ("api_key", "Authorization", "api/v1/api_key", "rubygems_")
+// Require the activity to originate from Ruby/package-manager tooling, not any process that merely
+// happens to reference these package names (e.g. a ticketing tool, browser tab, or log viewer)
+| where InitiatingProcessFileName has_any ("ruby", "gem", "bundle", "rake", "irb")
+| project TimeGenerated, DeviceId, DeviceName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName;
+let FileEvents = DeviceFileEvents
+| where FileName has_any (maliciousPackages)
+| where FolderPath has_any ("api_key", "Authorization", "rubygems_")
+| where InitiatingProcessFileName has_any ("ruby", "gem", "bundle", "rake", "irb")
+| project TimeGenerated, DeviceId, DeviceName, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName = InitiatingProcessAccountName;
+ProcessEvents
+| union FileEvents
+| sort by TimeGenerated desc
