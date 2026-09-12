@@ -1,0 +1,17 @@
+// Detects Zero-hour Auto Purge (ZAP) or post-delivery remediation actions applied to previously-delivered
+// invoice-fraud / executive-impersonation emails tied to the Operation DoppelBrand campaign
+EmailPostDeliveryEvents
+| where TimeGenerated > ago(30d)
+| where ActionType in ("ZAP", "Manual remediation", "Dynamic Delivery") or Action in ("Zap", "Move to junk", "Soft delete", "Hard delete")
+| where ActionResult == "Success"
+| join kind=inner (
+    EmailEvents
+    | where TimeGenerated > ago(30d)
+    | extend RecipientDomain = tostring(split(RecipientEmailAddress, "@")[1])
+    | extend IsExternalOrLookalikeSender = (SenderFromDomain != RecipientDomain) or (SenderFromDomain has_any ("service-nowinc.com", "domainlify.net"))
+    | where SenderFromDomain has_any ("service-nowinc.com", "domainlify.net")
+        or SenderFromAddress has_any ("gomez@service-nowinc.com")
+        or (Subject has_any ("due bill", "ACH Parment") and IsExternalOrLookalikeSender)
+) on NetworkMessageId
+| project TimeGenerated, NetworkMessageId, RecipientEmailAddress, SenderFromAddress, SenderFromDomain, Subject, Action, ActionType, ActionResult, DeliveryLocation, LatestDeliveryLocation
+| sort by TimeGenerated desc
