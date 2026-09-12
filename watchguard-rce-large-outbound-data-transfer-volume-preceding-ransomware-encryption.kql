@@ -1,0 +1,22 @@
+// Detects anomalously large outbound data transfers to external destinations,
+// consistent with data exfiltration staged prior to ransomware encryption
+// following firewall/VPN compromise (e.g. CVE-2025-14733 WatchGuard exploitation)
+let LookbackDays = 14d;
+let MinAbsoluteBytes = 1000000000; // 1 GB floor - ignore anomalies too small to matter even if statistically "high"
+let AnomalyMultiplier = 5.0; // current hour must exceed avg + 5x stdev of the host's own historical hourly baseline
+let Baseline = ASimNetworkSessionLogs
+| where TimeGenerated between (ago(LookbackDays) .. ago(1h))
+| where NetworkDirection == "Outbound"
+| where isnotempty(DstIpAddr) and not(ipv4_is_private(DstIpAddr))
+| summarize HourlyBytes = sum(DstBytes) by SrcIpAddr, bin(TimeGenerated, 1h)
+| summarize BaselineAvgHourlyBytes = avg(HourlyBytes), BaselineStdevHourlyBytes = stdev(HourlyBytes) by SrcIpAddr;
+ASimNetworkSessionLogs
+| where TimeGenerated > ago(1h)
+| where NetworkDirection == "Outbound"
+| where isnotempty(DstIpAddr) and not(ipv4_is_private(DstIpAddr))
+| summarize TotalOutboundBytes = sum(DstBytes), SessionCount = count(), Destinations = make_set(DstIpAddr, 20) by SrcIpAddr, bin(TimeGenerated, 1h)
+| join kind=inner (Baseline) on SrcIpAddr
+| extend AnomalyThreshold = max_of(MinAbsoluteBytes, BaselineAvgHourlyBytes + (AnomalyMultiplier * BaselineStdevHourlyBytes))
+| where TotalOutboundBytes > AnomalyThreshold
+| project TimeGenerated, SrcIpAddr, TotalOutboundBytes, BaselineAvgHourlyBytes, BaselineStdevHourlyBytes, AnomalyThreshold, SessionCount, Destinations
+| sort by TotalOutboundBytes desc
