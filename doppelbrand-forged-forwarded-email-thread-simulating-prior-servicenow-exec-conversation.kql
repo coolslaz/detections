@@ -1,0 +1,12 @@
+EmailEvents
+| where EmailDirection == "Inbound"
+| where Subject has_any ("re:", "fwd:", "fw:")
+| where Subject has "ServiceNow" or SenderDisplayName has "ServiceNow"
+| where SenderDisplayName has_any ("ServiceNow", "CEO", "CFO", "President", "Chief", "Executive", "VP", "Vice President")
+| where SenderFromDomain !endswith "service-now.com" and SenderFromDomain != "service-now.com"
+| join kind=inner (
+    EmailAttachmentInfo
+    | where FileType in~ ("pdf", "htm", "html")
+) on NetworkMessageId
+| project TimeGenerated, NetworkMessageId, SenderFromAddress, SenderDisplayName, SenderFromDomain, RecipientEmailAddress, Subject, FileName, FileType
+| summarize by NetworkMessageId, SenderFromAddress, SenderDisplayName, SenderFromDomain, RecipientEmailAddress, Subject, TimeGenerated
