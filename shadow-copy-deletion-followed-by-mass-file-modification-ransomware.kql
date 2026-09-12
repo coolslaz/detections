@@ -1,0 +1,21 @@
+let ShadowCopyDeletion = DeviceProcessEvents
+| where FileName in~ ("vssadmin.exe","wmic.exe","wbadmin.exe","bcdedit.exe","powershell.exe","cmd.exe")
+| where (ProcessCommandLine has_any ("vssadmin", "wmic") and ProcessCommandLine has_any ("shadowcopy","shadows") and ProcessCommandLine has "delete")
+ or (ProcessCommandLine has "wbadmin" and ProcessCommandLine has "delete" and ProcessCommandLine has "catalog")
+ or (ProcessCommandLine has "bcdedit" and ProcessCommandLine has "recoveryenabled" and ProcessCommandLine has "no")
+| project ShadowCopyTime = TimeGenerated, DeviceId, DeviceName, AccountName, FileName, ProcessCommandLine;
+let RansomIndicators = DeviceFileEvents
+| where ActionType in ("FileCreated","FileModified","FileRenamed")
+| where FileName has_any (".encrypted", ".locked", "readme", "decrypt", "ransom", "how_to_decrypt", "restore-my-files")
+| summarize RansomNoteEvents = count(), SampleFiles = make_set(FileName, 10) by DeviceId, RansomWindow = bin(TimeGenerated, 15m);
+let MassModification = DeviceFileEvents
+| where ActionType in ("FileCreated","FileModified","FileRenamed")
+| summarize ModifiedFileCount = dcount(FileName) by DeviceId, ModWindow = bin(TimeGenerated, 15m)
+| where ModifiedFileCount > 100;
+ShadowCopyDeletion
+| join kind=inner (MassModification) on DeviceId
+| where (ModWindow - ShadowCopyTime) between (0min .. 30min)
+| join kind=inner (RansomIndicators) on DeviceId
+| where (RansomWindow - ShadowCopyTime) between (0min .. 30min)
+| project ShadowCopyTime, DeviceId, DeviceName, AccountName, FileName, ProcessCommandLine, ModifiedFileCount, RansomNoteEvents, SampleFiles
+| sort by ShadowCopyTime desc
