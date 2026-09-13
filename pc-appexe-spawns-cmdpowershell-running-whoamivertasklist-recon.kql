@@ -1,0 +1,5 @@
+DeviceProcessEvents
+| where InitiatingProcessFileName =~ "pc-app.exe" or InitiatingProcessFileName =~ "pc-app"
+| where FileName in~ ("cmd.exe", "powershell.exe")
+| where ProcessCommandLine has "whoami" and ProcessCommandLine has_any ("tasklist", "ver", "uname -a")
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, AccountName
