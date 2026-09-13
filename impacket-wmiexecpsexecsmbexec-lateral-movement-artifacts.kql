@@ -1,0 +1,20 @@
+let ProcHits = DeviceProcessEvents
+| where FileName in~ ("cmd.exe", "powershell.exe")
+| where ProcessCommandLine has "ADMIN$" or ProcessCommandLine has "__output" or ProcessCommandLine has "1>"
+| where ProcessCommandLine has_any ("\\\\127.0.0.1\\ADMIN$", "\\\\127.0.0.1\\C$", "2>&1")
+| where ProcessCommandLine has_all ("cmd.exe", "/Q", "/c")
+| extend ImpacketArtifact = case(
+    ProcessCommandLine contains "ADMIN$" and ProcessCommandLine matches regex @"__[0-9]{10,}\\.[0-9]{1,}", "wmiexec",
+    ProcessCommandLine contains "__output" and ProcessCommandLine contains "ADMIN$", "psexec",
+    ProcessCommandLine contains "%COMSPEC%" and ProcessCommandLine contains "C$", "smbexec",
+    "unknown"
+  )
+| where ImpacketArtifact != "unknown"
+| project TimeGenerated, DeviceName, AccountName, InitiatingProcessFileName, FileName, ProcessCommandLine, ImpacketArtifact;
+let NetHits = DeviceNetworkEvents
+| where RemotePort in (445, 135)
+| where InitiatingProcessFileName in~ ("python.exe", "python3.exe")
+| where InitiatingProcessCommandLine has_any ("wmiexec","psexec","smbexec","atexec","secretsdump","impacket")
+| project TimeGenerated, DeviceName, AccountName = InitiatingProcessAccountName, InitiatingProcessFileName, RemoteIP, RemotePort;
+union ProcHits, NetHits
+| sort by TimeGenerated desc
