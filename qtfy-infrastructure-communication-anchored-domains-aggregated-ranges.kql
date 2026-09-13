@@ -1,0 +1,35 @@
+let qtfyDomains = dynamic(["qt-proxy.org", "qt-team.com", "qtcyber.com", "qtproxy.xyz"]);
+let qtfyIP = "206.119.167.207";
+let IsQtfyDomain = (h:string) {
+    h == "qt-proxy.org" or h endswith ".qt-proxy.org" or
+    h == "qt-team.com" or h endswith ".qt-team.com" or
+    h == "qtcyber.com" or h endswith ".qtcyber.com" or
+    h == "qtproxy.xyz" or h endswith ".qtproxy.xyz"
+};
+let NetworkEventsRaw = DeviceNetworkEvents
+| where TimeGenerated > ago(14d)
+| extend RemoteHost = tostring(parse_url(RemoteUrl).Host)
+| where IsQtfyDomain(RemoteHost) or RemoteIP == qtfyIP or ipv4_is_in_range(RemoteIP, "1.32.216.0/24") or ipv4_is_in_range(RemoteIP, "134.122.194.0/24")
+| extend MatchedIndicator = case(
+    IsQtfyDomain(RemoteHost), "QTFY domain",
+    RemoteIP == qtfyIP, "Proxy Pool Management System IP",
+    ipv4_is_in_range(RemoteIP, "1.32.216.0/24"), "QTFY IP range 1.32.216.0/24",
+    ipv4_is_in_range(RemoteIP, "134.122.194.0/24"), "QTFY IP range 134.122.194.0/24",
+    "unknown");
+let HighConfidenceNetworkEvents = NetworkEventsRaw
+| where MatchedIndicator in ("QTFY domain", "Proxy Pool Management System IP")
+| project TimeGenerated, DeviceName, DeviceId, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteUrl, RemoteIP, RemotePort, MatchedIndicator, ReportId;
+let RangeNetworkEvents = NetworkEventsRaw
+| where MatchedIndicator has "IP range"
+| summarize EventCount = count(), arg_max(TimeGenerated, *) by DeviceId, RemoteIP
+| where EventCount >= 2
+| project TimeGenerated, DeviceName, DeviceId, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteUrl, RemoteIP, RemotePort, MatchedIndicator, ReportId;
+let DeviceNetworkEventsData = HighConfidenceNetworkEvents | union RangeNetworkEvents;
+let DnsEventsData = DnsEvents
+| where TimeGenerated > ago(14d)
+| where IsQtfyDomain(Name)
+| extend MatchedIndicator = "QTFY domain (DNS)"
+| project TimeGenerated, DeviceName = Computer, RemoteUrl = Name, MatchedIndicator, DeviceId = "", InitiatingProcessFileName = "", InitiatingProcessCommandLine = "", RemoteIP = "", RemotePort = 0, ReportId = "";
+DeviceNetworkEventsData
+| union DnsEventsData
+| sort by TimeGenerated desc
