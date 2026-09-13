@@ -1,0 +1,5 @@
+DeviceProcessEvents
+| where FileName =~ "Rubeus.exe" or ProcessCommandLine has "Rubeus" or InitiatingProcessCommandLine has "Rubeus"
+| where ProcessCommandLine has_any ("kerberoast", "asreproast", "tgtdeleg", "s4u", "ptt", "renew", "harvest", "dump", "triage", "golden", "silver", "asktgt", "asktgs")
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName
+| distinct TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName
