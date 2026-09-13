@@ -1,0 +1,25 @@
+alert dns $HOME_NET any -> any any (msg:"QTFY DNS query for known C2 infrastructure domain"; dns.query; content:"qt-proxy.org"; endswith; nocase; threshold:type limit, track by_src, count 1, seconds 3600; metadata: author Arnold Chan, mitre_tactic_id TA0042, mitre_technique_id T1583.003, mitre_technique_id T1090; classtype:command-and-control; sid:1000001; rev:2;)
+
+alert dns $HOME_NET any -> any any (msg:"QTFY DNS query for known C2 infrastructure domain"; dns.query; content:"qt-team.com"; endswith; nocase; threshold:type limit, track by_src, count 1, seconds 3600; metadata: author detections.ai, mitre_tactic_id TA0042, mitre_technique_id T1583.003, mitre_technique_id T1090; classtype:command-and-control; sid:1000002; rev:2;)
+
+alert dns $HOME_NET any -> any any (msg:"QTFY DNS query for known C2 infrastructure domain"; dns.query; content:"qtcyber.com"; endswith; nocase; threshold:type limit, track by_src, count 1, seconds 3600; metadata: author detections.ai, mitre_tactic_id TA0042, mitre_technique_id T1583.003, mitre_technique_id T1090; classtype:command-and-control; sid:1000003; rev:2;)
+
+alert dns $HOME_NET any -> any any (msg:"QTFY DNS query for known Proxy Node Management System domain"; dns.query; content:"qtproxy.xyz"; endswith; nocase; threshold:type limit, track by_src, count 1, seconds 3600; metadata: author detections.ai, mitre_tactic_id TA0042, mitre_technique_id T1583.003, mitre_technique_id T1090; classtype:command-and-control; sid:1000004; rev:2;)
+
+alert tls $HOME_NET any -> any any (msg:"QTFY TLS SNI to known C2 infrastructure domain"; flow:to_server,established; tls.sni; content:"qt-proxy.org"; endswith; nocase; threshold:type limit, track by_src, count 1, seconds 3600; metadata: author detections.ai, mitre_tactic_id TA0042, mitre_technique_id T1583.003, mitre_technique_id T1090; classtype:command-and-control; sid:1000005; rev:2;)
+
+alert tls $HOME_NET any -> any any (msg:"QTFY TLS SNI to known C2 infrastructure domain"; flow:to_server,established; tls.sni; content:"qt-team.com"; endswith; nocase; threshold:type limit, track by_src, count 1, seconds 3600; metadata: author detections.ai, mitre_tactic_id TA0042, mitre_technique_id T1583.003, mitre_technique_id T1090; classtype:command-and-control; sid:1000006; rev:2;)
+
+alert tls $HOME_NET any -> any any (msg:"QTFY TLS SNI to known C2 infrastructure domain"; flow:to_server,established; tls.sni; content:"qtcyber.com"; endswith; nocase; threshold:type limit, track by_src, count 1, seconds 3600; metadata: author detections.ai, mitre_tactic_id TA0042, mitre_technique_id T1583.003, mitre_technique_id T1090; classtype:command-and-control; sid:1000007; rev:2;)
+
+alert tls $HOME_NET any -> any any (msg:"QTFY TLS SNI to known Proxy Node Management System domain (qtproxy.xyz)"; flow:to_server,established; tls.sni; content:"qtproxy.xyz"; endswith; nocase; threshold:type limit, track by_src, count 1, seconds 3600; metadata: author detections.ai, mitre_tactic_id TA0042, mitre_technique_id T1583.003, mitre_technique_id T1090; classtype:command-and-control; sid:1000008; rev:2;)
+
+alert http $HOME_NET any -> any any (msg:"QTFY HTTP Host header to known C2 infrastructure domain"; flow:to_server,established; http.host; content:"qt-proxy.org"; endswith; nocase; threshold:type limit, track by_src, count 1, seconds 3600; metadata: author detections.ai, mitre_tactic_id TA0042, mitre_technique_id T1583.003, mitre_technique_id T1090; classtype:command-and-control; sid:1000009; rev:2;)
+
+alert http $HOME_NET any -> any any (msg:"QTFY HTTP Host header to known Proxy Node Management System (qtproxy.xyz)"; flow:to_server,established; http.host; content:"qtproxy.xyz"; endswith; nocase; threshold:type limit, track by_src, count 1, seconds 3600; metadata: author detections.ai, mitre_tactic_id TA0042, mitre_technique_id T1583.003, mitre_technique_id T1090; classtype:command-and-control; sid:1000010; rev:2;)
+
+alert tcp $HOME_NET any -> 206.119.167.207 any (msg:"QTFY communication with Proxy Pool Management System IP"; flow:to_server,established; metadata: author detections.ai, mitre_tactic_id TA0042, mitre_technique_id T1583.003, mitre_technique_id T1090; classtype:command-and-control; sid:1000011; rev:2;)
+
+alert tcp $HOME_NET any -> [1.32.216.0/24] any (msg:"QTFY communication with known QTFY-associated IP range (1.32.216.0/24)"; flow:to_server,established; threshold:type limit, track by_src, count 3, seconds 3600; metadata: author detections.ai, mitre_tactic_id TA0042, mitre_technique_id T1583.003, mitre_technique_id T1090; classtype:command-and-control; sid:1000012; rev:2;)
+
+alert tcp $HOME_NET any -> [134.122.194.0/24] any (msg:"QTFY communication with known QTFY-associated IP range (134.122.194.0/24)"; flow:to_server,established; threshold:type limit, track by_src, count 3, seconds 3600; metadata: author detections.ai, mitre_tactic_id TA0042, mitre_technique_id T1583.003, mitre_technique_id T1090; classtype:command-and-control; sid:1000013; rev:2;)
