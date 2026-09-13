@@ -1,0 +1,11 @@
+let ProcExec = DeviceProcessEvents
+| where FileName in~ ("SharpHound.exe", "powershell.exe", "pwsh.exe")
+| where ProcessCommandLine has "SharpHound" or ProcessCommandLine has_any ("Invoke-BloodHound", "CollectionMethod", "-CollectionMethod")
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine;
+let FileDrops = DeviceFileEvents
+| where FileName endswith ".json" or FileName endswith ".zip"
+| where FileName has_any ("BloodHound", "SharpHound", "_users", "_groups", "_computers", "_domains")
+| where InitiatingProcessFileName in~ ("SharpHound.exe", "powershell.exe", "pwsh.exe", "cmd.exe")
+| project TimeGenerated, DeviceName, AccountName = InitiatingProcessAccountName, FileName, ProcessCommandLine = InitiatingProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine;
+union ProcExec, FileDrops
+| sort by TimeGenerated desc
