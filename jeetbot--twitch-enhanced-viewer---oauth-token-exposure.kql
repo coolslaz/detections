@@ -1,0 +1,72 @@
+// JeetBot / Twitch Enhanced Viewer - OAuth Token Exposure
+// Source: Socket Threat Research / The Hacker News - September 2026
+// Tightened: jeetbot.cc / api.jeetbot.cc are also used by JeetBot's legitimate
+// commercial Twitch/Kick/VK-Live bot service, independent of the malicious browser
+// extension. Bare hits on those two apex/API hosts only alert when paired with a
+// token-forwarding indicator, to avoid flagging legitimate bot-service API traffic.
+
+let HighConfidenceJeetBotDomains = dynamic([
+    "enhanced.jeetbot.cc",
+    "enhanced-1.jeetbot.cc",
+    "ext-03.jeetbot.cc",
+    "ext-styles.jeetbot.cc",
+    "morphilina.me",
+    "proxy.morphilina.me",
+    "drisnya.online",
+    "img.drisnya.online",
+    "thebeholder-proxy.deno.dev",
+    "proxy.thebeholder.deno.net",
+    "alexue4.dev"
+]);
+
+let AmbiguousJeetBotDomains = dynamic([
+    "jeetbot.cc",
+    "api.jeetbot.cc"
+]);
+
+let JeetBotIPs = dynamic([
+    "152.53.177.186",
+    "132.243.113.25",
+    "80.74.26.162"
+]);
+
+DeviceNetworkEvents
+| where TimeGenerated > ago(30d)
+| where
+    RemoteUrl has_any (HighConfidenceJeetBotDomains)
+    or RemoteIP in (JeetBotIPs)
+    or (
+        RemoteUrl has_any (AmbiguousJeetBotDomains)
+        and (
+            RemoteUrl contains "&auth="
+            or RemoteUrl contains "set-token"
+            or RemoteUrl contains "/api/v1/proxies"
+            or RemoteUrl contains "/api/v1/forced-proxy"
+        )
+    )
+| extend DetectionReason = case(
+    RemoteUrl contains "&auth=", "Possible Twitch OAuth token forwarded in URL",
+    RemoteUrl contains "set-token", "Historical OAuth token collection endpoint",
+    RemoteUrl contains "/api/v1/proxies", "JeetBot proxy configuration request",
+    RemoteUrl contains "/api/v1/forced-proxy", "JeetBot forced proxy configuration request",
+    RemoteUrl has_any (HighConfidenceJeetBotDomains), "Connection to JeetBot extension proxy/dev infrastructure",
+    RemoteIP in (JeetBotIPs), "Connection to known JeetBot IP infrastructure (verify current ownership - hosting IPs can be reassigned)",
+    "Connection to JeetBot-associated domain"
+)
+| project
+    TimeGenerated,
+    DeviceName,
+    DeviceId,
+    InitiatingProcessAccountName,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    RemoteUrl,
+    RemoteIP,
+    RemotePort,
+    Protocol,
+    DetectionReason
+| order by TimeGenerated desc
+
+// Severity: high
+// Tags: JeetBot, Twitch, OAuth token theft, browser extension, credential exposure
+// Description: Detects network connections to JeetBot/Twitch Enhanced Viewer malicious browser extension infrastructure exfiltrating Twitch OAuth tokens. Apex domains (jeetbot.cc, api.jeetbot.cc) are gated on a token-forwarding indicator to avoid false positives from JeetBot's legitimate commercial Twitch/Kick/VK-Live bot service traffic.
