@@ -1,0 +1,13 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where FileName in~ ("powershell.exe", "powershell_ise.exe")
+| where InitiatingProcessFileName =~ "explorer.exe"
+| extend HasEncodedFlag = ProcessCommandLine has_any ("-enc", "-encodedcommand", "-e ")
+| extend HasHiddenWindow = ProcessCommandLine has_any ("-w hidden", "-windowstyle hidden", "-window hidden")
+| extend HasDownloadCradle = ProcessCommandLine has_any ("iex", "invoke-expression", "downloadstring", "downloadfile", "irm ", "invoke-restmethod", "iwr ", "invoke-webrequest", "frombase64string", "net.webclient", "bitstransfer", "mshta", "certutil")
+| extend LaunchesLocalScriptFile = ProcessCommandLine has "-file" and (ProcessCommandLine has @"C:\" or ProcessCommandLine has @"%ProgramFiles%" or ProcessCommandLine has @"%windir%")
+| where LaunchesLocalScriptFile == false
+| where HasEncodedFlag or HasHiddenWindow or HasDownloadCradle
+| where strlen(ProcessCommandLine) > 30
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, HasEncodedFlag, HasHiddenWindow, HasDownloadCradle
+| sort by TimeGenerated desc
