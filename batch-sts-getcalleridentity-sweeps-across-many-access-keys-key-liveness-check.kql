@@ -1,0 +1,11 @@
+// Detects rapid sequential STS identity-validation calls (e.g. GetCallerIdentity) across a large number of distinct AWS access keys from a single source in a short window
+// Indicative of leaked-key tester tooling performing batch 'key liveness' sweeps over a harvested key corpus
+AWSCloudTrail
+| where EventName in ("GetCallerIdentity", "GetSessionToken", "AssumeRole")
+| where isnotempty(UserIdentityAccessKeyId)
+| summarize DistinctKeys = dcount(UserIdentityAccessKeyId), KeySet = make_set(UserIdentityAccessKeyId, 50), CallCount = count(), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by SourceIpAddress, UserAgent, bin(TimeGenerated, 5m)
+| extend WindowSeconds = datetime_diff('second', LastSeen, FirstSeen)
+| where DistinctKeys >= 10 and CallCount >= 10
+| where WindowSeconds <= 300
+| project TimeGenerated = FirstSeen, SourceIpAddress, UserAgent, DistinctKeys, CallCount, WindowSeconds, KeySet
+| sort by DistinctKeys desc
