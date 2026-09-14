@@ -1,0 +1,60 @@
+rule jeetbot_twitch_token_exposure {
+  meta:
+    author = "Arnold Chan"
+    description = "Detects network connections to JeetBot/Twitch Enhanced Viewer malicious browser extension infrastructure exfiltrating Twitch OAuth tokens. Apex domains (jeetbot.cc, api.jeetbot.cc) are gated on a token-forwarding indicator to avoid false positives."
+    severity = "High"
+    tags = "JeetBot, Twitch, OAuth token theft, browser extension, credential exposure"
+    reference = "https://jeetbot.cc"
+    false_positive1 = "Legitimate use of the commercial JeetBot service if the user's browser or environment performs specific API patterns that match the token-forwarding indicator logic."
+    false_positive2 = "Network traffic to legitimate services that may share IP space or infrastructure with the identified malicious domains."
+events:
+    $e.metadata.event_type = "NETWORK_CONNECTION"
+    $e.target.url = $url
+    $e.target.ip = $ip
+    (
+      strings.contains($url, "enhanced.jeetbot.cc") or
+      strings.contains($url, "enhanced-1.jeetbot.cc") or
+      strings.contains($url, "ext-03.jeetbot.cc") or
+      strings.contains($url, "ext-styles.jeetbot.cc") or
+      strings.contains($url, "morphilina.me") or
+      strings.contains($url, "proxy.morphilina.me") or
+      strings.contains($url, "drisnya.online") or
+      strings.contains($url, "img.drisnya.online") or
+      strings.contains($url, "thebeholder-proxy.deno.dev") or
+      strings.contains($url, "proxy.thebeholder.deno.net") or
+      strings.contains($url, "alexue4.dev") or
+      $ip = "152.53.177.186" or
+      $ip = "132.243.113.25" or
+      $ip = "80.74.26.162" or
+      (
+        (strings.contains($url, "jeetbot.cc") or strings.contains($url, "api.jeetbot.cc")) and
+        (
+          strings.contains($url, "&auth=") or
+          strings.contains($url, "set-token") or
+          strings.contains($url, "/api/v1/proxies") or
+          strings.contains($url, "/api/v1/forced-proxy")
+        )
+      )
+    )
+
+  condition:
+    $e
+
+  outcome:
+    $detection_reason = if(strings.contains($url, "&auth="), "Possible Twitch OAuth token forwarded in URL",
+                        if(strings.contains($url, "set-token"), "Historical OAuth token collection endpoint",
+                        if(strings.contains($url, "/api/v1/proxies"), "JeetBot proxy configuration request",
+                        if(strings.contains($url, "/api/v1/forced-proxy"), "JeetBot forced proxy configuration request",
+                        if(strings.contains($url, "enhanced.jeetbot.cc") or strings.contains($url, "enhanced-1.jeetbot.cc") or strings.contains($url, "ext-03.jeetbot.cc") or strings.contains($url, "ext-styles.jeetbot.cc") or strings.contains($url, "morphilina.me") or strings.contains($url, "proxy.morphilina.me") or strings.contains($url, "drisnya.online") or strings.contains($url, "img.drisnya.online") or strings.contains($url, "thebeholder-proxy.deno.dev") or strings.contains($url, "proxy.thebeholder.deno.net") or strings.contains($url, "alexue4.dev"), "Connection to JeetBot extension proxy/dev infrastructure",
+                        if($ip = "152.53.177.186" or $ip = "132.243.113.25" or $ip = "80.74.26.162", "Connection to known JeetBot IP infrastructure",
+                        "Connection to JeetBot-associated domain"))))))
+    $device_name = $e.principal.hostname
+    $device_id = $e.principal.asset.device_id
+    $user = $e.principal.user.userid
+    $file_name = $e.target.process.file.full_path
+    $command_line = $e.target.process.command_line
+    $remote_url = $e.target.url
+    $remote_ip = $e.target.ip
+    $remote_port = $e.target.port
+    $protocol = $e.network.ip_protocol
+}
