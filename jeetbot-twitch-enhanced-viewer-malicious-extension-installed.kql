@@ -1,0 +1,12 @@
+// MITRE ATT&CK: T1176 - Browser Extensions
+// Severity: High
+let MaliciousExtensionIds = dynamic(["pnhhdhhcadcjfckjhpmjneldiegbojfb","twitchenhancedviewer@example.com"]);
+let SuspectNamePatterns = dynamic(["jeetbot","twitch enhanced viewer"]);
+DeviceTvmBrowserExtensions
+| extend ExtensionNameLower = tolower(ExtensionName), ExtensionVendorLower = tolower(ExtensionVendor), ExtensionDescriptionLower = tolower(ExtensionDescription)
+| extend IsKnownMaliciousId = ExtensionId in~ (MaliciousExtensionIds)
+| extend HasSuspectName = ExtensionNameLower has_any (SuspectNamePatterns) or ExtensionVendorLower has_any (SuspectNamePatterns) or ExtensionDescriptionLower has_any (SuspectNamePatterns)
+| where IsKnownMaliciousId or HasSuspectName
+| extend Confidence = iff(IsKnownMaliciousId, "High - Confirmed Malicious Extension ID", "Medium - Name/Vendor Match, Verify Extension ID")
+| project DeviceId, ExtensionId, ExtensionName, ExtensionVendor, ExtensionVersion, ExtensionRisk, InstallationTime, Confidence
+| sort by Confidence asc, InstallationTime desc
