@@ -1,0 +1,45 @@
+// IronToll (Iron Man System kit) threat hunt
+// Durable indicators: 7 rotating-daily C2 IPs (Tencent AS132203 / Alibaba AS45102) and kit HTTP fingerprint.
+// Individual lure domains rotate every 1-2 days, so domain patterns are supplementary, not primary, signal.
+let IronTollC2IPs = dynamic(["43.160.201.83","43.130.228.129","47.253.233.239","43.160.244.74","43.160.245.210","43.165.0.82","43.165.7.185"]);
+let KitEtag = "33746b336ed5dd450a5542c5d7ce4e55";
+let KitAssets = dynamic(["iron-man.png","/assets/index-39cef7f8.js","/assets/index-f18ae053.css"]);
+let DisposableTlds = dynamic([".autos",".bar",".biz",".boats",".bond",".buzz",".casa",".cfd",".courses",".cyou",".fit",".forum",".fun",".hair",".help",".homes",".icu",".lat",".life",".my.id",".pics",".reisen",".rest",".sbs",".shop",".skin",".work",".xyz"]);
+let BrandTokens = dynamic(["digitalgov","amendes-justice-gov","vodafaonne","telestraau","euprava-gov","at-govt","apcoa","q-parkfine","finessa","malowzx","npugovua","agenciatributaria"]);
+// 1. DNS resolutions naming or hitting IronToll C2 IPs
+let DnsC2Hits = DnsEvents
+| where IPAddresses has_any (IronTollC2IPs)
+| project TimeGenerated, Host = Computer, UserPrincipalName = "", MatchedIndicator = IPAddresses, DetailField = Name, MatchReason = "DNS resolution to IronToll C2 IP", SourceTable = "DnsEvents";
+// 2. Network/proxy connections to IronToll C2 IPs (CommonSecurityLog covers firewall/proxy CEF sources)
+let CslC2Hits = CommonSecurityLog
+| where DestinationIP in (IronTollC2IPs) or DestinationIP has_any (IronTollC2IPs)
+| project TimeGenerated, Host = DeviceName, UserPrincipalName = SourceUserName, MatchedIndicator = DestinationIP, DetailField = RequestURL, MatchReason = "Network connection to IronToll C2 IP", SourceTable = "CommonSecurityLog";
+// 3. Endpoint (Defender) network connections to IronToll C2 IPs
+let DeviceC2Hits = DeviceNetworkEvents
+| where RemoteIP in (IronTollC2IPs)
+| project TimeGenerated = TimeGenerated, Host = DeviceName, UserPrincipalName = InitiatingProcessAccountUpn, MatchedIndicator = RemoteIP, DetailField = RemoteUrl, MatchReason = "Endpoint connection to IronToll C2 IP", SourceTable = "DeviceNetworkEvents";
+// 4. HTTP/web traffic matching the Iron Man System kit fingerprint (ETag, favicon, asset paths, backend headers)
+let KitFingerprintHits = CommonSecurityLog
+| where RequestURL has_any (KitAssets)
+ or FileHash == KitEtag
+ or RequestClientApplication has "GoFrame HTTP Server"
+ or RequestClientApplication has "1.1 Caddy"
+ or AdditionalExtensions has KitEtag
+| extend MatchedIndicator = case(
+ RequestURL has_any (KitAssets), RequestURL,
+ FileHash == KitEtag or AdditionalExtensions has KitEtag, KitEtag,
+ RequestClientApplication has "GoFrame HTTP Server", "server: GoFrame HTTP Server",
+ RequestClientApplication has "1.1 Caddy", "via: 1.1 Caddy",
+ "unknown")
+| project TimeGenerated, Host = DeviceName, UserPrincipalName = SourceUserName, MatchedIndicator, DetailField = RequestURL, MatchReason = "Iron Man System kit HTTP fingerprint match", SourceTable = "CommonSecurityLog";
+// 5. DNS queries matching IronToll lure brand tokens combined with disposable TLDs (rotates fast - supplementary signal)
+let LureDomainHits = DnsEvents
+| where Name has_any (BrandTokens) and Name has_any (DisposableTlds)
+| project TimeGenerated, Host = Computer, UserPrincipalName = "", MatchedIndicator = Name, DetailField = IPAddresses, MatchReason = "DNS query to IronToll lure domain pattern (brand token + disposable TLD)", SourceTable = "DnsEvents";
+// 6. Proxy/web requests to IronToll lure domain patterns
+let LureProxyHits = CommonSecurityLog
+| where RequestURL has_any (BrandTokens) and RequestURL has_any (DisposableTlds)
+| project TimeGenerated, Host = DeviceName, UserPrincipalName = SourceUserName, MatchedIndicator = RequestURL, DetailField = DestinationIP, MatchReason = "Proxy request to IronToll lure domain pattern (brand token + disposable TLD)", SourceTable = "CommonSecurityLog";
+union DnsC2Hits, CslC2Hits, DeviceC2Hits, KitFingerprintHits, LureDomainHits, LureProxyHits
+| summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), HitCount = count(), MatchReasons = make_set(MatchReason), MatchedIndicators = make_set(MatchedIndicator, 25), SourceTables = make_set(SourceTable) by Host, UserPrincipalName
+| sort by LastSeen desc
