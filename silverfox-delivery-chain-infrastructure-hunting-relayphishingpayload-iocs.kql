@@ -1,0 +1,44 @@
+// SilverFox / Aurora / UNC6671 three-tier delivery infrastructure hunt
+// Tier1: phishing/clone sites | Tier2: relay/dispatcher | Tier3: payload host
+let phishingSites = dynamic(["gg-steelseries.com.cn", "org-bcut.com.cn"]);
+let relayDispatchers = dynamic(["noah-ssh.com.cn", "noah-relay.wotudj578.workers.dev", "noah-relay2.wotudj578.workers.dev", "api.new-noah.top"]);
+let payloadHosts = dynamic(["www.0akw8w.com"]);
+let allDomains = dynamic(["noah-ssh.com.cn", "noah-relay.wotudj578.workers.dev", "noah-relay2.wotudj578.workers.dev", "gg-steelseries.com.cn", "org-bcut.com.cn", "www.0akw8w.com", "api.new-noah.top"]);
+(union isfuzzy=true
+(
+    DeviceNetworkEvents
+    | where ActionType == "ConnectionSuccess"
+    | extend MatchedHost = tolower(split(iff(RemoteUrl has "://", extract(@"^[a-zA-Z]+://([^/]+)", 1, RemoteUrl), RemoteUrl), ":")[0])
+    | where MatchedHost in~ (allDomains)
+    | project Timestamp, DeviceName, SourceHost = DeviceName, DestinationUrl = RemoteUrl, RemotePort, RemoteIP, MatchedDomain = MatchedHost, EventType = "DeviceNetworkEvent"
+),
+(
+    DeviceEvents
+    | where ActionType == "HttpRequest"
+    | extend MatchedHost = tolower(split(iff(RemoteUrl has "://", extract(@"^[a-zA-Z]+://([^/]+)", 1, RemoteUrl), RemoteUrl), ":")[0])
+    | where MatchedHost in~ (allDomains)
+    | project Timestamp, DeviceName, SourceHost = DeviceName, DestinationUrl = RemoteUrl, RemotePort = int(null), RemoteIP = "", MatchedDomain = MatchedHost, EventType = "DeviceHttpRequestEvent"
+),
+(
+    DnsEvents
+    | extend MatchedHost = tolower(trim_end(@"\.", Name))
+    | where MatchedHost in~ (allDomains)
+    | project Timestamp = TimeGenerated, DeviceName = Computer, SourceHost = Computer, DestinationUrl = Name, RemotePort = int(null), RemoteIP = "", MatchedDomain = MatchedHost, EventType = "DnsEvent"
+)
+)
+| where isnotempty(MatchedDomain)
+| extend IOCCategory = case(
+    MatchedDomain in (phishingSites), "Phishing/Clone Site",
+    MatchedDomain in (relayDispatchers), "Relay/Dispatcher",
+    MatchedDomain in (payloadHosts), "Payload Host",
+    "Unknown"
+)
+| extend RelaySpecific = iff(DestinationUrl has "api.php" or DestinationUrl has "relays.json", true, false)
+| extend PayloadSpecific = iff(DestinationUrl has "/down910", true, false)
+// Confidence tiering: a bare DNS resolution can come from passive sources (safe-link/URL-rewrite
+// crawlers, sandbox detonation, threat-intel enrichment) that never actually connect -- treat those
+// as lower-confidence leads and surface confirmed network/application connections first.
+| extend ConfidenceRank = iff(EventType == "DnsEvent", 2, 1)
+| extend Confidence = iff(EventType == "DnsEvent", "Low - DNS resolution only, no confirmed connection", "High - confirmed network/application connection")
+| sort by ConfidenceRank asc, Timestamp desc
+| project Timestamp, SourceHost, DestinationUrl, MatchedDomain, IOCCategory, Confidence, RelaySpecific, PayloadSpecific, RemoteIP, RemotePort, EventType
