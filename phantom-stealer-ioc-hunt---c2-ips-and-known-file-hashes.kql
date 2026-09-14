@@ -1,0 +1,13 @@
+let PhantomC2IPs = dynamic(["91.189.91.65","91.189.91.97","185.125.190.56","185.125.190.57","185.125.188.54","91.189.91.99","185.125.188.61","185.125.188.60","91.189.91.96","185.125.190.99","185.125.188.55","20.190.160.131","74.178.76.128","57.153.246.3","128.24.231.65","23.11.41.157","88.221.169.152","88.221.169.205","48.209.133.15","172.211.123.250"]);
+let PhantomHashes = dynamic(["03ff10f626253ac8613b7c489170d602c524b9e8b69ebc13d677a800b0bdb0db","6a1e573c0068dc87d4f0fbe6782d0a253dd60b9f37b7f6c5c4d6c72547f16c05","4377e894b3e7956b74d467118164b7023e9b0f0f4c151e464d00991e30f924ac","f9120c06aad5aa4add1b646456199fd34b4fa72c6eb8ba4d37d85a59d7cac478","3aa5fcb894a4dacabbedf7995d0d94dcf53d1faf5114089f685c120895a0e26a","d2501059efb3723eafb1bc76f2209a48bdcc9568edfc012d259748fe8a9011f6","ddb9d916b9a350009121972942e22143cc9b2fba3bb4c59652270a27923ee952","06d336004f0800f8e10b602dc7a7f27b5f4988b998c3b6cd2807d65787374472","e1625a8c19a4444ac3e51383cab16eb7887e7887bdbf248902ee5974ea29de51","69f23d8f20eee02cd610ec7502d991e097b031c03a4f445439f2bc287cbdf6ec","a12494709523898db3239fd4996ee77b9c19760b24c029e0292d682e46b7558b","bdbaed48a04034e6bad2d2cb32211f594a21bc1195517d58deaaff137634ccaf","028a45e4ab43094b9910a58a6ca17dc0f73226fd08546010f7a96e57c92a4479","33adcc541093fffa0afbf1cef997646cccd0451266af88f9c2c2949ac4d6366c","345cc95831e9900b0e4f68a1f9afc9bf4190b1790a57eee34864ea556b60f229","e9713a271bd302aecfd50c96818020668d0a56ec40f62eca768a74462bb91d16","e608d06a414aab2f62f08947089828ed93c187be037edcb68d7855cc4516025c","bcd393ff51181c590aab1566a05a5dc067f9c12aa09e2587d4bd4428d250168c","b607a86f2036efd244ce70e0aaceec02e623a91eefb31e19d4e915023feb0182","ac96fc01568ec3cfaf434567d66b73469517f1d41996727e166fba3d26e6d097"]);
+let NetworkHits = DeviceNetworkEvents
+| where RemoteIP in (PhantomC2IPs)
+| project TimeGenerated, DeviceId, DeviceName, IOCType = "C2_IP", IOCValue = RemoteIP, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteUrl, RemotePort;
+let FileHits = DeviceFileEvents
+| where SHA256 in~ (PhantomHashes)
+| project TimeGenerated, DeviceId, DeviceName, IOCType = "SHA256_File", IOCValue = SHA256, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteUrl = FolderPath, RemotePort = "";
+let ProcessHits = DeviceProcessEvents
+| where SHA256 in~ (PhantomHashes)
+| project TimeGenerated, DeviceId, DeviceName, IOCType = "SHA256_Process", IOCValue = SHA256, InitiatingProcessFileName, InitiatingProcessCommandLine = ProcessCommandLine, RemoteUrl = FolderPath, RemotePort = "";
+union NetworkHits, FileHits, ProcessHits
+| sort by TimeGenerated desc
