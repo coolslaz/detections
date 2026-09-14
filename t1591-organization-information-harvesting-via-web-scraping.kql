@@ -1,0 +1,12 @@
+// MITRE ATT&CK: T1591 - Gather Victim Org Information
+// Severity: Medium
+// False Positives: users rapidly browsing multiple 'about' pages on a single site (mitigated below by requiring 5+ distinct pages and excluding known search-engine/SEO crawler user agents)
+CommonSecurityLog
+| where isnotempty(SourceIP)
+| where RequestMethod =~ "GET" or DeviceAction =~ "GET"
+| where RequestURL has "about"
+| where not(RequestClientApplication has_any ("Googlebot", "bingbot", "Slurp", "DuckDuckBot", "Baiduspider", "YandexBot", "facebookexternalhit", "AhrefsBot", "SemrushBot"))
+| summarize RequestCount = count(), DistinctPages = dcount(RequestURL) by SourceIP, TimeBucket = bin(ReceiptTime, 20s)
+| where RequestCount >= 25 and DistinctPages >= 5
+| project TimeBucket, SourceIP, RequestCount, DistinctPages
+| sort by RequestCount desc
