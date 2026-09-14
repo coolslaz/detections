@@ -1,0 +1,14 @@
+let JeetBotExactHosts = dynamic(["enhanced.jeetbot.cc","enhanced-1.jeetbot.cc","ext-03.jeetbot.cc","ext-styles.jeetbot.cc","api.jeetbot.cc","jeetbot.cc","proxy.morphilina.me","morphilina.me","drisnya.online","img.drisnya.online","thebeholder-proxy.deno.dev","proxy.thebeholder.deno.net"]);
+let JeetBotIPs = dynamic(["152.53.177.186","132.243.113.25","80.74.26.162"]);
+let BrowserProcesses = dynamic(["chrome.exe","msedge.exe","firefox.exe","brave.exe","opera.exe"]);
+DeviceNetworkEvents
+| where TimeGenerated > ago(14d)
+| where InitiatingProcessFileName in~ (BrowserProcesses)
+| extend RemoteHost = tolower(tostring(parse_url(RemoteUrl).Host))
+| extend IsKnownJeetBotHost = RemoteHost in~ (JeetBotExactHosts) or RemoteHost endswith ".jeetbot.cc" or RemoteHost endswith ".morphilina.me" or RemoteHost endswith ".drisnya.online"
+| where IsKnownJeetBotHost or (RemoteIP in (JeetBotIPs) and RemoteHost != "")
+| extend MatchedIndicator = iff(IsKnownJeetBotHost, RemoteHost, RemoteIP)
+| extend IsTokenExfilIndicator = (IsKnownJeetBotHost and (RemoteUrl has "auth=" or RemoteUrl has "/set-token")) or (RemoteHost == "usher.ttvnw.net" and (RemoteUrl has "auth=" or RemoteUrl has "/set-token"))
+| extend AlertReason = iff(IsTokenExfilIndicator, "High - Confirmed Token Exfiltration Pattern", iff(IsKnownJeetBotHost, "High - JeetBot C2 Communication", "Medium - Shared-Host IP Match, Verify Domain"))
+| project TimeGenerated, DeviceId, DeviceName, ActionType, RemoteUrl, RemoteHost, RemoteIP, RemotePort, InitiatingProcessFileName, InitiatingProcessCommandLine, MatchedIndicator, IsTokenExfilIndicator, AlertReason
+| sort by IsTokenExfilIndicator desc, TimeGenerated desc
