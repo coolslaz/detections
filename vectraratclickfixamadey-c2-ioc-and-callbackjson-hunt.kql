@@ -1,0 +1,19 @@
+let VectraC2IPs = dynamic(["86.109.75.168","86.109.75.161","178.16.54.148","195.20.115.77","91.219.236.179","91.92.242.236","195.63.145.106"]);
+let VectraPorts = dynamic([3308,8080,8888,4457,6667,8081]);
+let VectraDomains = dynamic(["verify-cloud.digital"]);
+let DeviceNetworkData = DeviceNetworkEvents
+| where RemoteIP in (VectraC2IPs)
+ or RemoteUrl has_any (VectraDomains)
+ or RemotePort in (VectraPorts) and RemoteIP !in (VectraC2IPs)
+| extend MatchType = case(
+ RemoteIP in (VectraC2IPs), "Known VectraRAT/ClickFix/Amadey C2 IP",
+ RemoteUrl has_any (VectraDomains), "ClickFix distribution domain",
+ RemotePort in (VectraPorts), "VectraRAT known C2/panel port",
+ "Unknown")
+| project TimeGenerated, DeviceName, AccountName = InitiatingProcessAccountName, RemoteIP, RemoteUrl, RemotePort, FileName = InitiatingProcessFileName, FolderPath = InitiatingProcessFolderPath, ActionType, MatchType;
+let DeviceFileData = DeviceFileEvents
+| where FolderPath has @"\Temp\" and FileName =~ "callback.json"
+| extend MatchType = "callback.json C2 address override artifact"
+| project TimeGenerated, DeviceName, AccountName = InitiatingProcessAccountName, RemoteIP = "", RemoteUrl = "", RemotePort = 0, FileName, FolderPath, ActionType, MatchType;
+union DeviceNetworkData, DeviceFileData
+| sort by TimeGenerated desc
