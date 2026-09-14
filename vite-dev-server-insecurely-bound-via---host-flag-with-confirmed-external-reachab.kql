@@ -1,0 +1,23 @@
+let ApprovedCIDeviceNamePatterns = dynamic(["sandbox", "ci-", "-ci", "build-agent", "github-actions", "gitlab-runner", "jenkins"]);
+let KnownInternalRanges = dynamic(["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]);
+let InsecureBind = DeviceProcessEvents
+| where FileName in~ ("node.exe", "node", "vite", "vite.js")
+| where ProcessCommandLine has "vite"
+| where ProcessCommandLine has "--host"
+| where ProcessCommandLine has_any ("0.0.0.0", "--host true", "--host=0.0.0.0", "--host \"0.0.0.0\"")
+| where not(DeviceName has_any (ApprovedCIDeviceNamePatterns))
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine;
+let ExternalInboundToPort = DeviceNetworkEvents
+| where RemotePort == 5173
+| where LocalIPType != "Loopback"
+| where ActionType in~ ("ConnectionSuccess", "InboundConnectionAccepted", "ListeningConnectionAccepted")
+| where isnotempty(RemoteIP)
+| where not(ipv4_is_private(RemoteIP))
+| where not(ipv4_is_in_any_range(RemoteIP, KnownInternalRanges))
+| where not(DeviceName has_any (ApprovedCIDeviceNamePatterns))
+| project TimeGenerated, DeviceName, AccountName = InitiatingProcessAccountName, RemoteIP, RemotePort, FileName = InitiatingProcessFileName, ProcessCommandLine = InitiatingProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine;
+InsecureBind
+| join kind=inner (ExternalInboundToPort) on DeviceName
+| where TimeGenerated1 between ((TimeGenerated - 1h) .. (TimeGenerated + 6h))
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, ExternalConnectionTime = TimeGenerated1, RemoteIP, RemotePort
+| sort by TimeGenerated desc
