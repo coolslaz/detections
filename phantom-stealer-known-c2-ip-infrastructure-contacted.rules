@@ -1,0 +1,3 @@
+alert ip $HOME_NET any -> [91.189.91.65,185.125.190.56,185.125.188.54,20.190.160.131] any (msg:"Phantom Stealer known C2 IP infrastructure contacted"; flow:to_server; metadata: attack_id T1071, attack_id T1105, author Arnold Chan; classtype:trojan-activity; sid:1000030; rev:1;)
+
+alert ip [91.189.91.65,185.125.190.56,185.125.188.54,20.190.160.131] any -> $HOME_NET any (msg:"Phantom Stealer known C2 IP infrastructure contacted (inbound)"; flow:to_client; metadata: attack_id T1071, attack_id T1105; classtype:trojan-activity; sid:1000031; rev:1;)
