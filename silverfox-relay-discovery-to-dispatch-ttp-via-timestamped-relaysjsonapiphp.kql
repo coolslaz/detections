@@ -1,0 +1,48 @@
+let TimestampMs = @"^\w+=\d{13}$";
+let DiscoveryHits = (
+    union isfuzzy=true
+    (
+        DeviceNetworkEvents
+        | where ActionType == "ConnectionSuccess"
+        | project Timestamp, SourceIp = LocalIP, DestinationHost = RemoteUrl, Url = RemoteUrl
+    ),
+    (
+        DeviceEvents
+        | where ActionType == "HttpRequest"
+        | project Timestamp, SourceIp = LocalIP, DestinationHost = RemoteUrl, Url = RemoteUrl
+    )
+)
+| extend UrlPath = tostring(split(Url, "?")[0])
+| where UrlPath endswith "/relays.json"
+| extend QueryString = tostring(split(Url, "?")[1])
+| where QueryString matches regex TimestampMs
+| project DiscoveryTime = Timestamp, SourceIp, DiscoveryHost = DestinationHost, DiscoveryUrl = Url;
+let DispatchHits = (
+    union isfuzzy=true
+    (
+        DeviceNetworkEvents
+        | where ActionType == "ConnectionSuccess"
+        | project Timestamp, SourceIp = LocalIP, DestinationHost = RemoteUrl, Url = RemoteUrl
+    ),
+    (
+        DeviceEvents
+        | where ActionType == "HttpRequest"
+        | project Timestamp, SourceIp = LocalIP, DestinationHost = RemoteUrl, Url = RemoteUrl
+    )
+)
+| extend UrlPath = tostring(split(Url, "?")[0])
+| where UrlPath endswith "/api.php"
+| extend QueryString = tostring(split(Url, "?")[1])
+| where QueryString matches regex TimestampMs
+| project DispatchTime = Timestamp, SourceIp, DispatchHost = DestinationHost, DispatchUrl = Url;
+let TwoStageHits = DiscoveryHits
+| join kind=inner (DispatchHits) on SourceIp
+| where DispatchTime between (DiscoveryTime .. (DiscoveryTime + 5s))
+| project DiscoveryTime, DispatchTime, SourceIp, DiscoveryHost, DiscoveryUrl, DispatchHost, DispatchUrl, Confidence = "High - relay discovery followed by dispatcher decision, single-parameter cache-busting query on both hops", MatchType = "TwoStage";
+let SingleStageDispatchOnly = DispatchHits
+| join kind=leftanti (DiscoveryHits) on SourceIp
+| extend DiscoveryTime = datetime(null), DiscoveryHost = "", DiscoveryUrl = ""
+| project DiscoveryTime, DispatchTime, SourceIp, DiscoveryHost, DiscoveryUrl, DispatchHost, DispatchUrl, Confidence = "Low - dispatcher-only hit, discovery step not observed", MatchType = "SingleStage";
+TwoStageHits
+| union SingleStageDispatchOnly
+| sort by DispatchTime desc
