@@ -1,0 +1,22 @@
+// Detects successive successful INTERACTIVE sign-ins for the same account, both satisfying SMS/OTP-based MFA,
+// from a genuinely distinct location, network (ASN), and device within a short time window.
+// Consistent with live-operator OTP relay/interception (IronToll-style PhaaS).
+// Excludes background token refresh, CGNAT/mobile-carrier IP churn, corporate proxy egress, and same-device roaming
+// (all of which flip IPAddress alone without indicating a hijacked session).
+SigninLogs
+| where ResultType == 0
+| where IsInteractive == true
+| where AuthenticationDetails has "OTP" or AuthenticationDetails has "SMS" or AuthenticationRequirement == "multiFactorAuthentication"
+| extend DeviceId = tostring(DeviceDetail.deviceId)
+| project TimeGenerated, UserPrincipalName, IPAddress, Location, AutonomousSystemNumber, DeviceId, AppDisplayName
+| sort by UserPrincipalName asc, TimeGenerated asc
+| serialize
+| extend PrevTime = prev(TimeGenerated), PrevIP = prev(IPAddress), PrevLocation = prev(Location), PrevASN = prev(AutonomousSystemNumber), PrevDeviceId = prev(DeviceId), PrevUser = prev(UserPrincipalName)
+| where UserPrincipalName == PrevUser
+| extend TimeDeltaSeconds = datetime_diff('second', TimeGenerated, PrevTime)
+| where TimeDeltaSeconds between (1 .. 120)
+| where Location != PrevLocation
+| where AutonomousSystemNumber != PrevASN
+| where DeviceId != PrevDeviceId
+| project TimeGenerated, UserPrincipalName, PrevTime, TimeDeltaSeconds, IPAddress, PrevIP, Location, PrevLocation, AutonomousSystemNumber, PrevASN, DeviceId, PrevDeviceId, AppDisplayName
+| order by TimeDeltaSeconds asc
