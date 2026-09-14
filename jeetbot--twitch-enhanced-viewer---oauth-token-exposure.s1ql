@@ -1,0 +1,20 @@
+// JeetBot / Twitch Enhanced Viewer - OAuth Token Exposure
+// Severity: high
+// Tags: JeetBot, Twitch, OAuth token theft, browser extension, credential exposure
+// Description: Detects network connections to JeetBot infrastructure exfiltrating Twitch OAuth tokens.
+// NOTE: 'event.type' value and fields like 'dst.url' are environment-dependent; verify via discovery.
+
+event.type = 'IP Connect'
+AND (dst.domain.name in ('enhanced.jeetbot.cc', 'enhanced-1.jeetbot.cc', 'ext-03.jeetbot.cc', 'ext-styles.jeetbot.cc', 'morphilina.me', 'proxy.morphilina.me', 'drisnya.online', 'img.drisnya.online', 'thebeholder-proxy.deno.dev', 'proxy.thebeholder.deno.net', 'alexue4.dev')
+     OR dst.ip.address in ('152.53.177.186', '132.243.113.25', '80.74.26.162')
+     OR (dst.domain.name in ('jeetbot.cc', 'api.jeetbot.cc')
+         AND (dst.url contains '&auth=' OR dst.url contains 'set-token' OR dst.url contains '/api/v1/proxies' OR dst.url contains '/api/v1/forced-proxy')))
+| let DetectionReason = (dst.url contains '&auth=') ? 'Possible Twitch OAuth token forwarded in URL' :
+                        (dst.url contains 'set-token') ? 'Historical OAuth token collection endpoint' :
+                        (dst.url contains '/api/v1/proxies') ? 'JeetBot proxy configuration request' :
+                        (dst.url contains '/api/v1/forced-proxy') ? 'JeetBot forced proxy configuration request' :
+                        (dst.domain.name in ('enhanced.jeetbot.cc', 'enhanced-1.jeetbot.cc', 'ext-03.jeetbot.cc', 'ext-styles.jeetbot.cc', 'morphilina.me', 'proxy.morphilina.me', 'drisnya.online', 'img.drisnya.online', 'thebeholder-proxy.deno.dev', 'proxy.thebeholder.deno.net', 'alexue4.dev')) ? 'Connection to JeetBot extension proxy/dev infrastructure' :
+                        (dst.ip.address in ('152.53.177.186', '132.243.113.25', '80.74.26.162')) ? 'Connection to known JeetBot IP infrastructure' :
+                        'Connection to JeetBot-associated domain'
+| sort -event.time
+| columns event.time, endpoint.name, src.process.user, src.process.name, src.process.cmdline, dst.url, dst.ip.address, dst.port.number, event.network.protocolName, DetectionReason
