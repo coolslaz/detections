@@ -1,0 +1,23 @@
+// Detects lateral movement from a compromised Langflow host to an internet-exposed MySQL/Nacos server using root credentials
+// T1078, T1021
+let LangflowHosts = DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+// Tightened: match the actual Langflow binary/module invocation, not any process whose command line merely mentions the word "langflow" (e.g. log greps, doc viewers)
+| where FileName has "langflow" or (FileName in~ ("python", "python3") and ProcessCommandLine has_any ("langflow run", "-m langflow", "langflow.cli"))
+| distinct DeviceId;
+let NetworkEvents = DeviceNetworkEvents
+| where TimeGenerated > ago(1d)
+| where DeviceId in (LangflowHosts)
+| where RemotePort in (3306, 8848)
+| where InitiatingProcessAccountName =~ "root" or InitiatingProcessCommandLine has "root"
+| project TimeGenerated, DeviceId, DeviceName, RemoteIP, RemotePort, InitiatingProcessAccountName, InitiatingProcessFileName, InitiatingProcessCommandLine;
+let LogonEvents = DeviceLogonEvents
+| where TimeGenerated > ago(1d)
+| where AccountName =~ "root"
+| where DeviceId in (LangflowHosts)
+// Exclude expected interactive console/admin logons on the host itself; focus on automated/remote pivot logons
+| where LogonType != "Interactive"
+| project TimeGenerated, DeviceId, DeviceName, RemoteIP = "", RemotePort = 0, InitiatingProcessAccountName = AccountName, InitiatingProcessFileName = ActionType, InitiatingProcessCommandLine = "";
+NetworkEvents
+| union LogonEvents
+| sort by TimeGenerated asc
