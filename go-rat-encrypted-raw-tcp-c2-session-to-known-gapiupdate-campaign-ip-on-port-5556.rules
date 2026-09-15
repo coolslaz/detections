@@ -1,0 +1,3 @@
+alert tcp $HOME_NET any -> 91.219.238.169 5556 (msg:"Go RAT encrypted raw-TCP C2 session to known GapiUpdate campaign IP on port 5556"; flow:to_server,established; metadata: author Arnold Chan, mitre_technique_id T1095, mitre_technique_id T1573.001, campaign GAPI_Update; classtype:command-and-control; reference:url,gapidriver.com; sid:1000101; rev:1;)
+
+alert tcp $HOME_NET any -> $EXTERNAL_NET 5556 (msg:"Possible Go RAT persistent encrypted raw-TCP C2 session on port 5556"; flow:to_server,established; stream_size:client,>,2000; threshold:type limit, track by_src, count 3, seconds 600; metadata: author detections.ai, mitre_technique_id T1095, mitre_technique_id T1573.001, campaign GAPI_Update; classtype:command-and-control; sid:1000102; rev:1;)
