@@ -1,0 +1,29 @@
+let tajinDomains = dynamic(["payae.cc","swapgram.org"]);
+let tajinUrls = dynamic([
+ "https://payae.cc/Qwpf734",
+ "https://payae.cc/QTTb209",
+ "https://payments.geidea.ae/payByLink/SUNWORLDWorkshopEquipmentMachinerySpareParts/l1f-fa8-mn8-uf4",
+ "https://payments.geidea.ae/payByLink/SUNWORLDWorkshopEquipmentMachinerySpareParts/y00-ij6-6f3-w11",
+ "https://payments.geidea.ae/payByLink/SUNWORLDWorkshopEquipmentMachinerySpareParts/ntb-3i6-wjp-wts",
+ "https://payments.geidea.ae/payByLink/SUNWORLDWorkshopEquipmentMachinerySpareParts/q01-lfa-r5x-hiq",
+ "https://payments.geidea.ae/payByLink/SUNWORLDWorkshopEquipmentMachinerySpareParts/35a-2ku-ftz-0za",
+ "https://payments.geidea.ae/payByLink/SUNWORLDWorkshopEquipmentMachinerySpareParts/b7k-08r-rz5-nds",
+ "https://paypage.ngenius-payments.com/invoices/invoice/3aeb04ff-8025-451a-9259-5df661503a62/payment",
+ "https://paypage.ngenius-payments.com/invoices/invoice/06197f6d-9874-40d1-ab08-f3ad5429746d/payment"
+]);
+let EmailClicks = UrlClickEvents
+| where Url in~ (tajinUrls) or Url has_any (tajinDomains)
+| project TimeGenerated, MatchType = "UrlClickEvent", AccountUpn, Url, NetworkMessageId, ActionType;
+let ProxyWeb = DeviceNetworkEvents
+| where RemoteUrl in~ (tajinUrls) or RemoteUrl has_any (tajinDomains)
+| project TimeGenerated, MatchType = "DeviceNetworkEvent", DeviceName, AccountName = InitiatingProcessAccountName, Url = RemoteUrl, RemoteIP, InitiatingProcessFileName;
+let DeviceUrl = DeviceEvents
+| where ActionType in ("BrowserLaunchedToOpenUrl","IndicatorUrlClick")
+| extend Url = tostring(parse_json(AdditionalFields).Url)
+| where isnotempty(Url) and (Url in~ (tajinUrls) or Url has_any (tajinDomains))
+| project TimeGenerated, MatchType = "DeviceEvent", DeviceName, AccountName, Url;
+let DnsHits = DnsEvents
+| where Name has_any (tajinDomains)
+| project TimeGenerated, MatchType = "DnsEvent", Computer, ClientIP, Name;
+union isfuzzy=true EmailClicks, ProxyWeb, DeviceUrl, DnsHits
+| sort by TimeGenerated desc
