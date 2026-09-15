@@ -1,0 +1,23 @@
+let FileEvents = DeviceFileEvents
+| where TimeGenerated > ago(1d)
+| where FolderPath has ".ssh" and FileName =~ "authorized_keys"
+| where ActionType in ("FileCreated", "FileModified")
+| where InitiatingProcessFileName !~ "meshagent.exe" and InitiatingProcessCommandLine !has "meshcentral"
+| project TimeGenerated, DeviceName, ActionType, FolderPath, FileName, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName;
+let ProcessEvents = DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where ProcessCommandLine has ".ssh" and ProcessCommandLine has "authorized_keys"
+| where ProcessCommandLine has_any ("echo", "cat", ">>", "ssh-rsa", "ssh-ed25519")
+| where InitiatingProcessFileName !~ "meshagent.exe" and ProcessCommandLine !has "meshcentral"
+| project TimeGenerated, DeviceName, ActionType = "ProcessExecuted", FolderPath = "", FileName = "", InitiatingProcessFileName, InitiatingProcessCommandLine = ProcessCommandLine, InitiatingProcessAccountName = AccountName;
+union FileEvents, ProcessEvents
+| extend ProbeSignature = strcat(FolderPath, "|", FileName, "|", InitiatingProcessCommandLine)
+| summarize
+    AffectedDevices = make_set(DeviceName, 100),
+    Events = count(),
+    DistinctProbes = dcount(ProbeSignature),
+    DistinctAccounts = dcount(InitiatingProcessAccountName),
+    ProbeDetails = make_set(ProbeSignature, 50)
+    by DeviceName, bin(TimeGenerated, 1h)
+| where DistinctProbes >= 2
+| where isnotempty(AffectedDevices)
