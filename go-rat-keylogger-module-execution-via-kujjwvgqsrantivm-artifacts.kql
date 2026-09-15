@@ -1,0 +1,15 @@
+union (
+    DeviceProcessEvents
+    | where SHA256 == "99c4dcc677942513ff39846aba051d1baeaaa5ad083dabc9e3f9b49a522b0a0a"
+        or ProcessCommandLine has "kujjwvgqsr"
+        or FileName has "kujjwvgqsr"
+        or (ProcessCommandLine has "antivm" and InitiatingProcessFileName in~ ("GapiUpdate.exe", "GapiUpdate.dll", "Launcher.exe"))
+    | project TimeGenerated, DeviceName, FileName, ProcessCommandLine, SHA256, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName
+), (
+    DeviceFileEvents
+    | where SHA256 == "99c4dcc677942513ff39846aba051d1baeaaa5ad083dabc9e3f9b49a522b0a0a"
+        or FileName has "kujjwvgqsr"
+        or (FileName has "antivm" and InitiatingProcessFileName in~ ("GapiUpdate.exe", "GapiUpdate.dll", "Launcher.exe"))
+    | project TimeGenerated, DeviceName, FileName, ProcessCommandLine = "", SHA256, InitiatingProcessFileName, InitiatingProcessCommandLine = "", AccountName = ""
+)
+| sort by TimeGenerated desc
