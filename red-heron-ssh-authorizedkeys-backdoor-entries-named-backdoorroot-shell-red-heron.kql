@@ -1,0 +1,9 @@
+let SuspiciousKeyFiles = DeviceFileEvents
+| where FileName == "authorized_keys" and FolderPath has ".ssh"
+| where ActionType in ("FileCreated", "FileModified")
+| project TimeGenerated, DeviceId, DeviceName, Signal = "authorized_keys file write", FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName;
+let SuspiciousKeyCommands = DeviceProcessEvents
+| where ProcessCommandLine has "authorized_keys" and ProcessCommandLine has_any ("backdoor", "root-shell")
+| project TimeGenerated, DeviceId, DeviceName, Signal = "authorized_keys backdoor command", FileName = FileName, FolderPath = FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine = ProcessCommandLine, InitiatingProcessAccountName = AccountName;
+union SuspiciousKeyFiles, SuspiciousKeyCommands
+| sort by TimeGenerated desc
