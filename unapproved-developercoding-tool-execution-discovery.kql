@@ -1,0 +1,27 @@
+let CodingTools = dynamic(["python.exe","python3.exe","node.exe","ruby.exe","perl.exe","php.exe","java.exe","go.exe","pip.exe","npm.exe","npx.exe","yarn.exe","conda.exe","nuget.exe","code.exe","pycharm64.exe","idea64.exe","webstorm64.exe","clion64.exe","rider64.exe","devenv.exe","sublime_text.exe","atom.exe","notepad++.exe","git.exe","gitkraken.exe","sourcetree.exe","hg.exe","svn.exe","gcc.exe","g++.exe","cl.exe","cmake.exe","make.exe","msbuild.exe","docker.exe","kubectl.exe","terraform.exe","vagrant.exe","postman.exe","insomnia.exe","fiddler.exe","wireshark.exe"]);
+// Analyst-maintained allowlist of approved tools - edit this comma-separated list to reflect organizationally sanctioned software
+let ApprovedTools = dynamic(["REPLACE_WITH_APPROVED_TOOL_1.exe","REPLACE_WITH_APPROVED_TOOL_2.exe"]);
+// Well-known vendors whose signed installs are common in approved dev environments - excluding these cuts noise from legitimately licensed tooling
+let ApprovedPublishers = dynamic(["Microsoft Corporation","JetBrains s.r.o.","Docker Inc.","Python Software Foundation","GitHub, Inc.","Postman, Inc.","Git for Windows"]);
+// Standard corporate-managed install locations (e.g. SCCM/Intune deployed) - executions from these paths are the expected baseline for sanctioned dev tooling
+let TrustedInstallPaths = dynamic(["Program Files","Program Files (x86)","ProgramData"]);
+let LookbackWindow = 14d;
+DeviceProcessEvents
+| where Timestamp > ago(LookbackWindow)
+| where FileName in~ (CodingTools)
+| where not(FileName in~ (ApprovedTools))
+| where not(ProcessVersionInfoCompanyName has_any (ApprovedPublishers))
+| where not(FolderPath has_any (TrustedInstallPaths))
+| where not(InitiatingProcessFileName in~ (ApprovedTools))
+| summarize
+    Count = count(),
+    FirstSeen = min(Timestamp),
+    LastSeen = max(Timestamp),
+    FolderPaths = make_set(FolderPath, 10),
+    ProcessCommandLines = make_set(ProcessCommandLine, 10),
+    InitiatingProcessFileNames = make_set(InitiatingProcessFileName, 10),
+    Publishers = make_set(ProcessVersionInfoCompanyName, 10),
+    SHA256Hashes = make_set(SHA256, 10)
+    by DeviceName, FileName, AccountName
+| project DeviceName, AccountName, FileName, Publishers, FolderPaths, ProcessCommandLines, InitiatingProcessFileNames, SHA256Hashes, Count, FirstSeen, LastSeen
+| order by Count asc
