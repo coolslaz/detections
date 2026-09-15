@@ -1,0 +1,19 @@
+// Detects anomalous child process execution from Langflow/Nacos AI orchestration services
+// and exploitation traffic against Langflow's code validation endpoint (CVE-2025-3248)
+// Tightened: python/bash/sh/wget/curl children require an additional suspicious marker (encoding/reverse-shell/persistence)
+// since Langflow normally spawns python workers as part of legitimate operation; cmd/powershell/nc remain inherently suspicious.
+let AlwaysSuspiciousChildren = dynamic(["cmd.exe","powershell.exe","pwsh.exe","nc","ncat"]);
+let ConditionalChildren = dynamic(["sh","bash","python","python3","wget","curl"]);
+let SuspiciousMarkers = dynamic(["base64","curl -s","wget http","chmod +x","/dev/tcp","0.0.0.0","-e /bin/sh","nohup"]);
+let ProcessHits = DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where InitiatingProcessFileName has_any ("langflow", "nacos") or InitiatingProcessCommandLine has_any ("langflow", "nacos")
+| where (FileName in (AlwaysSuspiciousChildren)) or (FileName in (ConditionalChildren) and ProcessCommandLine has_any (SuspiciousMarkers))
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, AccountName;
+let NetworkHits = DeviceNetworkEvents
+| where TimeGenerated > ago(1d)
+// Scoped to the specific known-vulnerable endpoints rather than any traffic merely mentioning the app name
+| where RemoteUrl has "/api/v1/validate/code" or RemoteUrl has "/nacos/v1/auth/users"
+| project TimeGenerated, DeviceName, RemoteUrl, RemoteIP, RemotePort, InitiatingProcessFileName, InitiatingProcessCommandLine;
+union ProcessHits, NetworkHits
+| sort by TimeGenerated desc
