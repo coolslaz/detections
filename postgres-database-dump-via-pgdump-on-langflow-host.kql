@@ -1,0 +1,9 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where FileName in~ ("pg_dump", "pg_dump.exe", "pg_dumpall", "pg_dumpall.exe")
+// Tightened: require the dump to be spawned directly by the Langflow application process itself (anomalous),
+// not by a legitimate scheduled backup job, which is the far more common source of pg_dump invocations.
+| where InitiatingProcessFileName has_any ("python", "python3", "langflow")
+| where not(InitiatingProcessFileName has_any ("cron", "crond", "systemd", "taskeng.exe", "schtasks.exe"))
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, FolderPath
+| order by TimeGenerated desc
