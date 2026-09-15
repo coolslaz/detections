@@ -1,0 +1,9 @@
+// KQL conversion of a bidirectional Suricata TCP rule pair (client-to-server and server-to-client alerts)
+// for the same known GapiUpdate hVNC RAT C2 IP:port (91.219.238.169:5556).
+// DeviceNetworkEvents records one row per outbound connection rather than per-direction packets,
+// so both original alerts collapse into this single established-connection check.
+DeviceNetworkEvents
+| where TimeGenerated > ago(14d)
+| where RemoteIP == "91.219.238.169" and RemotePort == 5556
+| where ActionType == "ConnectionSuccess"
+| project TimeGenerated, DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteIP, RemotePort, ActionType
