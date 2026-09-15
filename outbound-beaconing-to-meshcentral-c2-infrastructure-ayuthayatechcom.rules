@@ -1,0 +1,1 @@
+alert tcp $HOME_NET any -> 92.63.180.133 [8888,9443] (msg:"Outbound beaconing to MeshCentral C2 infrastructure (ayuthayatech.com)"; flow:to_server,established; detection_filter:track by_src, count 3, seconds 300; metadata: attack_id T1219, attack_id T1071.001, attack_id T1105, author Arnold Chan; classtype:trojan-activity; sid:1000101; rev:2;)
