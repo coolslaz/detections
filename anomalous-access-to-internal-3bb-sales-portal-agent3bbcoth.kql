@@ -1,0 +1,24 @@
+let LookbackStart = ago(30d);
+let WindowStart = ago(1d);
+let OffHoursStart = 20; // 8 PM
+let OffHoursEnd = 6;   // 6 AM
+// Baseline of accounts/source IPs that normally and legitimately access the portal during business hours from internal ranges
+let BaselineAccounts = W3CIISLog
+| where TimeGenerated between (LookbackStart .. WindowStart)
+| where csHost has "agent.3bb.co.th"
+| where ipv4_is_private(cIP)
+| where hourofday(TimeGenerated) >= OffHoursEnd and hourofday(TimeGenerated) < OffHoursStart
+| summarize by csUserName;
+W3CIISLog
+| where TimeGenerated > WindowStart
+| where csHost has "agent.3bb.co.th"
+| extend IsInternalSource = ipv4_is_private(cIP)
+| extend Hour = hourofday(TimeGenerated)
+| extend IsOffHours = (Hour >= OffHoursStart or Hour < OffHoursEnd)
+| extend IsKnownAccount = csUserName in (BaselineAccounts)
+| summarize RequestCount = count(), DistinctPaths = dcount(csUriStem), Paths = make_set(csUriStem, 20), AnyOffHours = max(iff(IsOffHours, 1, 0)), AnyExternalSource = max(iff(IsInternalSource, 0, 1)), AnyUnknownAccount = max(iff(IsKnownAccount, 0, 1)) by cIP, csUserName, bin(TimeGenerated, 1h)
+// Exclude routine internal, business-hours access by known accounts
+| where AnyExternalSource == 1 or AnyOffHours == 1 or AnyUnknownAccount == 1
+// Require the anomaly indicator to co-occur with meaningful reconnaissance-style volume
+| where RequestCount > 50 or DistinctPaths > 20
+| sort by RequestCount desc
