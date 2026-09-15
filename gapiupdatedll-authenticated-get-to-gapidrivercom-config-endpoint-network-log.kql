@@ -1,0 +1,12 @@
+// NOTE: This is a KQL conversion of a Suricata rule that also matched a specific User-Agent
+// ('Mozilla/5.0 (compatible; RustClient/1.0)') and a static Authorization Bearer token in the HTTP headers.
+// DeviceNetworkEvents has no HTTP header visibility, so those two high-confidence anchors were dropped,
+// leaving only the domain and URI path. This is a much weaker signal than the original Suricata rule and
+// may require additional corroboration (e.g. process lineage from GapiUpdate.exe/GapiUpdate.dll) before alerting.
+// False positives: any other traffic to gapidriver.com paths containing /api/get.php would also match,
+// since header-based anchors (User-Agent, Bearer token) could not be verified in this data source.
+DeviceNetworkEvents
+| where TimeGenerated > ago(14d)
+| where RemoteUrl matches regex @"^https?://([a-zA-Z0-9-]+\.)?gapidriver\.com(:\d+)?/api/get\.php"
+| where ActionType == "ConnectionSuccess"
+| project TimeGenerated, DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteUrl, RemoteIP, RemotePort, ActionType
