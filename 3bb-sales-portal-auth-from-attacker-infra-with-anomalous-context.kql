@@ -1,0 +1,30 @@
+// Detects authenticated/cross-network access to the internal 3BB sales portal (agent.3bb.co.th)
+// from devices that also communicated with attacker-controlled MeshCentral infrastructure
+// (ayuthayatech.com / 92.63.180.133), narrowed to cases showing an anomaly consistent with
+// attacker activity (unexpected account, off-hours timing) and excluding known legitimate
+// partner/shared-infrastructure source ranges.
+let AttackerInfra = dynamic(["www.ayuthayatech.com", "ayuthayatech.com"]);
+let AttackerIP = "92.63.180.133";
+let SalesPortalHost = "agent.3bb.co.th";
+// Populate with vetted partner/shared-infrastructure CIDR ranges to suppress known-legitimate cross-network access
+let KnownPartnerRanges = dynamic([]);
+let ExpectedServiceAccounts = dynamic(["SYSTEM", "LOCAL SERVICE", "NETWORK SERVICE"]);
+let SuspectDevices = DeviceNetworkEvents
+| where RemoteUrl has_any (AttackerInfra) or RemoteIP == AttackerIP
+| where not(LocalIP in (KnownPartnerRanges))
+| project DeviceId, DeviceName, InfraTimestamp = TimeGenerated, InfraRemoteIP = RemoteIP;
+DeviceNetworkEvents
+| where RemoteUrl has SalesPortalHost
+| where RemoteIPType == "Public"
+| where not(LocalIP in (KnownPartnerRanges))
+| project DeviceId, DeviceName, PortalTimestamp = TimeGenerated, RemoteUrl, RemoteIP, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName, LocalIP
+| join kind=inner SuspectDevices on DeviceId
+| where PortalTimestamp between ((InfraTimestamp - 6h) .. (InfraTimestamp + 6h))
+| extend PortalHourUtc = hourofday(PortalTimestamp)
+| extend OffHours = (PortalHourUtc < 1 or PortalHourUtc > 11) // outside 08:00-18:00 ICT (UTC+7) business hours
+| extend UnexpectedAccount = (isnotempty(InitiatingProcessAccountName) and not(InitiatingProcessAccountName in (ExpectedServiceAccounts)))
+| extend UnusualAuthMethod = (InitiatingProcessFileName !in ("chrome.exe", "msedge.exe", "firefox.exe") and isnotempty(InitiatingProcessFileName))
+| where OffHours or UnexpectedAccount or UnusualAuthMethod
+| extend AnomalyReason = strcat_delim(", ", iff(OffHours, "OffHoursTiming", ""), iff(UnexpectedAccount, "UnexpectedAccount", ""), iff(UnusualAuthMethod, "UnusualAuthMethod", ""))
+| project DeviceId, DeviceName, PortalTimestamp, InfraTimestamp, RemoteUrl, RemoteIP, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName, AnomalyReason
+| sort by PortalTimestamp desc
