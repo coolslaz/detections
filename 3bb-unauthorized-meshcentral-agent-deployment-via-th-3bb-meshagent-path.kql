@@ -1,0 +1,13 @@
+let ApprovedMeshCentralHosts = dynamic([]);
+let ApprovedMeshCentralAccounts = dynamic([]);
+union DeviceProcessEvents, DeviceFileEvents, DeviceNetworkEvents
+| where (FileName =~ "meshagent.exe" and (FolderPath has "/usr/local/mesh_services/meshagent/" or ProcessCommandLine has "/usr/local/mesh_services/meshagent/" or ProcessCommandLine has "TH-3BB"))
+    or FolderPath has "/usr/local/mesh_services/meshagent/"
+    or ProcessCommandLine has "/usr/local/mesh_services/meshagent/"
+    or ProcessCommandLine has "TH-3BB"
+    or (InitiatingProcessFileName =~ "meshagent.exe" and InitiatingProcessCommandLine has "/usr/local/mesh_services/meshagent/")
+    or InitiatingProcessCommandLine has "TH-3BB"
+| where DeviceName !in (ApprovedMeshCentralHosts)
+| where AccountName !in (ApprovedMeshCentralAccounts) and InitiatingProcessAccountName !in (ApprovedMeshCentralAccounts)
+| project TimeGenerated, DeviceId, DeviceName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName, InitiatingProcessAccountName
+| sort by TimeGenerated desc
