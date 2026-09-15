@@ -1,0 +1,7 @@
+// Fidelity note: This is a KQL conversion of a Suricata rule that also matched HTTP method POST and a request-body regex for the Russian-language stage-status strings ('build started' / 'launch error' / 'all builds loaded').
+// DeviceNetworkEvents (Microsoft Defender for Endpoint advanced hunting) has no HTTP method or request-body visibility, so those conditions were dropped from this version -- it only confirms network-layer connectivity to the gapidriver.com rest.php endpoint, not the specific stage-status payload content.
+DeviceNetworkEvents
+| where TimeGenerated > ago(14d)
+| where RemoteUrl matches regex @"^https?://([a-zA-Z0-9-]+\.)?gapidriver\.com(:\d+)?/api/rest\.php"
+| where ActionType == "ConnectionSuccess"
+| project TimeGenerated, DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteUrl, RemoteIP, RemotePort, ActionType
