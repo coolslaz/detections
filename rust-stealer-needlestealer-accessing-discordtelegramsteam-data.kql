@@ -1,0 +1,17 @@
+union (
+    DeviceFileEvents
+    | where TimeGenerated > ago(30d)
+    | where FileName in~ ("Login Data", "cookies.sqlite", "tokens.sqlite", "Local State")
+     or FolderPath has_any ("\\discord\\Local Storage", "\\discordcanary\\Local Storage", "\\discordptb\\Local Storage", "\\Telegram Desktop\\tdata", "\\Steam\\config", "\\Steam\\userdata")
+    | where (InitiatingProcessFileName in~ ("GapiUpdate.exe", "GapiUpdate.dll", "needle-app.exe") and InitiatingProcessFolderPath has "AppData")
+     or InitiatingProcessFolderPath has "needle-app"
+    | project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, FileName, FolderPath, RequestAccountName = InitiatingProcessAccountName
+), (
+    DeviceProcessEvents
+    | where TimeGenerated > ago(30d)
+    | where FileName in~ ("GapiUpdate.exe", "GapiUpdate.dll", "needle-app.exe")
+    | where FolderPath has "AppData"
+    | where ProcessCommandLine has_any ("discord", "Telegram Desktop", "tdata", "Steam\\userdata", "Steam\\config")
+    | project TimeGenerated, DeviceName, InitiatingProcessFileName = FolderPath, InitiatingProcessFolderPath = FolderPath, InitiatingProcessCommandLine = ProcessCommandLine, FileName, FolderPath, RequestAccountName = AccountName
+)
+| sort by TimeGenerated desc
