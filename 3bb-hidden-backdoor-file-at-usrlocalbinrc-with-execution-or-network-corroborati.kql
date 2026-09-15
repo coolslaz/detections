@@ -1,0 +1,26 @@
+let Lookback = 30d;
+let KnownInstallers = dynamic(["dpkg", "apt", "apt-get", "yum", "rpm", "dnf", "apk", "unattended-upgrade", "cloud-init"]);
+let FileEvents = DeviceFileEvents
+| where TimeGenerated > ago(Lookback)
+| where FolderPath has "/usr/local/bin" and FileName == ".rc"
+| where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+| where InitiatingProcessFileName !in~ (KnownInstallers)
+| project FileEventTime = TimeGenerated, DeviceId, DeviceName, ActionType, FolderPath, FileName, InitiatingProcessFileName, InitiatingProcessParentFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName;
+let ProcExec = DeviceProcessEvents
+| where TimeGenerated > ago(Lookback)
+| where FileName has "/usr/local/bin/.rc" or ProcessCommandLine has "/usr/local/bin/.rc"
+| where InitiatingProcessFileName !in~ (KnownInstallers)
+| project ExecTime = TimeGenerated, DeviceId, ExecProcessFileName = FileName, ExecCommandLine = ProcessCommandLine, ExecParent = InitiatingProcessFileName, ExecAccount = AccountName;
+let NetActivity = DeviceNetworkEvents
+| where TimeGenerated > ago(Lookback)
+| where InitiatingProcessFileName has "/usr/local/bin/.rc" or InitiatingProcessCommandLine has "/usr/local/bin/.rc"
+| project NetTime = TimeGenerated, DeviceId, RemoteIP, RemoteUrl, NetInitiatingProcess = InitiatingProcessFileName;
+FileEvents
+| join kind=leftouter (ProcExec) on DeviceId
+| join kind=leftouter (NetActivity) on DeviceId
+| extend ExecutionAfterCreation = ActionType == "FileCreated" and isnotnull(ExecTime) and ExecTime between (FileEventTime .. (FileEventTime + 1h))
+| extend NetworkActivityNearby = isnotnull(NetTime) and NetTime between (FileEventTime .. (FileEventTime + 1h))
+| extend UnexpectedParentProcess = isnotempty(InitiatingProcessParentFileName) and InitiatingProcessParentFileName !in~ (KnownInstallers) and InitiatingProcessParentFileName !in~ ("bash", "sh", "systemd")
+| where ExecutionAfterCreation or NetworkActivityNearby or UnexpectedParentProcess
+| project FileEventTime, DeviceId, DeviceName, ActionType, FolderPath, FileName, InitiatingProcessFileName, InitiatingProcessParentFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName, ExecutionAfterCreation, ExecTime, ExecCommandLine, NetworkActivityNearby, NetTime, RemoteIP, RemoteUrl, UnexpectedParentProcess
+| sort by FileEventTime desc
