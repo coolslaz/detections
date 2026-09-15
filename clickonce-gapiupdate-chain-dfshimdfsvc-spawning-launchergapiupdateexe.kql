@@ -1,0 +1,9 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(14d)
+| where (InitiatingProcessFileName =~ "dfsvc.exe")
+    or (InitiatingProcessFileName =~ "rundll32.exe" and InitiatingProcessCommandLine has "dfshim.dll")
+| where FileName in~ ("Launcher.exe", "GapiUpdate.exe")
+    or ProcessCommandLine has_any ("GapiUpdate.application", "gapidriver", "GapiUpdate")
+| where FolderPath has @"\Apps\2.0\"
+| project TimeGenerated, DeviceId, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, FolderPath
+| distinct DeviceId, TimeGenerated, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, FolderPath
