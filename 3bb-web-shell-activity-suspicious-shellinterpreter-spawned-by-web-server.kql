@@ -1,0 +1,9 @@
+DeviceProcessEvents
+| where InitiatingProcessFileName has_any ("w3wp.exe", "httpd.exe", "nginx.exe", "php-cgi.exe", "php.exe", "tomcat.exe", "tomcat8.exe", "tomcat9.exe", "java.exe")
+| where FileName has_any ("cmd.exe", "powershell.exe", "pwsh.exe", "bash", "sh", "nc", "ncat")
+| where ProcessCommandLine has_any ("whoami", "net user", "net1 user", "ipconfig", "systeminfo", "tasklist", "wget", "curl", "-enc", "-encodedcommand", "iex", "invoke-expression", "downloadstring", "downloadfile", "base64", "chmod +x", "/bin/bash -i", "bash -i", "nc -e", "ncat -e", "-e /bin/", "python -c", "perl -e", "certutil", "reg add", "schtasks", "net localgroup")
+| where not(ProcessCommandLine has_any ("--version", "-v ", "/version", "--help", "-help"))
+| where not(InitiatingProcessCommandLine has_any ("healthcheck", "health-check", "heartbeat", "monitor.sh", "recycle"))
+| where not(AccountName in~ ("local service", "network service") and ProcessCommandLine has_any ("backup", "cleanup", "maintenance"))
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, FileName, ProcessCommandLine, FolderPath, AccountName
+| order by TimeGenerated desc
