@@ -1,0 +1,28 @@
+// Detect unauthorized administrative (root) access to internal systems, tightened to require anomaly co-occurrence
+// Evidence: attacker gained full administrative (root) control of an internal server via recovered toolkit artifacts
+let ApprovedAdminAccounts = dynamic(["root"]); // placeholder empty-equivalent: no accounts pre-approved as always-safe root sessions
+let ApprovedAdminIPs = dynamic([]); // known/authorized management IPs for root access - none supplied, so all sources treated as candidate anomalies
+let MaintenanceProcessNames = dynamic([]); // known scheduled maintenance job process names - none supplied
+let BusinessHourStart = 8;
+let BusinessHourEnd = 20;
+let PrivilegedLogons = DeviceLogonEvents
+| where AccountName =~ "root"
+| where LogonType in ("Network", "RemoteInteractive", "Interactive", "Unlock")
+| extend HourOfDay = hourofday(TimeGenerated)
+| extend IsOffHours = HourOfDay < BusinessHourStart or HourOfDay >= BusinessHourEnd
+| extend IsUnapprovedIP = not(RemoteIP in (ApprovedAdminIPs))
+| extend IsUnapprovedAccount = not(AccountName in~ (ApprovedAdminAccounts))
+| where IsOffHours or IsUnapprovedIP or IsUnapprovedAccount
+| project TimeGenerated, DeviceName, AccountName, LogonType, RemoteIP, ActionType, HourOfDay, IsOffHours, IsUnapprovedIP, IsUnapprovedAccount;
+let PrivilegedProcess = DeviceProcessEvents
+| where AccountName =~ "root"
+| where FileName in~ ("su", "sudo") or ProcessCommandLine has_any ("sudo -i", "sudo su", "su -", "su root")
+| where not(FileName in~ (MaintenanceProcessNames))
+| extend HourOfDay = hourofday(TimeGenerated)
+| extend IsOffHours = HourOfDay < BusinessHourStart or HourOfDay >= BusinessHourEnd
+| extend IsUnapprovedAccount = not(AccountName in~ (ApprovedAdminAccounts))
+| extend IsUnusualParent = not(InitiatingProcessAccountName has_any ("root", "sshd"))
+| where IsOffHours or IsUnapprovedAccount or IsUnusualParent
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessAccountName, HourOfDay, IsOffHours, IsUnapprovedAccount, IsUnusualParent;
+union PrivilegedLogons, PrivilegedProcess
+| sort by TimeGenerated desc
