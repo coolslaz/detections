@@ -1,0 +1,15 @@
+let KnownBackupAccounts = dynamic(["svc-backup", "svc-etl", "svc-radius-backup", "backupsvc", "etl_service"]);
+let BusinessHoursStart = 6;
+let BusinessHoursEnd = 20;
+DeviceProcessEvents
+| where ProcessCommandLine has "radius"
+| where ProcessCommandLine has_any ("mysqldump", "pg_dump", "sqlcmd", "sqlite3", "rsync", "scp ", "tar ", "zip ", "cp ")
+| where ProcessCommandLine has_any (".sql", ".db", ".bak", ".dump", ".tar", ".zip", "subscriber", "radacct", "radcheck", "radreply", "radusergroup")
+| where not(AccountName has_any (KnownBackupAccounts))
+| where not(InitiatingProcessFileName has_any ("cron", "crond", "systemd", "taskeng.exe", "backupagent.exe"))
+| extend HourOfDay = hourofday(TimeGenerated)
+| extend IsOffHours = (HourOfDay < BusinessHoursStart or HourOfDay >= BusinessHoursEnd)
+| extend HasLargeExportHint = ProcessCommandLine has_any ("--all-databases", "--single-transaction", "-Fc", "COMPRESS", "full", "complete")
+| where IsOffHours or HasLargeExportHint or not(AccountName has_any ("admin", "root", "dbadmin"))
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, HourOfDay, IsOffHours, HasLargeExportHint
+| sort by TimeGenerated desc
