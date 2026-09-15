@@ -1,0 +1,20 @@
+// Title: HBO Max ClickFix attacks IOC Hunt (tightened)
+// Description: Detects network traffic matching known HBO Max ClickFix malicious domains/IPs. Tightened to require domain-selector corroboration for bare IP hits, exclude known security-tooling/TI-feed sources, and dedupe repeated matches per host within a short window.
+// Level: high
+
+(
+  // Domain match is the highest-confidence signal on its own
+  event.dns.request contains ('filequanticore.com', 'filesiriuscore.com', 'alfredaps.com', 'hbomaxx.us', 'hbomax-macos.com', 'bright-links.com', 'codex-notes.com', 'storageprofiler.com', 'cladesktop.gitlab.io', 'cli-desktop.com', 'cli-stack.com', 'homebrwmac-hub.com', 'clean-disk-guide.com', 'flutelikelurkerunsinewy.com', 'camaligsalvatrefoils.com', 'press29.com', 'leaf68.com', 'basequill9.com', 'perchframe15.com', 'canvas-35.com', 'pine63.com', 'trekmesh15.com', 'weaveridge7.com', 'ember-bridge.com', 'rudder-moss.com', 'wuess.com', 'arkypc.com', 'harbor-29.com', 'fern-plume.com', 'node-slate.com', 'grove-12.com', 'verse-18.com', 'lakhov.com', 'mpasvw.com', 'ouilov.com', 'aforvm.com', 'desktop-version.com', 'oakenfjrod.ru', 'sic180.com', 'hbomaxx.app')
+)
+OR (
+  // Bare-IP hits are noisy because these IPs get reused/sinkholed - only treat as a match when the same event also carries a domain-selector hit, so a generic scanner/TI feed probe against a stale IP without the domain resolution does not fire
+  (dst.ip.address in ('45.94.47.204', '77.91.65.13', '165.22.199.85', '164.90.161.147', '92.246.136.14', '62.60.226.69', '176.53.159.66', '172.236.51.169', '138.124.93.32', '168.100.9.122', '199.217.98.33', '38.244.158.103', '38.244.158.56')
+   OR src.ip.address in ('45.94.47.204', '77.91.65.13', '165.22.199.85', '164.90.161.147', '92.246.136.14', '62.60.226.69', '176.53.159.66', '172.236.51.169', '138.124.93.32', '168.100.9.122', '199.217.98.33', '38.244.158.103', '38.244.158.56'))
+  AND event.dns.request contains ('filequanticore.com', 'filesiriuscore.com', 'alfredaps.com', 'hbomaxx.us', 'hbomax-macos.com', 'bright-links.com', 'codex-notes.com', 'storageprofiler.com', 'cladesktop.gitlab.io', 'cli-desktop.com', 'cli-stack.com', 'homebrwmac-hub.com', 'clean-disk-guide.com', 'flutelikelurkerunsinewy.com', 'camaligsalvatrefoils.com', 'press29.com', 'leaf68.com', 'basequill9.com', 'perchframe15.com', 'canvas-35.com', 'pine63.com', 'trekmesh15.com', 'weaveridge7.com', 'ember-bridge.com', 'rudder-moss.com', 'wuess.com', 'arkypc.com', 'harbor-29.com', 'fern-plume.com', 'node-slate.com', 'grove-12.com', 'verse-18.com', 'lakhov.com', 'mpasvw.com', 'ouilov.com', 'aforvm.com', 'desktop-version.com', 'oakenfjrod.ru', 'sic180.com', 'hbomaxx.app')
+)
+// Exclude traffic originating from known security scanning / threat-intel tooling processes (proactive IOC probing, not victim traffic)
+AND NOT (src.process.publisher in ("Microsoft Corporation", "CrowdStrike, Inc.", "SentinelOne", "Google LLC", "Palo Alto Networks, Inc.", "Recorded Future, Inc."))
+| let indicator_key = isempty(event.dns.request) ? dst.ip.address : event.dns.request
+// Deduplicate repeated matches per host against the same indicator within a short window
+| group hits=count(), first_seen=min(event.time), last_seen=max(event.time) by endpoint.name, indicator_key, timebucket("15 minutes")
+| sort -hits
