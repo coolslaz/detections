@@ -1,0 +1,13 @@
+// JITTERLY C++ Linux backdoor - execution via configd masquerade and C2 beacon to s2.981666.xyz
+let ProcessHits = DeviceProcessEvents
+| where TimeGenerated > ago(7d)
+| where FileName in~ ("configd", "sh", "bash")
+| where FolderPath has "/usr/lib/" and FolderPath has_any ("/configd/configd", "configd")
+| where ProcessCommandLine has "-nodel"
+| project TimeGenerated, DeviceId, DeviceName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName;
+let NetworkHits = DeviceNetworkEvents
+| where TimeGenerated > ago(7d)
+| where RemoteUrl has "s2.981666.xyz" or (RemoteUrl has "981666.xyz" and RemotePort == 8082)
+| project TimeGenerated, DeviceId, DeviceName, RemoteUrl, RemoteIP, RemotePort, InitiatingProcessFileName, InitiatingProcessCommandLine;
+union ProcessHits, NetworkHits
+| sort by TimeGenerated desc
