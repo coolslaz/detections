@@ -1,0 +1,64 @@
+rule hbo_max_clickfix_attacks_ioc_hunt {
+  meta:
+    author = "Arnold Chan"
+    description = "Detects network traffic matching a list of known malicious domains and IP addresses observed in CommonSecurityLog events, tightened to reduce noise from scanners/TI feeds, sinkholed infrastructure, and generic reused IPs by requiring domain-specific selectors and deduplicating repeated matches per host."
+    severity = "High"
+    false_positive1 = "Legitimate traffic to newly registered domains or recently categorized malicious infrastructure that has been repurposed."
+    false_positive2 = "Misclassification of domains by threat intelligence feeds."
+    false_positive3 = "Traffic from compromised endpoints using legitimate software that uses domain-generation algorithms (DGA) or overlapping infrastructure."
+events:
+    $e.metadata.event_type = "NETWORK_CONNECTION"
+
+    // exclude known scanner / threat-intel feed sources where schema supports it
+    not $e.principal.ip = "162.142.125.0"
+    not $e.principal.ip = "167.94.138.0"
+    not $e.principal.ip = "167.94.145.0"
+    not $e.principal.ip = "167.94.146.0"
+    not $e.principal.ip = "71.6.135.131"
+    not re.regex($e.network.http.user_agent, `(?i)(censys|shodan|masscan|zgrab|nmap|internet-measurement|palo alto networks-urlfiltering|greynoise|onyphe|mozilla/5\.0 \(compatible; scanner)`)
+
+    (
+      // domain-specific selector match: require hostname or message content, not bare IP alone
+      $e.target.hostname =~ /filequanticore\.com|filesiriuscore\.com|alfredaps\.com|hbomaxx\.us|hbomax-macos\.com|bright-links\.com|codex-notes\.com|storageprofiler\.com|cladesktop\.gitlab\.io|cli-desktop\.com|cli-stack\.com|homebrwmac-hub\.com|clean-disk-guide\.com|flutelikelurkerunsinewy\.com|camaligsalvatrefoils\.com|press29\.com|leaf68\.com|basequill9\.com|perchframe15\.com|canvas-35\.com|pine63\.com|trekmesh15\.com|weaveridge7\.com|ember-bridge\.com|rudder-moss\.com|wuess\.com|arkypc\.com|harbor-29\.com|fern-plume\.com|node-slate\.com|grove-12\.com|verse-18\.com|lakhov\.com|mpasvw\.com|ouilov\.com|aforvm\.com|desktop-version\.com|oakenfjrod\.ru|sic180\.com|hbomaxx\.app/
+      or
+      $e.security_result.description =~ /filequanticore\.com|filesiriuscore\.com|alfredaps\.com|hbomaxx\.us|hbomax-macos\.com|bright-links\.com|codex-notes\.com|storageprofiler\.com|cladesktop\.gitlab\.io|cli-desktop\.com|cli-stack\.com|homebrwmac-hub\.com|clean-disk-guide\.com|flutelikelurkerunsinewy\.com|camaligsalvatrefoils\.com|press29\.com|leaf68\.com|basequill9\.com|perchframe15\.com|canvas-35\.com|pine63\.com|trekmesh15\.com|weaveridge7\.com|ember-bridge\.com|rudder-moss\.com|wuess\.com|arkypc\.com|harbor-29\.com|fern-plume\.com|node-slate\.com|grove-12\.com|verse-18\.com|lakhov\.com|mpasvw\.com|ouilov\.com|aforvm\.com|desktop-version\.com|oakenfjrod\.ru|sic180\.com|hbomaxx\.app/
+      or
+      (
+        // bare IP match still allowed but only when combined with hostname or description present, avoiding generic reused-IP noise
+        (
+          $e.target.ip = "45.94.47.204" or $e.target.ip = "77.91.65.13" or
+          $e.target.ip = "165.22.199.85" or $e.target.ip = "164.90.161.147" or
+          $e.target.ip = "92.246.136.14" or $e.target.ip = "62.60.226.69" or
+          $e.target.ip = "176.53.159.66" or $e.target.ip = "172.236.51.169" or
+          $e.target.ip = "138.124.93.32" or $e.target.ip = "168.100.9.122" or
+          $e.target.ip = "199.217.98.33" or $e.target.ip = "38.244.158.103" or
+          $e.target.ip = "38.244.158.56" or
+          $e.principal.ip = "45.94.47.204" or $e.principal.ip = "77.91.65.13" or
+          $e.principal.ip = "165.22.199.85" or $e.principal.ip = "164.90.161.147" or
+          $e.principal.ip = "92.246.136.14" or $e.principal.ip = "62.60.226.69" or
+          $e.principal.ip = "176.53.159.66" or $e.principal.ip = "172.236.51.169" or
+          $e.principal.ip = "138.124.93.32" or $e.principal.ip = "168.100.9.122" or
+          $e.principal.ip = "199.217.98.33" or $e.principal.ip = "38.244.158.103" or
+          $e.principal.ip = "38.244.158.56"
+        )
+        and (
+          strings.length($e.target.hostname) > 0 or
+          strings.length($e.security_result.description) > 0
+        )
+      )
+    )
+
+    $host = strings.coalesce($e.target.hostname, $e.principal.hostname, $e.target.ip, $e.principal.ip)
+
+  match:
+    $host over 15m
+
+  outcome:
+    $risk_score = 80
+    $match_count = count_distinct($e.metadata.id)
+    $matched_ips = array_distinct(strings.coalesce($e.target.ip, $e.principal.ip))
+    $matched_hostnames = array_distinct($e.target.hostname)
+
+  condition:
+    #e > 0
+}
