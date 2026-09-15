@@ -1,0 +1,27 @@
+// Detect certificate-based authentication against Jasmine network services that shows anomalous
+// impossible-travel or geo-inconsistent session patterns, consistent with reuse of a stolen
+// 3BB VPN certificate rather than routine re-authentication from the same location/device
+SigninLogs
+| where TimeGenerated > ago(14d)
+| where ResourceDisplayName has "Jasmine" or AppDisplayName has "Jasmine"
+| where AuthenticationRequirement =~ "singleFactorAuthentication" or AuthenticationRequirement =~ "multiFactorAuthentication"
+| where ResultType == 0
+| extend AuthMethod = tostring(parse_json(AuthenticationDetails)[0].authenticationMethod)
+| where AuthMethod has "Certificate" or AuthMethod has "X509"
+| extend Country = tostring(parse_json(tostring(LocationDetails)).countryOrRegion)
+| sort by UserPrincipalName asc, TimeGenerated asc
+| serialize
+| extend PrevTime = prev(TimeGenerated), PrevIP = prev(IPAddress), PrevCountry = prev(Country), PrevUser = prev(UserPrincipalName)
+| where UserPrincipalName == PrevUser
+| extend TimeDiffMinutes = datetime_diff('minute', TimeGenerated, PrevTime)
+| where TimeDiffMinutes >= 0
+// Only keep pairs where the certificate was used from a different IP than the prior session
+| where IPAddress != PrevIP
+// Anomaly requirement: sessions from distinct IPs occurring implausibly close together (impossible travel),
+// OR the country changed between consecutive sessions (unexpected source), excluding routine gaps
+// consistent with expected re-authentication from a stable location
+| where (TimeDiffMinutes < 240) or (Country != PrevCountry and TimeDiffMinutes < 1440)
+// Exclude expected re-authentication: same country and a gap large enough to reflect normal roaming/reconnects
+| where not(Country == PrevCountry and TimeDiffMinutes >= 240)
+| project UserPrincipalName, ResourceDisplayName, AuthMethod, TimeGenerated, PrevTime, TimeDiffMinutes, IPAddress, PrevIP, Country, PrevCountry
+| sort by TimeDiffMinutes asc
