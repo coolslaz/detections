@@ -1,0 +1,14 @@
+union (
+    DeviceProcessEvents
+    | where FileName =~ "schtasks.exe"
+    | where ProcessCommandLine has "DeviceSetupManager"
+    | where ProcessCommandLine has_any ("/create", "/Create")
+    | where ProcessCommandLine has_any ("Launcher.exe", "GapiUpdate.exe", "AppData\\Local", "AppData\\Roaming")
+    | where InitiatingProcessFileName !in~ ("TrustedInstaller.exe", "TiWorker.exe", "msiexec.exe")
+    | project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessSHA256, SHA256
+), (
+    DeviceProcessEvents
+    | where SHA256 == "99c4dcc677942513ff39846aba051d1baeaaa5ad083dabc9e3f9b49a522b0a0a"
+    | project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessSHA256, SHA256
+)
+| sort by TimeGenerated desc
