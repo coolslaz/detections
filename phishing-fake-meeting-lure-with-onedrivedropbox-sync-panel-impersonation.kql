@@ -1,0 +1,21 @@
+let meetingLureTerms = dynamic(["conference call", "meeting notification", "meeting materials", "meeting invite", "call recording", "sync panel"]);
+let cloudBrands = dynamic(["onedrive", "dropbox"]);
+let legitCloudDomains = dynamic(["onedrive.live.com", "1drv.ms", "sharepoint.com", "dropbox.com"]);
+EmailEvents
+| where TimeGenerated > ago(14d)
+| where Subject has_any (meetingLureTerms) or Subject has "sync panel"
+| join kind=inner (
+    EmailUrlInfo
+    | where TimeGenerated > ago(14d)
+    | extend UrlLower = tolower(Url)
+    | where UrlLower has_any (cloudBrands)
+    | where not(UrlLower has_any (legitCloudDomains))
+) on NetworkMessageId
+| extend SenderDomain = tostring(split(SenderFromAddress, "@")[1])
+| extend RecipientDomain = tostring(split(RecipientEmailAddress, "@")[1])
+| where SenderDomain != RecipientDomain
+| extend RemoteAccessSolicitation = SenderFromAddress has_any ("remote", "support", "assist") or Subject has_any ("remote control", "remote access", "overseas", "urgent")
+| where RemoteAccessSolicitation
+| where DeliveryAction != "Blocked"
+| project TimeGenerated, NetworkMessageId, SenderFromAddress, SenderDomain, RecipientEmailAddress, Subject, Url, UrlLower, RemoteAccessSolicitation, ThreatTypes, DeliveryAction
+| sort by TimeGenerated desc
