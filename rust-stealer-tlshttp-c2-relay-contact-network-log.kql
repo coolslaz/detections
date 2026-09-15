@@ -1,0 +1,8 @@
+// Detects Rust stealer C2 relay contact: fixed IP:port TLS beacon (31.76.7.137:443) or HTTP requests to disguised static-asset paths (analytics.gif, pixel.png, content.js) served from a raw IP-literal host.
+// Note: DeviceNetworkEvents cannot inspect TLS payload or raw HTTP Host headers directly; the raw-IP-host requirement for the disguised-asset paths is approximated via a regex match against RemoteUrl for an IPv4-literal in the URL authority. This may produce false negatives if the recorded RemoteUrl does not retain the literal IP, and false positives are possible from legitimate services that happen to serve files named analytics.gif/pixel.png/content.js from an IP-literal endpoint (e.g., internal test/monitoring infrastructure).
+DeviceNetworkEvents
+| where TimeGenerated > ago(14d)
+| where (RemoteIP == "31.76.7.137" and RemotePort == 443)
+    or (RemoteUrl has_any ("analytics.gif", "pixel.png", "content.js") and RemoteUrl matches regex @"^https?://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?/")
+| where ActionType == "ConnectionSuccess"
+| project TimeGenerated, DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteUrl, RemoteIP, RemotePort, ActionType
