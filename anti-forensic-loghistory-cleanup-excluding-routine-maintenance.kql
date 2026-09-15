@@ -1,0 +1,17 @@
+DeviceProcessEvents
+| where FileName in~ ("bash", "sh", "rm", "find", "shred", "truncate")
+| where ProcessCommandLine has_any ("rm -rf", "rm -f", "shred", "truncate -s 0", "> /var/log", "find /var/log", "find / -name")
+| where ProcessCommandLine has_any ("log", "logs", "history", ".bash_history", "auth.log", "syslog", "wtmp", "btmp")
+| where not(ProcessCommandLine has "/usr/local/mesh_services/meshagent/")
+| where not(ProcessCommandLine has "meshagent")
+// Exclude routine log-rotation and scheduled maintenance tooling
+| where not(ProcessCommandLine has_any ("logrotate", "logrotate.conf", "logrotate.d", "/etc/cron", "cron.daily", "cron.weekly"))
+| where not(InitiatingProcessFileName in~ ("logrotate", "cron", "crond", "anacron", "systemd", "systemd-tmpfiles"))
+| where not(InitiatingProcessParentFileName in~ ("logrotate", "cron", "crond", "anacron", "systemd"))
+// Require the action and target to co-occur in a single command (both selectors already ANDed) plus explicit deletion/overwrite verb
+| where ProcessCommandLine matches regex @"(rm\s+-[rf]+|shred|truncate\s+-s\s*0|>\s*/var/log)" 
+| where ProcessCommandLine matches regex @"(auth\.log|syslog|wtmp|btmp|\.bash_history|/var/log)"
+// Scope out accounts typically responsible for authorized log maintenance
+| where not(AccountName in~ ("syslog", "logrotate", "cron", "systemd-timesyncd", "_apt"))
+| project TimeGenerated, DeviceId, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName
+| order by TimeGenerated desc
