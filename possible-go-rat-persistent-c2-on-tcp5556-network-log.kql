@@ -1,0 +1,25 @@
+// Detects persistent raw-TCP C2 beaconing associated with the Go RAT used in the GapiUpdate campaign.
+// Branch 1: exact known C2 IP 91.219.238.169 on port 5556 (ConnectionSuccess).
+// Branch 2: broader port-5556 hunting branch approximating the original Suricata rule's stream_size (>2000 bytes client-side) filter.
+// DeviceNetworkEvents has no byte-volume/stream-size field, so this approximation instead requires >=3 established connections
+// to the same external IP on port 5556 within a 10-minute window to reduce noise from single/incidental connections.
+// False positives: legitimate internal or third-party services that happen to use TCP/5556 with repeated connections may trigger the broader branch;
+// the broader branch is now restricted to genuinely external destinations (RFC1918 private ranges excluded, matching the original Suricata rule's $EXTERNAL_NET scope);
+// the exact-IP branch is high confidence and should be prioritized for triage.
+union (
+    DeviceNetworkEvents
+    | where TimeGenerated > ago(14d)
+    | where RemoteIP == "91.219.238.169" and RemotePort == 5556
+    | where ActionType == "ConnectionSuccess"
+    | project TimeGenerated, DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteIP, RemotePort, ConnectionCount = 1
+), (
+    DeviceNetworkEvents
+    | where TimeGenerated > ago(14d)
+    | where RemotePort == 5556 and RemoteIP != "91.219.238.169"
+    | where not (ipv4_is_in_range(RemoteIP, "10.0.0.0/8") or ipv4_is_in_range(RemoteIP, "172.16.0.0/12") or ipv4_is_in_range(RemoteIP, "192.168.0.0/16"))
+    | where ActionType == "ConnectionSuccess"
+    | summarize ConnectionCount = count(), LastSeen = max(TimeGenerated) by DeviceId, DeviceName, RemoteIP, InitiatingProcessFileName, InitiatingProcessCommandLine, TimeBucket = bin(TimeGenerated, 10m)
+    | where ConnectionCount >= 3
+    | project TimeGenerated = LastSeen, DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteIP, RemotePort = 5556, ConnectionCount
+)
+| sort by TimeGenerated desc
