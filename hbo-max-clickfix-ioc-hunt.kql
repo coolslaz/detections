@@ -1,0 +1,22 @@
+// Title: HBO Max ClickFix attacks IOC Hunt
+// Description: Detects network traffic matching a list of known malicious domains and IP addresses observed in CommonSecurityLog events, with filtering for scanner/TI-feed noise, domain-correlated IP matches, and per-host deduplication.
+// Author: detections.ai
+// Level: high
+let MaliciousIPs = dynamic(['45.94.47.204', '77.91.65.13', '165.22.199.85', '164.90.161.147', '92.246.136.14', '62.60.226.69', '176.53.159.66', '172.236.51.169', '138.124.93.32', '168.100.9.122', '199.217.98.33', '38.244.158.103', '38.244.158.56']);
+let MaliciousDomains = dynamic(['filequanticore.com', 'filesiriuscore.com', 'alfredaps.com', 'hbomaxx.us', 'hbomax-macos.com', 'bright-links.com', 'codex-notes.com', 'storageprofiler.com', 'cladesktop.gitlab.io', 'cli-desktop.com', 'cli-stack.com', 'homebrwmac-hub.com', 'clean-disk-guide.com', 'flutelikelurkerunsinewy.com', 'camaligsalvatrefoils.com', 'press29.com', 'leaf68.com', 'basequill9.com', 'perchframe15.com', 'canvas-35.com', 'pine63.com', 'trekmesh15.com', 'weaveridge7.com', 'ember-bridge.com', 'rudder-moss.com', 'wuess.com', 'arkypc.com', 'harbor-29.com', 'fern-plume.com', 'node-slate.com', 'grove-12.com', 'verse-18.com', 'lakhov.com', 'mpasvw.com', 'ouilov.com', 'aforvm.com', 'desktop-version.com', 'oakenfjrod.ru', 'sic180.com', 'hbomaxx.app']);
+let KnownScannerUAs = dynamic(['Shodan', 'Censys', 'Qualys', 'Rapid7', 'GreyNoise', 'InternetMeasurement', 'ZmEu', 'masscan', 'nmap']);
+CommonSecurityLog
+| where TimeGenerated > ago(1d)
+// exclude known scanner/TI-feed noise where schema exposes a user-agent-like field
+| extend ClientApp = tostring(RequestClientApplication)
+| where isempty(ClientApp) or not(ClientApp has_any (KnownScannerUAs))
+// domain-specific selectors: require a real hostname/message correlation, not a bare reused IP hit
+| extend DomainMatch = DestinationHostName has_any (MaliciousDomains) or Message has_any (MaliciousDomains)
+| extend IPMatch = DestinationIP in (MaliciousIPs) or SourceIP in (MaliciousIPs)
+// keep IP hits only when corroborated by a domain selector, or when no hostname/message data exists to corroborate (sinkhole/decommission-safe fallback still requires IP match)
+| where DomainMatch or (IPMatch and isnotempty(DestinationHostName))
+| extend MatchedIndicator = case(DomainMatch and IPMatch, strcat('IP+Domain: ', DestinationIP, ' / ', DestinationHostName), DomainMatch, strcat('Domain: ', DestinationHostName), 'IP: ' , DestinationIP)
+| extend HostKey = coalesce(Computer, SourceIP)
+// deduplicate repeated matches per host within a short window (1h buckets)
+| summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), MatchCount = count() by bin(TimeGenerated, 1h), HostKey, DestinationIP, SourceIP, DestinationHostName, MatchedIndicator, DeviceVendor, DeviceProduct
+| sort by LastSeen desc
