@@ -1,0 +1,42 @@
+// Detects evasion/tampering of Windows Security/Application event logging consistent with GhostContainer backdoor behavior on Exchange servers
+// Tightened: requires the event-log-service-stop/clear event and the sudden event-volume drop to occur on the SAME host within a short correlation window, and excludes known patch/maintenance windows or expected service restarts
+let lookback = 1d;
+let correlationWindow = 30m;
+let logClearOrAuditStop =
+    Event
+    | where TimeGenerated > ago(lookback)
+    | where Source == "Microsoft-Windows-Eventlog" or Source == "Microsoft-Windows-Security-Auditing" or Source == "Service Control Manager"
+    | where EventID in (1100, 1102, 104, 7036, 7040)
+    | where (EventID in (1100, 1102, 104))
+        or (EventID == 7036 and RenderedDescription has "Windows Event Log" and RenderedDescription has "stopped")
+        or (EventID == 7040 and RenderedDescription has "Windows Event Log")
+    | project StopTime = TimeGenerated, Computer, EventID, Source, RenderedDescription;
+let plannedMaintenance =
+    Event
+    | where TimeGenerated > ago(lookback)
+    | where (EventID == 1074)
+        or (Source == "Microsoft-Windows-WindowsUpdateClient" and EventID in (19, 20, 43))
+    | project MaintTime = TimeGenerated, Computer;
+let expectedRestart =
+    Event
+    | where TimeGenerated > ago(lookback)
+    | where Source == "Microsoft-Windows-Eventlog" or Source == "Service Control Manager"
+    | where EventID == 7036 and RenderedDescription has "Windows Event Log" and RenderedDescription has "running"
+    | project RestartTime = TimeGenerated, Computer;
+let volumeDrop =
+    SecurityEvent
+    | where TimeGenerated > ago(lookback)
+    | summarize EventCount = count() by Computer, TimeGenerated = bin(TimeGenerated, 1h)
+    | serialize
+    | extend PrevHourCount = prev(EventCount, 1)
+    | where PrevHourCount > 50 and EventCount < (PrevHourCount * 0.1)
+    | project DropTime = TimeGenerated, Computer, EventCount, PrevHourCount;
+logClearOrAuditStop
+| join kind=inner (volumeDrop) on Computer
+| where abs(datetime_diff('minute', DropTime, StopTime)) <= 30
+| join kind=leftanti (plannedMaintenance) on Computer
+| where abs(datetime_diff('minute', MaintTime, StopTime)) <= 60 or isnull(MaintTime)
+| join kind=leftanti (expectedRestart) on Computer
+| where (RestartTime between (StopTime .. (StopTime + correlationWindow))) or isnull(RestartTime)
+| project StopTime, DropTime, Computer, EventID, Source, RenderedDescription, EventCount, PrevHourCount, DetectionType = "CorrelatedLogTamperingAndVolumeDrop"
+| sort by StopTime desc
