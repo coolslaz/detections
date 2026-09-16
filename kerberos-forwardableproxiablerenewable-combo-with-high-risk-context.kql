@@ -1,0 +1,28 @@
+// Detects Kerberos TGT/TGS requests exhibiting the non-standard Forwardable+Proxiable+Renewable flag combination and/or RC4 encryption downgrade, consistent with Kerberos ticket manipulation used to compromise AD infrastructure.
+// Tightened: the Forwardable+Proxiable+Renewable combination alone is common in legitimate constrained delegation, so it must co-occur with a sensitive/high-value target, an unusual requesting account, or off-hours timing.
+SecurityEvent
+| where EventID in (4768, 4769)
+| extend TicketOptionsRaw = extract('<Data Name="TicketOptions">0x([0-9a-fA-F]+)</Data>', 1, tostring(EventData))
+| where isnotempty(TicketOptionsRaw)
+| extend TicketOptionsHex = strcat("0x", TicketOptionsRaw)
+| extend TicketOptionsLong = tolong(TicketOptionsHex)
+| where isnotnull(TicketOptionsLong)
+// Forwardable (0x40000) + Proxiable (0x10000) + Renewable (0x800000)
+| extend FwdProxRenMask = 0x850000
+| extend HasFwdProxRenCombo = bitwise_and(TicketOptionsLong, FwdProxRenMask) == FwdProxRenMask
+| extend TicketEncryptionType = extract('<Data Name="TicketEncryptionType">0x([0-9a-fA-F]+)</Data>', 1, tostring(EventData))
+// RC4-HMAC (0x17) encryption type is a common indicator of ticket manipulation / encryption downgrade
+| extend IsRC4Encryption = TicketEncryptionType in ("17", "00000017")
+| where HasFwdProxRenCombo or IsRC4Encryption
+| where TargetUserName !endswith "$"
+// Sensitive/high-value target: krbtgt (golden/silver ticket abuse) or accounts with admin-level naming
+| extend IsSensitiveTarget = TargetUserName has "krbtgt" or TargetUserName has "admin" or Account has "admin"
+// Unusual requesting account: service/machine accounts requesting on behalf of non-standard identities, or accounts with admin-like naming not typical of routine delegation
+| extend IsUnusualAccount = Account has "admin" or Account has "svc" or Account has "service"
+// Off-hours timing: outside standard business hours (before 06:00 or after 20:00 local/server time), or weekend
+| extend RequestHour = hourofday(TimeGenerated)
+| extend RequestDow = dayofweek(TimeGenerated)
+| extend IsOffHours = RequestHour < 6 or RequestHour > 20 or RequestDow == 0d or RequestDow == 6d
+| where HasFwdProxRenCombo and IsSensitiveTarget or HasFwdProxRenCombo and IsUnusualAccount or HasFwdProxRenCombo and IsOffHours or IsRC4Encryption
+| project TimeGenerated, Computer, EventID, Account, TargetUserName, TargetDomainName, IpAddress, TicketOptionsHex, TicketEncryptionType, HasFwdProxRenCombo, IsRC4Encryption, IsSensitiveTarget, IsUnusualAccount, IsOffHours
+| sort by TimeGenerated desc
