@@ -1,0 +1,11 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(14d)
+| where FileName in~ ("python.exe", "python3.exe", "python3", "python")
+| where ProcessCommandLine has "verify3.py"
+ or ProcessCommandLine has "proxy_tester"
+ or ProcessCommandLine has "/root/proxy/socks5.txt"
+ or ProcessCommandLine has "/root/proxy/http.txt"
+ or ProcessCommandLine has "/root/proxy/https.txt"
+ or ProcessCommandLine has "/root/proxy/socks4.txt"
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
+| order by TimeGenerated desc
