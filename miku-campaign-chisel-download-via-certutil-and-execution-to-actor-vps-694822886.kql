@@ -1,0 +1,14 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(14d)
+| where (FileName in~ ("certutil.exe") and ProcessCommandLine has "-urlcache" and ProcessCommandLine has "-split" and ProcessCommandLine has "-f" and ProcessCommandLine contains "69.48.228.86")
+ or (FileName in~ ("ch.exe", "chisel.exe") and ProcessCommandLine has "client" and ProcessCommandLine has "--auth" and ProcessCommandLine contains "69.48.228.86")
+ or (ProcessCommandLine contains "69.48.228.86" and ProcessCommandLine has "R:127.0.0.1:1080:socks")
+| join kind=inner (
+    DeviceNetworkEvents
+    | where TimeGenerated > ago(14d)
+    | where RemoteIP == "69.48.228.86"
+    | project DeviceId, ConnTime = TimeGenerated, RemoteIP, RemotePort
+) on DeviceId
+| where ConnTime between (TimeGenerated .. (TimeGenerated + 5m))
+| project TimeGenerated, DeviceName, AccountName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteIP, RemotePort, ConnTime
+| order by TimeGenerated desc
