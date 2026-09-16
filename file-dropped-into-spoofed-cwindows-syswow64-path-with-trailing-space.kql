@@ -1,0 +1,11 @@
+DeviceFileEvents
+| where TimeGenerated > ago(30d)
+| where ActionType == "FileCreated"
+| where FolderPath has @"C:\Windows \SysWOW64"
+| where FolderPath !has @"C:\Windows\SysWOW64"
+| project TimeGenerated, DeviceId, DeviceName, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName, SHA256
+// DeviceProcessEvents variant to catch process creation from the spoofed path
+// DeviceProcessEvents
+// | where FolderPath has "C:\\Windows \\SysWOW64"
+// | where FolderPath !has "C:\\Windows\\SysWOW64"
+// | project Timestamp, DeviceId, DeviceName, FileName, FolderPath, ProcessCommandLine, AccountName, SHA256
