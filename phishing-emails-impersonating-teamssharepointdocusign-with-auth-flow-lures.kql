@@ -1,0 +1,19 @@
+let brandTerms = dynamic(["microsoft teams","sharepoint","docusign","onedrive","google drive","dropbox","zoom","adobe sign"]);
+let legitDomains = dynamic(["microsoft.com","microsoftonline.com","office.com","office365.com","sharepoint.com","docusign.com","docusign.net","google.com","dropbox.com","zoom.us","adobe.com"]);
+EmailEvents
+| where TimeGenerated > ago(7d)
+| where DeliveryAction == "Delivered"
+| extend SenderDisplayNameLower = tolower(SenderDisplayName)
+| where SenderDisplayNameLower has_any (brandTerms)
+| where not(SenderFromDomain has_any (legitDomains))
+| join kind=inner (
+    EmailUrlInfo
+    | where TimeGenerated > ago(7d)
+    | where not(UrlDomain has_any (legitDomains))
+    | where UrlDomain has_any (brandTerms)
+        or Url has_any ("device_code", "devicelogin", "api/verification/init")
+        or Url contains "/api/verification/init?session="
+) on NetworkMessageId
+| project TimeGenerated, SenderFromAddress, SenderDisplayName, SenderFromDomain, RecipientEmailAddress, Subject, Url, UrlDomain, NetworkMessageId
+| summarize LureUrls = make_set(Url, 20), LureCount = count() by SenderFromAddress, SenderDisplayName, SenderFromDomain, RecipientEmailAddress, Subject, NetworkMessageId, LureWindow = bin(TimeGenerated, 1h)
+| order by LureWindow desc
