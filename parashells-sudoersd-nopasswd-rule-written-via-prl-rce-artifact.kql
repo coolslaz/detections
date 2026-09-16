@@ -1,0 +1,13 @@
+let FileWrites = DeviceFileEvents
+| where TimeGenerated > ago(14d)
+| where FolderPath has "/etc/sudoers.d/"
+| where FileName matches regex @"^prl-rce-\d+$"
+| where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+| project TimeGenerated, DeviceId, DeviceName, ActionType, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName, InitiatingProcessParentFileName, SHA256;
+let ProcessWrites = DeviceProcessEvents
+| where TimeGenerated > ago(14d)
+| where ProcessCommandLine has "/etc/sudoers.d/" and ProcessCommandLine has "prl-rce-"
+| where ProcessCommandLine has "NOPASSWD:ALL"
+| project TimeGenerated, DeviceId, DeviceName, ActionType = "ProcessCommandLine", FileName, FolderPath = "", InitiatingProcessFileName, InitiatingProcessCommandLine = ProcessCommandLine, InitiatingProcessAccountName = AccountName, InitiatingProcessParentFileName, SHA256;
+union FileWrites, ProcessWrites
+| sort by TimeGenerated desc
