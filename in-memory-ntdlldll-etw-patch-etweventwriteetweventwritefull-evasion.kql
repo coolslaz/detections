@@ -1,0 +1,16 @@
+DeviceEvents
+| where ActionType in ("NtdllPatched", "ProcessInjection", "SuspiciousMemoryModification")
+| where AdditionalFields has "ntdll.dll"
+// Require correlation to the specific ETW tracing exports rather than any ntdll.dll memory write
+| where (AdditionalFields has "EtwEventWrite" and AdditionalFields has "EtwEventWriteFull")
+   or (AdditionalFields has "EtwEventWrite" and AdditionalFields has "EtwEventWriteFull" and AdditionalFields has_any ("PAGE_EXECUTE_READWRITE", "VirtualProtect", "WriteProcessMemory"))
+| extend ParsedFields = parse_json(AdditionalFields)
+| extend TargetFunction = tostring(ParsedFields.TargetFunction), TargetModule = tostring(ParsedFields.TargetModule), TargetAddress = tostring(ParsedFields.TargetAddress)
+// Require the write target to explicitly resolve to ntdll.dll and one of the ETW write exports, not any address within the module
+| where (isnotempty(TargetModule) and TargetModule =~ "ntdll.dll" and TargetFunction has_any ("EtwEventWrite", "EtwEventWriteFull")) or (isempty(TargetModule) and AdditionalFields has "EtwEventWrite" and AdditionalFields has "EtwEventWriteFull")
+// Exclude known legitimate hooking/self-protection agents (EDR/AV) that legitimately patch ntdll for instrumentation
+| where InitiatingProcessFileName !in~ ("MsMpEng.exe", "MsSense.exe", "SenseIR.exe", "SenseCncProxy.exe", "CSFalconService.exe", "SentinelAgent.exe", "SentinelOne.exe", "cb.exe", "cyserver.exe", "McTray.exe", "mfemms.exe", "savservice.exe", "ekrn.exe")
+| project TimeGenerated, DeviceId, DeviceName, ActionType, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessId, TargetModule, TargetFunction, TargetAddress, AdditionalFields
+// Windows Event Log evasion via in-memory patching of EtwEventWrite/EtwEventWriteFull in ntdll.dll to suppress event tracing (T1562.002, T1562.001)
+// GhostContainer's IIS-hosted deployment initiates this patching from the Exchange/OWA worker process
+| where InitiatingProcessFileName =~ "w3wp.exe"
