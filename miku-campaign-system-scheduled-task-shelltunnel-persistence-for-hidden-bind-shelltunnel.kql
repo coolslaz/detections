@@ -1,0 +1,12 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where (FileName =~ "schtasks.exe"
+    and ProcessCommandLine has "/create"
+    and ProcessCommandLine has "/sc onstart"
+    and ProcessCommandLine has "/rl highest"
+    and ProcessCommandLine has "/ru system"
+    and ProcessCommandLine has_any (@'/tn "Shell"', @'/tn "Tunnel"', @'/tn Shell', @'/tn Tunnel')
+    and ProcessCommandLine has_any ("ch.exe", "chisel.exe", "powershell", "shell.ps1"))
+  or (FileName =~ "powershell.exe" and ProcessCommandLine has "-ep bypass" and ProcessCommandLine has "-windowstyle hidden" and ProcessCommandLine has "shell.ps1")
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName
+| sort by TimeGenerated desc
