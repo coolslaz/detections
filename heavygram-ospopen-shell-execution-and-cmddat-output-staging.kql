@@ -1,0 +1,8 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(30d)
+| where FileName =~ "cmd.exe"
+| where ProcessCommandLine has "/c"
+| where InitiatingProcessFileName in~ ("winappx.exe", "MsCache.exe", "RuntimeSSH.exe", "smqdservice.exe")
+    or (InitiatingProcessFileName in~ ("python.exe", "pythonw.exe") and InitiatingProcessFolderPath has_any (@"ProgramData\ZlibDate", @"ProgramData\SMQDServicePackages", @"ProgramData\Drivers", @"ProgramData\ssh-cache-default", @"ProgramData\MicrosoftDistribution"))
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, AccountName
+| sort by TimeGenerated desc
