@@ -1,0 +1,7 @@
+DeviceRegistryEvents
+| where TimeGenerated > ago(14d)
+| where RegistryKey has @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+| where ActionType == "RegistryValueSet"
+| where RegistryValueData has_any (@"C:\ProgramData\Drivers\MicDriver\MicDriver.exe", @"C:\ProgramData\MicrosoftDistribution\sysmain\winappx.exe", @"C:\ProgramData\SMQDServicePackages")
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, RegistryKey, RegistryValueName, RegistryValueData, ActionType
+| order by TimeGenerated desc
