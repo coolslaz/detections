@@ -1,0 +1,12 @@
+// Detects a destructive wipe pattern: a process that recently communicated with the Telegram Bot API (api.telegram.org) as C2 subsequently deletes a large volume of files in a short window, consistent with HEAVYGRAM/CHOSEN BRICK wipe capability triggered via Telegram bot command
+let telegramC2Procs = DeviceNetworkEvents
+| where ActionType == "ConnectionSuccess"
+| where RemoteUrl has "api.telegram.org"
+| project DeviceId, InitiatingProcessId, InitiatingProcessFileName, TelegramConnectTime = TimeGenerated;
+DeviceFileEvents
+| where ActionType == "FileDeleted"
+| join kind=inner (telegramC2Procs) on DeviceId, $left.InitiatingProcessId == $right.InitiatingProcessId
+| where TimeGenerated between (TelegramConnectTime .. (TelegramConnectTime + 15m))
+| summarize DeletedFileCount = count(), DistinctFolderCount = dcount(FolderPath), Files = make_set(FileName, 50), FirstDelete = min(TimeGenerated), LastDelete = max(TimeGenerated) by DeviceId, InitiatingProcessId, InitiatingProcessFileName
+| where DeletedFileCount > 50 and DistinctFolderCount > 3
+| project DeviceId, InitiatingProcessFileName, InitiatingProcessId, DeletedFileCount, DistinctFolderCount, FirstDelete, LastDelete, Files
