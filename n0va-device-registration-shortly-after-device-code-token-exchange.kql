@@ -1,0 +1,17 @@
+// Detect device-registration events occurring shortly after a device-code authentication / token-exchange sign-in for the same user
+// Evidence: Token exchange / device registration -> SSO access to corporate resources
+let lookback = 1d;
+let DeviceCodeSignIns = SigninLogs
+| where TimeGenerated > ago(lookback)
+| where AuthenticationProtocol =~ "deviceCode"
+| project SignInTime = TimeGenerated, UserPrincipalName, SignInIPAddress = IPAddress, SignInAppDisplayName = AppDisplayName, SignInDeviceDetail = DeviceDetail;
+let DeviceRegistrations = AuditLogs
+| where TimeGenerated > ago(lookback)
+| where OperationName == "Add device"
+| extend UserPrincipalName = tostring(InitiatedBy.user.userPrincipalName)
+| project RegTime = TimeGenerated, UserPrincipalName, OperationName, TargetResources;
+DeviceCodeSignIns
+| join kind=inner (DeviceRegistrations) on UserPrincipalName
+| where RegTime between (SignInTime .. (SignInTime + 15m))
+| project UserPrincipalName, SignInTime, SignInIPAddress, SignInAppDisplayName, SignInDeviceDetail, RegTime, OperationName, TargetResources
+| sort by SignInTime desc
