@@ -1,0 +1,19 @@
+// Detect 'sudo -i' interactive root shell requests occurring shortly after a Parallels
+// appliance install / tar extraction failure (lab error code -41508), consistent with
+// the ParaShells (CVE-2026-90894) exploitation chain where UCP_UID=0 in a marker file
+// triggers the attacker to escalate via sudo -i.
+let lookback = 10m;
+let extractionErrors = DeviceProcessEvents
+| where ProcessCommandLine has "prl_disp_service" or ProcessCommandLine has "tar"
+| where ProcessCommandLine has "-41508" or ProcessCommandLine has "UCP_UID=0"
+| project DeviceId, ErrorAccountName = AccountName, ErrorTime = TimeGenerated, ErrorCommandLine = ProcessCommandLine;
+DeviceProcessEvents
+| where FileName =~ "sudo"
+| where ProcessCommandLine has "-i"
+| join kind=inner (extractionErrors) on DeviceId
+// Require the same account that hit the extraction error to be the one escalating -- on a
+// multi-user host, an unrelated admin's sudo -i shouldn't correlate to someone else's error
+| where AccountName =~ ErrorAccountName
+| where TimeGenerated - ErrorTime between (0min .. lookback)
+| project TimeGenerated, DeviceId, AccountName, InitiatingProcessAccountName, ProcessCommandLine, ErrorTime, ErrorCommandLine
+| sort by TimeGenerated desc
