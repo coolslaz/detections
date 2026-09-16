@@ -1,0 +1,14 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(30d)
+| where FileName =~ "WhatssApp.exe"
+| where FolderPath has @"C:\ProgramData\Drivers\Whatsapp\WhatssApp.exe"
+| project TimeGenerated, DeviceId, DeviceName, AccountName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessFolderPath
+// Correlate with prior termination of legitimate whatsapp.exe and removal of LocalState (WhatsappCheker behavior)
+| join kind=leftouter (
+    DeviceProcessEvents
+    | where TimeGenerated > ago(30d)
+    | where FileName =~ "whatsapp.exe"
+    | project KillTime = TimeGenerated, DeviceId, KilledProcess = FileName, KillCommandLine = ProcessCommandLine
+) on DeviceId
+| where isnull(KillTime) or (TimeGenerated - KillTime) between (0min .. 30min)
+| project TimeGenerated, DeviceId, DeviceName, AccountName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, KillTime, KilledProcess, KillCommandLine
