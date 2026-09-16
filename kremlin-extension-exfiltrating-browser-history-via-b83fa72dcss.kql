@@ -1,0 +1,5 @@
+DeviceNetworkEvents
+| where TimeGenerated > ago(14d)
+| where RemoteUrl matches regex @"^https?://([a-zA-Z0-9-]+\.)*luizestrelhashapr\.online(:[0-9]+)?/google_api/b83fa72d\.css(\?.*)?$"
+| project TimeGenerated, DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteUrl, RemoteIP
+| extend Indicator = "KREMLIN browser history exfil path b83fa72d.css"
