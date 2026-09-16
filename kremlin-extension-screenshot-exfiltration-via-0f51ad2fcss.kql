@@ -1,0 +1,6 @@
+DeviceNetworkEvents
+| where TimeGenerated > ago(14d)
+| where InitiatingProcessFileName has_any ("chrome.exe", "msedge.exe")
+| where RemoteUrl matches regex @"^https?://([a-zA-Z0-9-]+\.)*luizestrelhashapr\.online(:[0-9]+)?/google_api/0f51ad2f\.css(\?.*)?$"
+| project TimeGenerated, DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteUrl, RemoteIP
+| extend ExfilType = "KREMLIN screenshot exfiltration (0f51ad2f.css)"
