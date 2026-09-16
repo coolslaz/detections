@@ -1,0 +1,6 @@
+DeviceNetworkEvents
+| where TimeGenerated > ago(1d)
+| where RemoteUrl matches regex @"^https?://([a-zA-Z0-9-]+\.)*luizestrelhashapr\.online(:[0-9]+)?/google_api/(108766d0|41f7b187|b83fa72d|0f51ad2f|e4cce14e|6c0c92f6|81d47cb6|a98cb43d)\.css(\?.*)?$"
+| project TimeGenerated, DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteUrl, RemoteIP, RemotePort, LocalIP
+| extend AlertReason = "Possible KREMLIN browser extension exfiltrating cookies/sessionStorage/localStorage via CSS-disguised C2 endpoint"
+| sort by TimeGenerated desc
