@@ -1,0 +1,12 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(14d)
+| where FileName =~ "netsh.exe"
+| where ProcessCommandLine has_all ("interface", "portproxy", "add", "v4tov4")
+| where ProcessCommandLine has "listenport" and ProcessCommandLine has "connectaddress" and ProcessCommandLine has "connectport"
+| extend AtexecParent = (InitiatingProcessParentFileName in~ ("svchost.exe", "services.exe") and InitiatingProcessFileName =~ "cmd.exe")
+// Require the Impacket atexec output-redirection naming convention (ADMIN$\\__<epoch>.<frac>) to co-occur in the same task action command line as the netsh portproxy command, not netsh portproxy usage alone
+| where InitiatingProcessCommandLine matches regex @"ADMIN\$\\__\d{10}\.\d+"
+| where InitiatingProcessCommandLine has "netsh" and InitiatingProcessCommandLine has "portproxy"
+| where AtexecParent == true
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessParentFileName, AtexecParent, InitiatingProcessCommandLine
+| where ProcessCommandLine contains "listenport=443" and ProcessCommandLine contains "connectport=445"
