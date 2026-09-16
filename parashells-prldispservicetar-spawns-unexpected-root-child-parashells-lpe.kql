@@ -1,0 +1,13 @@
+// Detect prl_disp_service (root) spawning tar with an injected --use-compress-program flag,
+// which then executes an unexpected arbitrary child process as root (ParaShells CVE-2026-90894)
+DeviceProcessEvents
+| where InitiatingProcessParentFileName =~ "prl_disp_service"
+| where InitiatingProcessFileName =~ "tar"
+| where InitiatingProcessCommandLine has "--use-compress-program"
+| where InitiatingProcessAccountName =~ "root"
+| extend CompressProgram = extract(@"--use-compress-program[= ]([^\s]+)", 1, InitiatingProcessCommandLine)
+// Exclude standard compressors -- legitimate tar invocations never override with anything else
+| where isnotempty(CompressProgram) and not(CompressProgram matches regex @"(?i)^(/usr/bin/|/bin/|/usr/local/bin/|/opt/homebrew/bin/|/opt/local/bin/)?(gzip|bzip2|bunzip2|xz|unxz|zstd|unzstd|lz4|compress|pigz|lzma)$")
+| where FileName !~ "tar"
+| project TimeGenerated, DeviceName, InitiatingProcessParentFileName, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName, FileName, FolderPath, ProcessCommandLine, AccountName, InitiatingProcessId, ProcessId
+| sort by TimeGenerated desc
