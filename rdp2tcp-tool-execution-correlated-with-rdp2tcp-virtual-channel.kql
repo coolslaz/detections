@@ -1,0 +1,16 @@
+// Detects rdp2tcp tunneling tool execution combined with its specific RDP virtual channel signature (channel name "rdp2tcp") to reduce false positives from generic RDP virtual channel activity
+let suspiciousProcess =
+    DeviceProcessEvents
+    | where FileName has "rdp2tcp" or ProcessCommandLine has "rdp2tcp"
+    | project TimeGenerated, DeviceId, DeviceName, FileName, ProcessCommandLine, InitiatingProcessFileName, AccountName, DetectionType = "rdp2tcp_process_execution";
+let suspiciousChannel =
+    WindowsEvent
+    | where Channel == "Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational"
+    | where EventID in (132, 148)
+    | extend ChannelName = tostring(EventData.ChannelName)
+    | where ChannelName == "rdp2tcp"
+    | project TimeGenerated, Computer, EventID, ChannelName, DetectionType = "rdp_virtual_channel_rdp2tcp_signature";
+suspiciousProcess
+| join kind=inner (suspiciousChannel) on $left.DeviceName == $right.Computer
+| where abs(datetime_diff('minute', TimeGenerated, TimeGenerated1)) <= 15
+| project TimeGenerated, TimeGenerated1, DeviceName, Computer, FileName, ProcessCommandLine, InitiatingProcessFileName, AccountName, ChannelName, EventID, DetectionType, DetectionType1
