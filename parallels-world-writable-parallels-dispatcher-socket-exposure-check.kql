@@ -1,0 +1,13 @@
+// Detect exposure verification or presence of the world-writable Parallels dispatcher Unix socket
+// /var/run/prl_disp_service.socket with mode 0777 (srwxrwxrwx), reachable by any local unprivileged process
+// Dropped the raw file-creation branch: the socket is created by root on every normal daemon
+// start/restart, so treating its mere existence as a signal was pure noise. Only an explicit
+// permission check for the socket is meaningful exposure evidence.
+DeviceProcessEvents
+| where ProcessCommandLine has "/var/run/prl_disp_service.socket"
+| where ProcessCommandLine has_any ("ls -l", "stat", "srwxrwxrwx")
+// A root operator checking permissions is routine administration; the exploitable condition is
+// an unprivileged account confirming world-writable access
+| where not(AccountName =~ "root")
+| project TimeGenerated, DeviceId, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
+| sort by TimeGenerated desc
