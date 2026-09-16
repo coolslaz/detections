@@ -1,0 +1,5 @@
+DeviceProcessEvents
+| where FileName in~ ("powershell.exe", "pwsh.exe", "cmd.exe")
+| where ProcessCommandLine has "Add-MpPreference" and ProcessCommandLine has "-ExclusionPath"
+| where ProcessCommandLine has_any (@"MicrosoftDistribution\sysmain", @"SMQDServicePackages\488ht1-8ww648q", @"Downloads\Telegram Desktop")
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
