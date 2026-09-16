@@ -1,0 +1,6 @@
+DeviceFileEvents
+| where TimeGenerated > ago(14d)
+| where FolderPath has_any (@"ProgramData\ZlibDate\Z84A847FEEB1FC2s", @"ProgramData\ZlibDate\CachedFiles", @"ProgramData\ZlibDate\Settings")
+| where FileName endswith ".Dat" or FileName endswith ".zip"
+| project TimeGenerated, DeviceName, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName, SHA256
+| sort by TimeGenerated desc
