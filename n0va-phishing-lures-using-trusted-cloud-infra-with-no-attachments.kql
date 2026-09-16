@@ -1,0 +1,22 @@
+// N0va phishkit: malware-free credential/token theft via trusted cloud infrastructure
+// Looks for the characteristic N0va verification/session-init URL pattern embedded in delivered email,
+// where the message carries no attachment (malware-free delivery) and mimics trusted platforms.
+let N0vaUrlPattern = @"/api/verification/init";
+let LegitimateBrandDomains = dynamic(["microsoft.com", "microsoftonline.com", "office.com", "sharepoint.com", "docusign.com", "docusign.net", "google.com", "dropbox.com", "zoom.us", "adobe.com"]);
+EmailUrlInfo
+| where Url has N0vaUrlPattern
+| where Url has "session=" and Url has "flow=" and Url has "prompt_profile="
+| join kind=inner (
+    EmailEvents
+    | where DeliveryAction == "Delivered"
+) on NetworkMessageId
+| join kind=leftouter (
+    EmailAttachmentInfo
+    | summarize AttachmentCount = count() by NetworkMessageId
+) on NetworkMessageId
+| extend HasAttachment = iff(isnotempty(AttachmentCount), true, false)
+| where HasAttachment == false
+| where SenderDisplayName has_any ("Microsoft Teams", "SharePoint", "OneDrive", "DocuSign", "Google Drive", "Dropbox", "Zoom", "Adobe Sign") or Subject has_any ("Microsoft Teams", "SharePoint", "OneDrive", "DocuSign", "Google Drive", "Dropbox", "Zoom", "Adobe Sign")
+| where not(SenderFromDomain has_any (LegitimateBrandDomains))
+| project TimeGenerated, NetworkMessageId, SenderFromAddress, SenderFromDomain, SenderDisplayName, RecipientEmailAddress, Subject, Url, DeliveryAction, HasAttachment
+| sort by TimeGenerated desc
