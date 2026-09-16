@@ -1,0 +1,9 @@
+DeviceProcessEvents
+| where FileName =~ "schtasks.exe"
+| where ProcessCommandLine has "/create"
+| where ProcessCommandLine has "MicrosoftNodeRuntimeUpdater"
+| where ProcessCommandLine has_any ("node.exe", ".js")
+| where not(ProcessCommandLine has_any (@"\Program Files\nodejs\", @"\Program Files (x86)\nodejs\"))
+| where InitiatingProcessFileName has_any ("node.exe", "wscript.exe", "cscript.exe")
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName
+| order by TimeGenerated desc
