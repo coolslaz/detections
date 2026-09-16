@@ -1,0 +1,18 @@
+let KnownChangeManagementAccounts = dynamic(["svc-exchangeadmin@contoso.com", "changemgmt@contoso.com"]);
+let SuspiciousOps = dynamic(["Set-VirtualDirectory", "New-VirtualDirectory", "Remove-VirtualDirectory", "Set-TransportConfig", "Set-TransportRule", "New-TransportRule", "New-ManagementRoleAssignment", "Remove-ManagementRoleAssignment", "Set-ManagementRoleAssignment", "New-ExchangeCertificate", "Set-ExchangeCertificate", "Import-ExchangeCertificate", "Set-AuthenticationPolicy", "New-AuthenticationPolicy", "Set-OrganizationConfig"]);
+OfficeActivity
+| where RecordType == "ExchangeAdmin"
+| where Operation has_any (SuspiciousOps)
+| where not(UserId in~ (KnownChangeManagementAccounts))
+| extend ModifiedProperties = tostring(Parameters)
+| summarize
+    ChangeCount = count(),
+    DistinctOperations = dcount(Operation),
+    Operations = make_set(Operation, 20),
+    ObjectsChanged = make_set(OfficeObjectId, 20),
+    ClientIPs = make_set(ClientIP, 10),
+    FirstChange = min(TimeGenerated),
+    LastChange = max(TimeGenerated)
+    by UserId, bin(TimeGenerated, 1h)
+| where ChangeCount >= 3 and DistinctOperations >= 2
+| sort by LastChange desc
