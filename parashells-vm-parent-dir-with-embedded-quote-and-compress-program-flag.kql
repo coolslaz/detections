@@ -1,0 +1,9 @@
+DeviceFileEvents
+| where ActionType in ("FolderCreated", "FileCreated")
+| where FolderPath has "\"" and FolderPath has "--use-compress-program="
+| where FolderPath has "sprl_p_" or FolderPath has "/tmp/"
+// Require the directory actually be created by the extraction toolchain, not an unrelated process
+| where InitiatingProcessFileName has_any ("tar", "prl_disp_service")
+| extend HasInjectedFlag = FolderPath has "--use-compress-program="
+| project Timestamp = TimeGenerated, DeviceId, DeviceName, ActionType, FolderPath, FileName, InitiatingProcessAccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName, HasInjectedFlag
+| where HasInjectedFlag
