@@ -1,0 +1,33 @@
+let lookback = 30d;
+let kremlin_domains = dynamic(["volmira.site","zaviro.online","luizestrelhashapr.online","connection.upgradeonline.site","granderevolucao.store","creamp1eonlyfans.net","checkeligibitily.workers.dev","codecaudiog.site","codecvideowin.online","acrobat-updater.com"]);
+let kremlin_hashes = dynamic(["106eac79396a3ff77b8f375c391260ce422be2ae4d55d3aa75b2635cbdc0fa42","5ece7fd3766b0b7f8aadefa562313cea6c3c94f9398658dd389910e5be44f552","c8c38634dd44d7c6162c66174a6ee23ee404265125166e8d757681bdd66a4268","223be3f8648bf6998c4a58b972522e5fda8d9d0a57b4e163811930de66c3f7ca"]);
+union
+(
+    DeviceNetworkEvents
+    | where TimeGenerated > ago(lookback)
+    | where RemoteUrl has_any (kremlin_domains) or RemoteIP has_any (kremlin_domains)
+    | extend MatchedIndicator = case(
+        RemoteUrl has_any (kremlin_domains), RemoteUrl,
+        RemoteIP has_any (kremlin_domains), RemoteIP,
+        ""
+      )
+    | extend IndicatorType = "domain"
+    | project TimeGenerated, DeviceId, DeviceName, MatchedIndicator, IndicatorType, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessId
+),
+(
+    DeviceFileEvents
+    | where TimeGenerated > ago(lookback)
+    | where SHA256 has_any (kremlin_hashes)
+    | extend MatchedIndicator = SHA256
+    | extend IndicatorType = "sha256"
+    | project TimeGenerated, DeviceId, DeviceName, MatchedIndicator, IndicatorType, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessId
+),
+(
+    DeviceProcessEvents
+    | where TimeGenerated > ago(lookback)
+    | where SHA256 has_any (kremlin_hashes)
+    | extend MatchedIndicator = SHA256
+    | extend IndicatorType = "sha256"
+    | project TimeGenerated, DeviceId, DeviceName, MatchedIndicator, IndicatorType, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessId
+)
+| sort by TimeGenerated desc
