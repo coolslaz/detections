@@ -1,0 +1,8 @@
+W3CIISLog
+| where csMethod =~ "POST"
+| where csUriStem has "wp-admin/admin-ajax.php"
+| where csUriQuery has "action=wwlc_file_upload_handler"
+| where scStatus == 200
+| where isempty(csReferer)
+| project TimeGenerated, cIP, csMethod, csUriStem, csUriQuery, csUserAgent, csReferer, sSiteName, scStatus
+| sort by TimeGenerated desc
