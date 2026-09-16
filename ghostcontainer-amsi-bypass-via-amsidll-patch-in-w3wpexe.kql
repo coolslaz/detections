@@ -1,0 +1,21 @@
+let TimeWindow = 5m;
+let KnownLegitAmsiProviders = dynamic(["Windows Defender", "Microsoft Antimalware", "Kaspersky Anti-Virus", "Kaspersky Endpoint Security"]);
+let AmsiEvents = DeviceEvents
+| where TimeGenerated > ago(14d)
+| where ActionType in ("AmsiScanBufferPatched", "AmsiProviderUnregistered", "AmsiScanBuffer")
+| where InitiatingProcessFileName =~ "w3wp.exe"
+| extend AdditionalFieldsParsed = parse_json(AdditionalFields)
+| extend ModuleName = tostring(AdditionalFieldsParsed.ModuleName)
+| extend ProviderName = tostring(AdditionalFieldsParsed.ProviderName)
+| where ModuleName has "amsi.dll" or ActionType has "Amsi"
+| where not(ProviderName in (KnownLegitAmsiProviders))
+| project TimeGenerated, DeviceId, DeviceName, ActionType, InitiatingProcessFileName, InitiatingProcessId, InitiatingProcessCommandLine, ModuleName, ProviderName;
+let W3wpProcesses = DeviceProcessEvents
+| where TimeGenerated > ago(14d)
+| where FileName =~ "w3wp.exe"
+| project ProcTime = TimeGenerated, DeviceId, ProcessId, ProcessCommandLine;
+AmsiEvents
+| join kind=inner (W3wpProcesses) on DeviceId, $left.InitiatingProcessId == $right.ProcessId
+| where abs(datetime_diff('second', TimeGenerated, ProcTime)) <= 300
+| project TimeGenerated, DeviceId, DeviceName, ActionType, InitiatingProcessFileName, InitiatingProcessId, InitiatingProcessCommandLine, ProcessCommandLine, ModuleName, ProviderName
+| sort by TimeGenerated desc
