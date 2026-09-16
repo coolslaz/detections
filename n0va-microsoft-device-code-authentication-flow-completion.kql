@@ -1,0 +1,18 @@
+SigninLogs
+| where TimeGenerated > ago(1d)
+| where AuthenticationProtocol == "deviceCode"
+| where ResultType == "0"
+| where AppId !in (
+    "04b07795-8ddb-461a-bbee-02f9e1bf7b46",
+    "1950a258-227b-4e31-a9cf-717495945fc2",
+    "aebc6443-996d-45c2-90f0-388ff96faa56",
+    "1fec8e78-bce4-4aaf-ab1b-5451cc387264",
+    "d3590ed6-52b3-4102-aeff-aad2292ab01c",
+    "872cd9fa-d31f-45e0-9eab-6e460a02d1f1",
+    "27922004-5251-4030-b22d-91ecd9a37ea4",
+    "04f0c124-f2bc-4f59-8241-bf6df9866bbd"
+)
+| extend AppDisplayNameLower = tolower(AppDisplayName)
+| where AppDisplayNameLower !in ("microsoft teams", "microsoft office", "azure cli", "microsoft authentication broker", "visual studio code", "azure powershell", "microsoft azure powershell", "visual studio")
+| project TimeGenerated, UserPrincipalName, UserId, AppDisplayName, AppId, ClientAppUsed, AuthenticationProtocol, IPAddress, Location, ResourceDisplayName, ConditionalAccessStatus, RiskLevelDuringSignIn, ResultType
+| sort by TimeGenerated desc
