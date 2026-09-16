@@ -1,0 +1,48 @@
+let lookback = 14d;
+let minFailCount = 3;
+let impossibleSpeedKmh = 900.0;
+let CorporateRanges = toscalar(_GetWatchlist('CorporateVPNRanges') | summarize make_list(tostring(IPRange)));
+let FailedAttempts = 
+SigninLogs
+| where TimeGenerated > ago(1d)
+| where ResultType != "0"
+| project FailTime = TimeGenerated, UserPrincipalName, FailIPAddress = IPAddress;
+let FailCounts = 
+FailedAttempts
+| summarize FailCount = count(), FirstFailTime = min(FailTime), LastFailTime = max(FailTime), FailIPs = make_set(FailIPAddress, 20) by UserPrincipalName
+| where FailCount >= minFailCount;
+let SuccessSignins = 
+SigninLogs
+| where TimeGenerated > ago(1d)
+| where ResultType == "0"
+| extend Latitude = todouble(LocationDetails.geoCoordinates.latitude), Longitude = todouble(LocationDetails.geoCoordinates.longitude)
+| project SuccessTime = TimeGenerated, UserPrincipalName, IPAddress, Location = tostring(LocationDetails.countryOrRegion), Latitude, Longitude, AppDisplayName, DeviceDetailBrowser = tostring(DeviceDetail.browser), DeviceDetailOS = tostring(DeviceDetail.operatingSystem);
+let FailThenSuccess = 
+SuccessSignins
+| join kind=inner (FailCounts) on UserPrincipalName
+| where SuccessTime - LastFailTime between (0min .. 60min)
+| where SuccessTime > LastFailTime;
+let KnownGeoBase = 
+SigninLogs
+| where TimeGenerated between (ago(lookback) .. ago(1d))
+| where ResultType == "0"
+| extend Lat = todouble(LocationDetails.geoCoordinates.latitude), Lon = todouble(LocationDetails.geoCoordinates.longitude), Country = tostring(LocationDetails.countryOrRegion);
+let KnownGeoLatest = 
+KnownGeoBase
+| summarize KnownCountries = make_set(Country, 50), LastKnownTime = max(TimeGenerated) by UserPrincipalName;
+let KnownGeoHistory = 
+KnownGeoLatest
+| join kind=inner (KnownGeoBase | project UserPrincipalName, TimeGenerated, Lat, Lon) on UserPrincipalName
+| where TimeGenerated == LastKnownTime
+| project UserPrincipalName, KnownCountries, LastKnownTime, LastKnownLat = Lat, LastKnownLon = Lon;
+FailThenSuccess
+| join kind=leftouter (KnownGeoHistory) on UserPrincipalName
+| extend NewGeography = iff(isnull(KnownCountries), true, not(set_has_element(KnownCountries, Location)))
+| extend TimeDiffHours = datetime_diff('second', SuccessTime, LastKnownTime) / 3600.0
+| extend DistanceKm = iff(isnotnull(LastKnownLat) and isnotnull(Latitude), geo_distance_2points(Longitude, Latitude, LastKnownLon, LastKnownLat) / 1000.0, real(null))
+| extend SpeedKmh = iff(isnotnull(DistanceKm) and TimeDiffHours > 0, DistanceKm / TimeDiffHours, real(null))
+| extend ImpossibleTravel = isnotnull(SpeedKmh) and SpeedKmh > impossibleSpeedKmh
+| where ImpossibleTravel
+| where isempty(CorporateRanges) or not(ipv4_is_in_any_range(IPAddress, CorporateRanges))
+| project SuccessTime, FailTime = LastFailTime, FirstFailTime, FailCount, UserPrincipalName, IPAddress, FailIPs, Location, AppDisplayName, DeviceDetailBrowser, DeviceDetailOS, NewGeography, DistanceKm, TimeDiffHours, SpeedKmh, KnownCountries
+| sort by SuccessTime desc
