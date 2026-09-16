@@ -1,0 +1,6 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(14d)
+| where (FileName =~ "python.exe" or FileName =~ "pythonw.exe") and ProcessCommandLine has "ProgramData" and ProcessCommandLine has_any ("ZlibDate", "SMQDServicePackages", "ssh-cache-default", "Drivers\\MicDriver", "Drivers\\Whatsapp", "micbucket")
+    or (FileName in~ ("winappx.exe", "MsCache.exe", "RuntimeSSH.exe", "smqdservice.exe", "MicDriver.exe", "WhatssApp.exe") and FolderPath has_any ("ProgramData\\MicrosoftDistribution", "ProgramData\\SMQDServicePackages", "ProgramData\\Drivers", "ProgramData\\ZlibDate", "ProgramData\\ssh-cache-default"))
+| project TimeGenerated, DeviceName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName, AccountName
+| sort by TimeGenerated desc
