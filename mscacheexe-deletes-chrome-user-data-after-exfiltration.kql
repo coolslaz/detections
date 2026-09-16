@@ -1,0 +1,7 @@
+DeviceFileEvents
+| where TimeGenerated > ago(14d)
+| where InitiatingProcessFileName =~ "MsCache.exe"
+| where FolderPath has @"AppData\Local\Google\Chrome\User Data"
+| where ActionType == "FileDeleted"
+| project TimeGenerated, DeviceName, ActionType, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessFolderPath, InitiatingProcessAccountName
+| sort by TimeGenerated desc
