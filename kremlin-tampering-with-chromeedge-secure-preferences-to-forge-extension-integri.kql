@@ -1,0 +1,14 @@
+DeviceFileEvents
+| where FileName =~ "Secure Preferences"
+| where FolderPath has_any ("\\Google\\Chrome\\User Data\\", "\\Microsoft\\Edge\\User Data\\")
+| where ActionType in ("FileModified", "FileCreated")
+| where InitiatingProcessFileName !in~ ("chrome.exe", "msedge.exe", "GoogleUpdate.exe", "MicrosoftEdgeUpdate.exe", "GoogleCrashHandler.exe", "GoogleCrashHandler64.exe", "MicrosoftEdgeUpdateCore.exe")
+| join kind=inner (
+    DeviceProcessEvents
+    | where FileName !in~ ("chrome.exe", "msedge.exe")
+    | where ProcessCommandLine has "protection.macs"
+        or ProcessCommandLine has "extensions.settings"
+) on DeviceId
+| where abs(datetime_diff('second', TimeGenerated, TimeGenerated1)) < 60
+| project TimeGenerated, DeviceId, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, ProcessCommandLine1=ProcessCommandLine
+| summarize count(), make_set(ProcessCommandLine1, 10) by DeviceId, FileName, FolderPath, InitiatingProcessFileName
