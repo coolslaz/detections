@@ -1,0 +1,23 @@
+// Detects establishment of a persistent SSO session using stolen tokens (device code / token-exchange phishing)
+// by finding non-interactive sign-ins that satisfy authentication without an MFA challenge, occurring from a
+// country the account has not signed in from in the prior baseline period.
+let lookback = 14d;
+let AllSignIns = AADSignInEventsBeta
+| where Timestamp > ago(lookback);
+let Baseline = AllSignIns
+| where Timestamp between (ago(lookback) .. ago(1d))
+| where IsInteractive == true
+| where ErrorCode == 0
+| summarize KnownCountries = make_set(Country, 200), BaselineCount = count() by AccountObjectId;
+AllSignIns
+| where Timestamp > ago(1d)
+| where ErrorCode == 0
+| where IsInteractive == false
+| where AuthenticationRequirement != "multiFactorAuthentication"
+| where AppDisplayName !in~ ("Microsoft Authentication Broker", "Azure Multi-Factor Auth Client", "Microsoft Substrate Management")
+| join kind=leftouter Baseline on AccountObjectId
+| extend IsNewCountry = iff(isnull(KnownCountries), true, not(set_has_element(KnownCountries, Country)))
+| where IsNewCountry == true
+| where BaselineCount >= 5
+| project Timestamp, AccountObjectId, AccountDisplayName = tostring(column_ifexists("AccountDisplayName", "")), ApplicationId, AppDisplayName, ResourceDisplayName, ClientAppUsed, IPAddress, Country, AuthenticationRequirement, IsInteractive, KnownCountries, BaselineCount
+| sort by Timestamp desc
