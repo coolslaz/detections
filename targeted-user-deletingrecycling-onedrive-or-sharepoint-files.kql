@@ -1,0 +1,17 @@
+// Description: Detects a specific, analyst-defined user deleting or recycling files in OneDrive or SharePoint, including bulk deletion bursts.
+// This KQL analytic rule only detects the activity and raises the alert -- it does NOT send email.
+// Email/notification dispatch must be configured separately via a Microsoft Sentinel automation rule or Logic App playbook attached to this analytic rule.
+// False positives: legitimate cleanup activity, scheduled retention/recycling jobs, migration tools, or the user emptying their own recycle bin as part of normal housekeeping can trigger this rule. Tune the BurstThreshold and TargetUser value as needed.
+let TargetUser = "jane.doe@contoso.com"; // e.g. jane.doe@contoso.com -- replace with the specific UPN/email to monitor
+let Lookback = 4h; // set your required lookback time
+let BurstThreshold = 3;
+OfficeActivity
+| where TimeGenerated > ago(Lookback)
+| where OfficeWorkload in ("OneDrive", "SharePoint")
+| where RecordType == "SharePointFileOperation"
+| where Operation in ("FileDeleted", "FileRecycled", "FileDeletedFirstStageRecycleBin", "FileDeletedSecondStageRecycleBin")
+| where UserId =~ TargetUser
+| project TimeGenerated, UserId, Operation, Site_Url, SourceFileName, SourceRelativeUrl, ClientIP, OfficeWorkload
+| summarize EventCount = count(), Operations = make_set(Operation), Files = make_set(SourceFileName, 50), Sites = make_set(Site_Url, 20), ClientIPs = make_set(ClientIP, 20), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by UserId, TimeWindow = bin(TimeGenerated, 15m)
+| extend IsBulkDeletion = EventCount >= BurstThreshold
+| sort by TimeWindow desc
