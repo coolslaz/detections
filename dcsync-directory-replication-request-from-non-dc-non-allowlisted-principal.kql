@@ -1,0 +1,13 @@
+let KnownReplicationAccounts = dynamic(["MSOL_", "AAD_", "ADSYNC", "AZUREADCONNECT", "AAD CONNECT", "BACKUP", "VEEAM", "NETBACKUP", "COMMVAULT", "NTBACKUP", "ADRECOVERY", "SYSTEM STATE"]);
+SecurityEvent
+| where EventID == 4662
+| where ObjectServer == "DS"
+| where Properties has "1131f6aa-9c07-11d1-f79f-00c04fc2dcd2" or Properties has "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2" or Properties has "89e95b76-444d-4c62-991a-0facbeda640c"
+| extend RequestingAccount = SubjectAccount, RequestingSid = SubjectUserSid
+// Exclude computer/domain controller machine accounts (end with $)
+| where not(RequestingAccount has "$")
+// Exclude known legitimate DCSync-performing service accounts (Azure AD Connect / AAD Connect sync, backup/AD recovery solutions)
+| where not(toupper(RequestingAccount) has_any (KnownReplicationAccounts))
+// Require the requesting principal to not itself be a domain controller computer object referenced in ObjectName
+| where not(ObjectName has RequestingAccount)
+| project TimeGenerated, Computer, RequestingAccount, RequestingSid, ObjectName, Properties, Activity
