@@ -1,0 +1,17 @@
+let ImageLoadHits =
+    DeviceImageLoadEvents
+    | where TimeGenerated > ago(24h)
+    | where InitiatingProcessFileName =~ "SentinelMemoryScanner.exe"
+    | where FileName =~ "SentinelAgentCore.dll"
+    | where not(FolderPath has_any ("Program Files\\SentinelOne", "Program Files (x86)\\SentinelOne"))
+    | where not(InitiatingProcessFolderPath has_any ("Program Files\\SentinelOne", "Program Files (x86)\\SentinelOne"))
+    | project TimeGenerated, DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath, FileName, FolderPath, SHA256, InitiatingProcessAccountName;
+// Complement: flag process creation of SentinelMemoryScanner.exe running from non-standard SentinelOne install paths
+let ProcessHits =
+    DeviceProcessEvents
+    | where TimeGenerated > ago(24h)
+    | where FileName =~ "SentinelMemoryScanner.exe"
+    | where not(FolderPath has_any ("Program Files\\SentinelOne", "Program Files (x86)\\SentinelOne"))
+    | project TimeGenerated, DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath = FolderPath, FileName, FolderPath, SHA256, InitiatingProcessAccountName;
+union ImageLoadHits, ProcessHits
+| sort by TimeGenerated desc
