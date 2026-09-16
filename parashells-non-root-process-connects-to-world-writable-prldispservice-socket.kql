@@ -1,0 +1,16 @@
+// Detects a local, non-privileged process reaching the world-writable
+// prl_disp_service Unix socket (/var/run/prl_disp_service.socket) used by
+// PrlSrv_LoginLocal, which trusts kernel peer credentials without requiring
+// Parallels code signature or admin group membership (ParaShells CVE-2026-90894)
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where ProcessCommandLine has "/var/run/prl_disp_service.socket"
+| where not(AccountName in~ ("root", "_prl_disp_service"))
+// Exclude Parallels' own legitimate clients -- normal GUI/CLI interaction with the daemon
+// is expected traffic, not evidence of exploitation.
+| where not(FileName has_any ("prlctl", "prlsrvctl", "prl_client_app", "Parallels Desktop"))
+| extend IsLikelyPocClient = FileName has_any ("python", "python3", "nc", "socat", "curl") or ProcessCommandLine has_any ("PrlSrv_LoginLocal", "PrlSrv_InstallAppliance")
+// Require an actual exploitation indicator rather than just any non-Parallels process
+| where IsLikelyPocClient
+| project TimeGenerated, DeviceId, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, IsLikelyPocClient
+| sort by TimeGenerated desc
