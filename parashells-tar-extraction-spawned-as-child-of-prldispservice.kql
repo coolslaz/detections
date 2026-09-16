@@ -1,0 +1,9 @@
+DeviceProcessEvents
+| where InitiatingProcessFileName =~ "prl_disp_service"
+| where FileName =~ "tar"
+| where ProcessCommandLine has "-xf"
+// Plain tar -xf under prl_disp_service is routine appliance installation -- only flag when
+// the injection artifact (overridden compressor or an embedded quote) is also present.
+| where ProcessCommandLine has "--use-compress-program" or ProcessCommandLine contains "\""
+| project TimeGenerated, DeviceId, DeviceName, AccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, InitiatingProcessAccountName
+| order by TimeGenerated desc
