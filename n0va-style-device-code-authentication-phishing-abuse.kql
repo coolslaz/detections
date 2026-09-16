@@ -1,0 +1,18 @@
+// Detects abuse of the OAuth device code authentication flow consistent with N0va phishing kit behavior
+// Trusted-brand lure -> device code phishing -> legitimate authentication
+SigninLogs
+| where TimeGenerated > ago(1d)
+| where AuthenticationRequirement =~ "multiFactorAuthentication" and DeviceDetail has "DeviceCode"
+| where ResultType == '0'
+| extend IsUnmanagedDevice = (isempty(DeviceDetail) or DeviceDetail !has "Browser")
+| summarize
+    DeviceCodeAttempts = count(),
+    DistinctDevices = dcount(tostring(DeviceDetail)),
+    DistinctIPs = dcount(IPAddress),
+    UnmanagedAttempts = countif(IsUnmanagedDevice),
+    Applications = make_set(AppDisplayName, 10),
+    Devices = make_set(DeviceDetail, 10),
+    IPs = make_set(IPAddress, 10)
+    by UserId, UserDisplayName, bin(TimeGenerated, 1h)
+| where DeviceCodeAttempts >= 3 and UnmanagedAttempts >= 1
+| sort by DeviceCodeAttempts desc
