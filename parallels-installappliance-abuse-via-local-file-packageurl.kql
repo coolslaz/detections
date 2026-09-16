@@ -1,0 +1,15 @@
+// Detect PrlSrv_InstallAppliance being invoked with a local file:// PackageURL instead of a trusted remote catalog source
+let ProcessHits = DeviceProcessEvents
+| where FileName has_any ("prl_disp_service", "tar") or ProcessCommandLine has "PrlSrv_InstallAppliance"
+| where ProcessCommandLine has "PackageURL" and ProcessCommandLine contains "file:///tmp/"
+| project TimeGenerated, DeviceName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName;
+let FileHits = DeviceFileEvents
+| where FileName endswith ".xml" or FileName endswith ".tar"
+// "FolderPath has 'prl'" and "FileName contains 'PackageURL'" were too loose -- any path
+// substring or unlikely filename match. Require the actual dispatcher process and an
+// explicit local file:// reference instead.
+| where InitiatingProcessFileName =~ "prl_disp_service"
+| where FolderPath contains "file:///tmp/" or InitiatingProcessCommandLine contains "file:///tmp/"
+| project TimeGenerated, DeviceName, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName;
+union ProcessHits, FileHits
+| sort by TimeGenerated desc
