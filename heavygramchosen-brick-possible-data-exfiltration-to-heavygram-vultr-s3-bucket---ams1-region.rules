@@ -1,0 +1,3 @@
+alert tls $HOME_NET any -> $EXTERNAL_NET any (msg:"HEAVYGRAM/CHOSEN BRICK Possible Data Exfiltration to HEAVYGRAM Vultr S3 Bucket - ams1 region"; flow:to_server,established; tls.sni; content:"ams1.vultrobjects.com"; nocase; endswith; fast_pattern; metadata: author Arnold Chan, mitre_technique_id T1567.002; classtype:policy-violation; sid:1000020; rev:2;)
+
+alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"HTTP Upload to HEAVYGRAM Vultr S3 Bucket Host Header - ams1 region (CHOSEN BRICK/HEAVYGRAM)"; flow:to_server,established; http.host; content:"ams1.vultrobjects.com"; nocase; endswith; fast_pattern; http.method; content:"PUT"; metadata: author detections.ai, mitre_technique_id T1567.002; classtype:policy-violation; sid:1000023; rev:2;)
