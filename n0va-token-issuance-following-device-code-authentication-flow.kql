@@ -1,0 +1,15 @@
+// Detects OAuth access/refresh token issuance immediately following a device-code authentication flow completion, consistent with N0va phishkit token-capture technique
+SigninLogs
+| where ResultType == "0"
+| where AuthenticationProtocol =~ "deviceCode"
+| project DeviceCodeTime = TimeGenerated, UserPrincipalName, IPAddress, AppDisplayName, ClientAppUsed, UserAgent, DeviceCodeCorrelationId = CorrelationId
+| join kind=inner (
+    SigninLogs
+    | where ResultType == "0"
+    | where AuthenticationProtocol !~ "deviceCode"
+    | project TokenTime = TimeGenerated, UserPrincipalName, TokenIPAddress = IPAddress, TokenAppDisplayName = AppDisplayName, TokenClientAppUsed = ClientAppUsed, TokenUserAgent = UserAgent, TokenCorrelationId = CorrelationId
+) on UserPrincipalName
+| where TokenTime > DeviceCodeTime and TokenTime - DeviceCodeTime <= 5m
+| where TokenIPAddress != IPAddress and (TokenUserAgent != UserAgent or TokenClientAppUsed != ClientAppUsed)
+| project UserPrincipalName, DeviceCodeTime, TokenTime, IPAddress, TokenIPAddress, ClientAppUsed, TokenClientAppUsed, UserAgent, TokenUserAgent, AppDisplayName, TokenAppDisplayName, DeviceCodeCorrelationId, TokenCorrelationId
+| sort by DeviceCodeTime desc
