@@ -1,0 +1,25 @@
+// Detect successful administrative-scope API activity on WSO2 systems that lacks a corresponding legitimate authenticated session
+// from the same SourceIP/DestinationUserName pair - consistent with forged admin JWT (CVE-2026-5430) exploitation
+let lookback = 14d;
+let detectionWindow = 1d;
+let excludedAccountPatterns = dynamic(["svc_", "service-", "-automation"]);
+let sensitiveAdminPaths = dynamic(["/api/am/admin/", "/carbon/admin/", "/services/"]);
+let knownAdminSessions = CommonSecurityLog
+    | where TimeGenerated between (ago(lookback) .. ago(detectionWindow))
+    | where DeviceProduct has "WSO2"
+    | where Activity has_any ("login", "authenticate", "Authentication", "logon") or DeviceEventClassID has_any ("authentication-success", "login-success")
+    | where DeviceCustomNumber1 in (200, 201, 204) or Message has_any ("200", "201", "204", "success", "Success") or Activity has_any ("success", "Success")
+    | summarize by SourceIP, DestinationUserName;
+CommonSecurityLog
+| where TimeGenerated > ago(detectionWindow)
+| where DeviceProduct has "WSO2"
+| extend IsAdminPathOrScope = Message has_any (sensitiveAdminPaths) or Activity has_any (sensitiveAdminPaths) or Message has "scope=apim:admin" or Activity has "scope=apim:admin"
+| where IsAdminPathOrScope
+| extend IsSuccessful = DeviceCustomNumber1 in (200, 201, 202, 204) or Message has_any ("200", "201", "202", "204", "success", "Success") or Activity has_any ("success", "Success")
+| where IsSuccessful
+| extend IsLoginEvent = Activity has_any ("login", "authenticate", "Authentication", "logon")
+| where not(IsLoginEvent)
+| where not(DestinationUserName has_any (excludedAccountPatterns))
+| join kind=leftanti (knownAdminSessions) on SourceIP, DestinationUserName
+| project TimeGenerated, DeviceVendor, DeviceProduct, Activity, SourceIP, DestinationUserName, Message
+| sort by TimeGenerated desc
