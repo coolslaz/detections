@@ -1,0 +1,12 @@
+DeviceProcessEvents
+| where FileName =~ "tar"
+| where ProcessCommandLine has "--use-compress-program"
+| where InitiatingProcessFileName =~ "prl_disp_service" or InitiatingProcessParentFileName =~ "prl_disp_service"
+| where ProcessCommandLine has "-xf"
+| where InitiatingProcessAccountName =~ "root" or AccountName =~ "root"
+| extend CompressProgram = extract(@"--use-compress-program[= ]([^\s]+)", 1, ProcessCommandLine)
+| where isnotempty(CompressProgram)
+// Exclude legitimate compressors -- the exploit's injected argument points at an
+// attacker-supplied binary/script, never at a standard system compression tool.
+| where not(CompressProgram matches regex @"(?i)^(/usr/bin/|/bin/|/usr/local/bin/|/opt/homebrew/bin/|/opt/local/bin/)?(gzip|bzip2|bunzip2|xz|unxz|zstd|unzstd|lz4|compress|pigz|lzma)$")
+| project TimeGenerated, DeviceName, FileName, ProcessCommandLine, CompressProgram, InitiatingProcessFileName, InitiatingProcessParentFileName, InitiatingProcessAccountName, AccountName, InitiatingProcessCommandLine
