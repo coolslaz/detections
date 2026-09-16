@@ -1,0 +1,18 @@
+// Detects the N0va phishing kit pattern: a device-code authentication grant
+// followed shortly after by token usage from an inconsistent IP/device,
+// indicating token-exchange abuse to bypass MFA and establish persistent SSO access
+let lookback = 1d;
+let DeviceCodeGrants = 
+    AADSignInEventsBeta
+    | where Timestamp > ago(lookback)
+    | where AuthenticationProcessingDetails has "Device Code" or LogonType has "deviceCode"
+    | where ErrorCode == 0
+    | project GrantTime = Timestamp, AccountObjectId, AccountUpn, GrantIP = IPAddress, GrantDeviceId = AadDeviceId;
+AADSignInEventsBeta
+| where Timestamp > ago(lookback)
+| where ErrorCode == 0
+| join kind=inner (DeviceCodeGrants) on AccountObjectId
+| where Timestamp > GrantTime and Timestamp - GrantTime <= 15m
+| where IPAddress != GrantIP and AadDeviceId != GrantDeviceId
+| project Timestamp, GrantTime, AccountUpn, AccountObjectId, GrantIP, IPAddress, GrantDeviceId, DeviceId = AadDeviceId, ResourceDisplayName, AuthenticationRequirement, ErrorCode
+| sort by AccountUpn asc, GrantTime asc
