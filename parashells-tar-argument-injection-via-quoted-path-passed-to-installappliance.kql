@@ -1,0 +1,9 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(14d)
+| where FileName =~ "tar"
+| where InitiatingProcessFileName =~ "prl_disp_service"
+| where ProcessCommandLine has "-xf"
+// Require the quote to sit immediately before the flag (the actual injection shape) rather
+// than merely co-occurring anywhere in the command line
+| where ProcessCommandLine matches regex @'"[[:space:]]*--use-compress-program='
+| project TimeGenerated, DeviceName, AccountName, InitiatingProcessFileName, InitiatingProcessAccountName, FileName, ProcessCommandLine, InitiatingProcessCommandLine, ProcessId, InitiatingProcessId
