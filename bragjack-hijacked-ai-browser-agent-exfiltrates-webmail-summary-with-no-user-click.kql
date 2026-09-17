@@ -1,0 +1,17 @@
+// Detect AI browser agent navigating to webmail then exfiltrating email content with zero user interaction
+let KnownBragJackInfra = dynamic(["testing.perplexity.com", "weizmangal.com"]);
+let MailNav = DeviceNetworkEvents
+| where TimeGenerated > ago(1d)
+| where RemoteUrl has_any ("mail.google.com", "outlook.com")
+| where InitiatingProcessFileName has_any ("chrome.exe","msedge.exe","comet.exe","opera.exe")
+| project MailTime = TimeGenerated, DeviceId, DeviceName, InitiatingProcessId, InitiatingProcessFileName, MailUrl = RemoteUrl;
+let Exfil = DeviceNetworkEvents
+| where TimeGenerated > ago(1d)
+| where InitiatingProcessFileName has_any ("chrome.exe","msedge.exe","comet.exe","opera.exe")
+| where RemoteUrl has_any (KnownBragJackInfra) or not(RemoteUrl has_any ("mail.google.com","outlook.com","google.com","microsoft.com","live.com","office.com"))
+| project ExfilTime = TimeGenerated, DeviceId, InitiatingProcessId, ExfilRemoteUrl = RemoteUrl, RemoteIP;
+MailNav
+| join kind=inner (Exfil) on DeviceId, InitiatingProcessId
+| where ExfilTime between (MailTime .. (MailTime + 2m))
+| project MailTime, ExfilTime, DeviceId, DeviceName, InitiatingProcessFileName, MailUrl, ExfilRemoteUrl, RemoteIP
+| sort by MailTime desc
