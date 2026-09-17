@@ -1,0 +1,34 @@
+let timeWindow = 15m;
+let stagingFiles = DeviceFileEvents
+| where TimeGenerated > ago(14d)
+| where FolderPath has @"ProgramData\Firefox"
+| where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+| where FolderPath !endswith "Firefox.exe"
+| project DeviceId, FileTimestamp = TimeGenerated, FileName, FolderPath, InitiatingProcessFileName;
+let execEvents = DeviceProcessEvents
+| where TimeGenerated > ago(14d)
+| where FolderPath has @"ProgramData\Firefox"
+| where FileName !~ "firefox.exe"
+| where InitiatingProcessFileName =~ "firefox.exe" or InitiatingProcessFileName =~ FileName
+| project DeviceId, ProcTimestamp = TimeGenerated, ProcessFileName = FileName, ProcessFolderPath = FolderPath, InitiatingProcessFileName, ProcessCommandLine;
+let hiddenAttrEvents = DeviceFileEvents
+| where TimeGenerated > ago(14d)
+| where FolderPath has @"ProgramData\Firefox"
+| where ActionType == "FileAttributeChanged" or AdditionalFields has "hidden"
+| project DeviceId, HiddenTimestamp = TimeGenerated, FolderPath, FileName;
+let runOncePersist = DeviceRegistryEvents
+| where TimeGenerated > ago(14d)
+| where RegistryKey has_any (@"CurrentVersion\RunOnce", @"CurrentVersion\Run")
+| where RegistryValueData has @"ProgramData\Firefox"
+| project DeviceId, RegTimestamp = TimeGenerated, RegistryKey, RegistryValueName, RegistryValueData;
+stagingFiles
+| join kind=inner (execEvents) on DeviceId
+| where ProcessFileName =~ FileName
+| where ProcTimestamp between (FileTimestamp .. (FileTimestamp + timeWindow))
+| join kind=inner (runOncePersist) on DeviceId
+| where RegistryValueData contains FileName
+| where RegTimestamp between (FileTimestamp .. (FileTimestamp + timeWindow))
+| join kind=leftouter (hiddenAttrEvents) on DeviceId
+| where isnull(HiddenTimestamp) or HiddenTimestamp between (FileTimestamp .. (FileTimestamp + timeWindow))
+| project DeviceId, FileTimestamp, FileName, FolderPath, InitiatingProcessFileName, ProcTimestamp, ProcessFileName, ProcessFolderPath, ProcessCommandLine, RegTimestamp, RegistryKey, RegistryValueName, RegistryValueData, HiddenTimestamp
+| sort by FileTimestamp desc
