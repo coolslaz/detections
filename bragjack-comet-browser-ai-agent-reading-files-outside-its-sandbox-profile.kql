@@ -1,0 +1,16 @@
+// Detects the Perplexity Comet browser process (hijacked AI agent) reading local files
+// outside its own sandboxed profile/user-data directory - consistent with BragJack file exfiltration
+DeviceFileEvents
+| where TimeGenerated > ago(1d)
+| where InitiatingProcessFileName =~ "Comet.exe"
+| where ActionType in ("FileRenamed", "FileCreated", "FileModified") or ActionType has "Read"
+| where FolderPath has_any (
+    "\\Windows\\System32\\config",
+    "\\AppData\\Local\\Microsoft\\Credentials",
+    "\\AppData\\Roaming\\Microsoft\\Credentials",
+    "\\AppData\\Local\\Microsoft\\Windows\\Vault",
+    "\\.ssh\\",
+    "\\AppData\\Roaming\\gnupg"
+)
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessId, InitiatingProcessCommandLine, ActionType, FolderPath, FileName, SHA256
+| order by TimeGenerated desc
