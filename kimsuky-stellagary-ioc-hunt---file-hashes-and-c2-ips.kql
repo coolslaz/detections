@@ -1,0 +1,15 @@
+let maliciousHashes = dynamic(["04272144d33668f99f7cf2255289e351","3c64c75c9e6a3da7fbc766deb2081219","7479bedf5813a1527199f8958e898d19","9ae48e0ce0dfcac0245237fa220dd52d"]);
+let c2IPs = dynamic(["217.60.36.94","217.60.3.94","38.180.204.13"]);
+let fileHashHits = DeviceFileEvents
+| where MD5 in~ (maliciousHashes)
+| project TimeGenerated, DeviceId, DeviceName, MatchedIOC = MD5, IOCType = "FileHash-MD5", FileName, FolderPath, InitiatingProcessFileName;
+let processHashHits = DeviceProcessEvents
+| where MD5 in~ (maliciousHashes)
+| project TimeGenerated, DeviceId, DeviceName, MatchedIOC = MD5, IOCType = "FileHash-MD5", FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName;
+let networkHits = DeviceNetworkEvents
+| where ActionType == "ConnectionSuccess"
+| where (RemoteIP in (c2IPs)) or (RemoteIP == "107.172.249.140" and RemotePort == 443) or (RemoteUrl has "/unicorn/mort.php") or (RemoteUrl has "/unicorn/uni.txt")
+| extend MatchedIOC = case(RemoteIP in (c2IPs), RemoteIP, RemoteIP == "107.172.249.140" and RemotePort == 443, RemoteIP, RemoteUrl)
+| project TimeGenerated, DeviceId, DeviceName, MatchedIOC, IOCType = "C2-IP", FileName = InitiatingProcessFileName, FolderPath = InitiatingProcessFolderPath, InitiatingProcessFileName;
+union fileHashHits, processHashHits, networkHits
+| sort by TimeGenerated desc
