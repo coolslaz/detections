@@ -1,0 +1,1 @@
+alert http $HOME_NET any -> $EXTERNAL_NET any (msg:"Koktevrat MandatGO phishing domain fb-market-play.cc accessed"; flow:to_server,established; http.host; dotprefix; to_lowercase; content:".fb-market-play.cc"; fast_pattern; endswith; classtype:trojan-activity; metadata: attack_id T1204.001, attack_id T1566.002, malware koktevrat, author Arnold Chan; sid:1000201; rev:1;)
