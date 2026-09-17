@@ -1,0 +1,10 @@
+// Prompt-Forcing: sequential automated prompt submissions to browser-resident AI assistants
+// without corresponding user interaction, immediately following extension activity
+DeviceNetworkEvents
+| where TimeGenerated > ago(1d)
+| where InitiatingProcessFileName has_any ("chrome.exe", "msedge.exe", "opera.exe", "comet.exe")
+| where RemoteUrl has_any ("gemini.google.com", "perplexity.ai", "claude.ai", "copilot.microsoft.com", "opera.com")
+| summarize AIRequestCount = count(), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), RemoteUrls = make_set(RemoteUrl, 10) by DeviceId, InitiatingProcessFileName, InitiatingProcessId, bin(TimeGenerated, 1m)
+| where AIRequestCount >= 20
+| project DeviceId, InitiatingProcessFileName, InitiatingProcessId, FirstSeen, LastSeen, AIRequestCount, RemoteUrls
+| sort by AIRequestCount desc
