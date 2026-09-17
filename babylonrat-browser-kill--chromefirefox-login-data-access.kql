@@ -1,0 +1,17 @@
+let browserProcs = dynamic(["chrome.exe", "firefox.exe"]);
+let killEvents = DeviceProcessEvents
+| where TimeGenerated > ago(14d)
+| where InitiatingProcessFileName in~ ("Firefox.exe", "Leon.exe")
+| where InitiatingProcessFolderPath has @"ProgramData\Firefox"
+| where FileName in~ ("taskkill.exe") or ProcessCommandLine has_any ("chrome.exe", "firefox.exe")
+| project TimeGenerated, DeviceId, InitiatingProcessFileName, InitiatingProcessFolderPath, FileName, ProcessCommandLine;
+let loginDataAccess = DeviceFileEvents
+| where TimeGenerated > ago(14d)
+| where InitiatingProcessFileName in~ ("Firefox.exe", "Leon.exe")
+| where InitiatingProcessFolderPath has @"ProgramData\Firefox"
+| where FileName in~ ("Login Data", "logins.json", "key4.db")
+| project TimeGenerated, DeviceId, InitiatingProcessFileName, InitiatingProcessFolderPath, FileName, FolderPath, ActionType;
+killEvents
+| join kind=inner (loginDataAccess) on DeviceId, InitiatingProcessFileName
+| where abs(datetime_diff('minute', TimeGenerated, TimeGenerated1)) <= 10
+| project TimeGenerated, TimeGenerated1, DeviceId, InitiatingProcessFileName, InitiatingProcessFolderPath, ProcessCommandLine, FileName1, FolderPath, ActionType
