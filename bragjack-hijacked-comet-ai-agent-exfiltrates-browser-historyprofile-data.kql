@@ -1,0 +1,18 @@
+// Detect Comet browser AI-agent process reading browser profile artifacts (History, Bookmarks, Login Data, Cookies) followed by outbound network activity
+let ProfileFileAccess = DeviceFileEvents
+| where TimeGenerated > ago(1d)
+| where InitiatingProcessFileName has "comet"
+| where FileName has_any ("History", "Bookmarks", "Login Data", "Cookies", "Web Data", "Sessions")
+| where not(FolderPath has_any ("\\Perplexity\\Comet\\User Data\\Default", "\\Perplexity\\Comet\\User Data\\Cache"))
+| where ActionType in ("FileCreated", "FileRenamed") or ActionType has "Read"
+| project TimeGenerated, DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessId, FileName, FolderPath, ActionType;
+ProfileFileAccess | join kind=inner (
+    DeviceNetworkEvents
+    | where TimeGenerated > ago(1d)
+    | where InitiatingProcessFileName has "comet"
+    | where not(RemoteUrl has_any ("comet.perplexity.ai", "perplexity.ai"))
+    | project NetTimestamp = TimeGenerated, DeviceId, InitiatingProcessId, RemoteUrl, RemoteIP, RemotePort
+) on DeviceId, InitiatingProcessId
+| where NetTimestamp between (TimeGenerated .. (TimeGenerated + 15m))
+| project TimeGenerated, NetTimestamp, DeviceId, DeviceName, InitiatingProcessFileName, FileName, FolderPath, ActionType, RemoteUrl, RemoteIP, RemotePort
+| sort by TimeGenerated desc
