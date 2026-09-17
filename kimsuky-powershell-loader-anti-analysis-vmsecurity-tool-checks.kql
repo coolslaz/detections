@@ -1,0 +1,10 @@
+let securityTools = dynamic(["idaq64","x64dbg","ProcessHacker","Fiddler"]);
+let vmIndicators = dynamic(["VMware","QEMU","KVM","Google Compute Engine"]);
+let sysInfoCmdlets = dynamic(["Get-Process","Get-WmiObject","Win32_ComputerSystem","Win32_BIOS","tasklist"]);
+DeviceProcessEvents
+| where FileName =~ "powershell.exe"
+| where ProcessCommandLine has_any (sysInfoCmdlets)
+| where ProcessCommandLine has_any (securityTools) and ProcessCommandLine has_any (vmIndicators)
+| where ProcessCommandLine has_any ("-enc", "-EncodedCommand", "-nop", "-noni", "-w hidden", "-windowstyle hidden")
+| project TimeGenerated, DeviceId, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName
+| order by TimeGenerated desc
