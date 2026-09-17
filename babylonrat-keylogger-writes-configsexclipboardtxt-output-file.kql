@@ -1,0 +1,13 @@
+let FileEvents = DeviceFileEvents
+| where TimeGenerated > ago(14d)
+| where FolderPath has @"\AppData\Roaming\ConfigsEx\" and FileName =~ "ClipBoard.txt"
+| where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+| project TimeGenerated, DeviceName, DeviceId, ActionType, FolderPath, FileName, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessId, ReportId;
+let ProcessEvents = DeviceProcessEvents
+| where TimeGenerated > ago(14d)
+| where InitiatingProcessCommandLine has @"AppData\Roaming\ConfigsEx"
+| where InitiatingProcessCommandLine has_any ("CreateDirectory", "mkdir", "md ")
+| project TimeGenerated, DeviceName, DeviceId, ActionType = "ProcessCreated", FolderPath = "", FileName = InitiatingProcessFileName, InitiatingProcessFileName = InitiatingProcessFileName, InitiatingProcessFolderPath = InitiatingProcessFolderPath, InitiatingProcessCommandLine = InitiatingProcessCommandLine, InitiatingProcessId = InitiatingProcessId, ReportId;
+FileEvents
+| union ProcessEvents
+| sort by TimeGenerated desc
