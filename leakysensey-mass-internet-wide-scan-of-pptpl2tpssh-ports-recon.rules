@@ -1,0 +1,1 @@
+alert tcp $EXTERNAL_NET any -> $HOME_NET [1723,1701,22] (msg:"LeakySensey: Mass internet-wide scan of PPTP/L2TP/SSH ports recon"; flow:to_server; tcp.flags:S; detection_filter:track by_src, count 100, seconds 120; metadata: attack_id T1595.001, attack_id T1595.002, attack_id T1133, author Arnold Chan; classtype:attempted-recon; sid:1000101; rev:1;)
