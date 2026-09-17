@@ -1,0 +1,7 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(14d)
+| where FileName in~ ("npm.exe", "npm", "npm-cli.js", "node.exe", "node")
+| where ProcessCommandLine has "install"
+| where ProcessCommandLine has "claude-code"
+| where ProcessCommandLine has_any ("--registry", "http://", "https://") and not(ProcessCommandLine has_any ("registry.npmjs.org", "npm.pkg.github.com", "jfrog", "artifactory", "codeartifact", "verdaccio"))
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
