@@ -1,0 +1,14 @@
+// Detects use of a CLI Proxy API router (e.g. router-for-me/CLIProxyAPI) to funnel traffic to multiple AI provider APIs (Antigravity, Claude, Codex, Gemini) from a single host, consistent with LeakySensey's rate-limit/allowlist bypass technique
+let cliProxyIndicators = dynamic(["CLIProxyAPI", "router-for-me"]);
+DeviceProcessEvents
+| where ProcessCommandLine has_any (cliProxyIndicators) or FileName has_any (cliProxyIndicators)
+| project ProcTime = TimeGenerated, DeviceId, DeviceName, FileName, ProcessCommandLine, InitiatingProcessFileName
+| join kind=inner (
+    DeviceNetworkEvents
+    | where RemoteUrl has_any ("anthropic.com", "openai.com", "generativelanguage.googleapis.com", "antigravity")
+    | project NetTime = TimeGenerated, DeviceId, RemoteUrl, RemoteIP, InitiatingProcessFileName, InitiatingProcessCommandLine
+) on DeviceId
+| where abs(datetime_diff('minute', NetTime, ProcTime)) <= 10
+| summarize DistinctProviders = dcount(RemoteUrl), Providers = make_set(RemoteUrl, 10), Connections = count() by DeviceId, DeviceName, bin(ProcTime, 1h)
+| where DistinctProviders >= 3
+| sort by Connections desc
