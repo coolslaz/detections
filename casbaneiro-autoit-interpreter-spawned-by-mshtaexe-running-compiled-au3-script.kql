@@ -1,0 +1,8 @@
+DeviceProcessEvents
+| where InitiatingProcessFileName =~ "mshta.exe"
+| where FileName =~ "autoit3.exe" or ProcessVersionInfoOriginalFileName =~ "AutoIt3.exe"
+| where ProcessCommandLine has_any (".au3", ".a3x")
+| where not(FolderPath has_any (@"Program Files\AutoIt3", @"Program Files (x86)\AutoIt3"))
+| where FolderPath has_any (@"\AppData\", @"\Temp\", @"\ProgramData\", @"\Users\Public\", @"\Downloads\")
+| project TimeGenerated, DeviceId, DeviceName, AccountName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessFolderPath
+| sort by TimeGenerated desc
