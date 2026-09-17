@@ -1,0 +1,17 @@
+// Detects rapid successive AI agent state-transition events (think -> act) for Microsoft Edge Copilot processes
+// consistent with the CVE-2026-55945 race condition used to force execution of an injected prompt
+DeviceEvents
+| where TimeGenerated > ago(1d)
+| where InitiatingProcessFileName in~ ("msedge.exe", "msedgewebview2.exe")
+| where ActionType has_any ("AiAgentStateTransition", "CopilotAgentAction", "CopilotAgentStateChange")
+| extend AgentState = tostring(parse_json(AdditionalFields).state)
+| extend AgentMode = tostring(parse_json(AdditionalFields).mode)
+| where AgentState has_any ("think", "act", "Think", "Act") or AgentMode has_any ("think", "act", "Think", "Act")
+| sort by DeviceId, InitiatingProcessAccountName, TimeGenerated asc
+| serialize
+| extend PrevTimestamp = prev(TimeGenerated), PrevState = prev(AgentState), PrevDevice = prev(DeviceId), PrevUser = prev(InitiatingProcessAccountName)
+| where DeviceId == PrevDevice and InitiatingProcessAccountName == PrevUser
+| extend TransitionGapSeconds = datetime_diff('Second', TimeGenerated, PrevTimestamp)
+| where PrevState has "think" and AgentState has "act" and TransitionGapSeconds <= 2
+| project TimeGenerated, DeviceId, InitiatingProcessAccountName, InitiatingProcessFileName, PrevState, AgentState, TransitionGapSeconds, ActionType, AdditionalFields
+| order by TimeGenerated desc
