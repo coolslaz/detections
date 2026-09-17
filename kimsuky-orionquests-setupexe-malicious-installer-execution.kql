@@ -1,0 +1,20 @@
+let malwareHash = "04272144d33668f99f7cf2255289e351";
+let installerProc = DeviceProcessEvents
+| where FileName =~ "OrionQuests-Setup.exe"
+| where FolderPath !has @"\Program Files\"
+    and FolderPath !has @"\Windows\"
+    and FolderPath !has @"\ProgramData\Package Cache\"
+    and FolderPath !has @"\ProgramData\Microsoft\ConfigMgr"
+| project TimeGenerated, DeviceName, AccountName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, SHA256, MD5;
+let installerFile = DeviceFileEvents
+| where FileName =~ "OrionQuests-Setup.exe"
+| where FolderPath !has @"\Program Files\"
+    and FolderPath !has @"\Windows\"
+    and FolderPath !has @"\ProgramData\Package Cache\"
+    and FolderPath !has @"\ProgramData\Microsoft\ConfigMgr"
+| extend ProcessCommandLine = "", AccountName = RequestAccountName
+| project TimeGenerated, DeviceName, AccountName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, SHA256, MD5;
+union installerProc, installerFile
+| extend HashMatchConfidence = iff(MD5 =~ malwareHash, "High-KnownSample", "Medium-NameMatch")
+| summarize arg_max(TimeGenerated, *) by DeviceName, bin(TimeGenerated, 5m)
+| sort by TimeGenerated desc
