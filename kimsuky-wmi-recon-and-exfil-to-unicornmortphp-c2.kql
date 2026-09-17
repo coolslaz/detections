@@ -1,0 +1,18 @@
+let c2_ips = dynamic(["217.60.36.94", "217.60.3.94"]);
+let recon = DeviceProcessEvents
+| where TimeGenerated > ago(14d)
+| where FileName in~ ("powershell.exe", "wmic.exe")
+| where ProcessCommandLine has "Win32_ComputerSystem"
+    and ProcessCommandLine has "Win32_OperatingSystem"
+    and ProcessCommandLine has "Win32_Process"
+| project TimeGenerated, DeviceId, DeviceName, FileName, ProcessCommandLine, ReconTime = TimeGenerated;
+let exfil = DeviceNetworkEvents
+| where TimeGenerated > ago(14d)
+| where RemoteIP in (c2_ips)
+| where RemoteUrl has "/unicorn/mort.php"
+| project TimeGenerated, DeviceId, DeviceName, RemoteIP, RemoteUrl, ExfilTime = TimeGenerated;
+recon
+| join kind=inner (exfil) on DeviceId
+| where ExfilTime - ReconTime between (0min .. 10min)
+| project ReconTime, ExfilTime, DeviceName, FileName, ProcessCommandLine, RemoteIP, RemoteUrl
+| distinct ReconTime, ExfilTime, DeviceName, FileName, ProcessCommandLine, RemoteIP, RemoteUrl
