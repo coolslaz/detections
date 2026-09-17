@@ -1,0 +1,11 @@
+// Detects a single proxy service API key/account being used from an unusual number of distinct source IPs in a short window,
+// consistent with theft and abuse of stolen LeakySensey proxy credentials by third-party attackers
+CloudAppEvents
+| where TimeGenerated > ago(1d)
+| where ActionType has_any ("Login", "ApiKeyUsage", "TokenUsage", "FileDownloaded", "LogonSuccess")
+| where isnotempty(AccountId) and isnotempty(IPAddress)
+| summarize DistinctIPs = dcount(IPAddress), IPList = make_set(IPAddress, 10), EventCount = count() by AccountId, Bucket = bin(TimeGenerated, 30m)
+| where DistinctIPs >= 6
+| extend ReuseAnomaly = DistinctIPs >= 6
+| project Bucket, AccountId, DistinctIPs, EventCount, IPList, ReuseAnomaly
+| sort by DistinctIPs desc
