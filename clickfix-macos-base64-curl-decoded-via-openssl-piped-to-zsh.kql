@@ -1,0 +1,6 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where FileName in~ ("zsh", "bash", "sh")
+| where InitiatingProcessFileName =~ "Terminal" or InitiatingProcessParentFileName =~ "Terminal"
+| where ProcessCommandLine matches regex @"(?i)curl\s+\S+.*\|.*openssl\s+.*base64.*-d.*\|.*\b(zsh|bash|sh)\b"
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessParentFileName
