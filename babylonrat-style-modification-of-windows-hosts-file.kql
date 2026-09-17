@@ -1,0 +1,6 @@
+DeviceFileEvents
+| where TimeGenerated > ago(14d)
+| where FolderPath =~ @"C:\Windows\System32\drivers\etc" and FileName =~ "hosts"
+| where ActionType in ("FileModified", "FileCreated", "FileRenamed")
+| where InitiatingProcessFileName !in~ ("MpCmdRun.exe", "TrustedInstaller.exe", "TiWorker.exe", "MsMpEng.exe")
+| project TimeGenerated, DeviceId, DeviceName, ActionType, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessAccountName
