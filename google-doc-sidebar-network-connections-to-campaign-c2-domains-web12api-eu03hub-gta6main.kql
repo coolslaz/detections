@@ -1,0 +1,8 @@
+DeviceNetworkEvents
+| where TimeGenerated > ago(14d)
+| extend Host = tolower(tostring(parse_url(RemoteUrl).Host))
+| extend Host = iff(isempty(Host), tolower(RemoteUrl), Host)
+| where Host matches regex @"(?i)(^|\.)(web12api\.com|eu03hub\.com|gta6mainserver\.com|gta6mainweb\.com)$"
+| extend MatchedDomain = extract(@"(?i)(?:^|\.)(web12api\.com|eu03hub\.com|gta6mainserver\.com|gta6mainweb\.com)$", 1, Host)
+| project TimeGenerated, DeviceName, DeviceId, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteUrl, Host, RemoteIP, RemotePort, MatchedDomain
+| sort by TimeGenerated desc
