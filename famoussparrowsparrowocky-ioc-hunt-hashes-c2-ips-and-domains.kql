@@ -1,0 +1,21 @@
+let MaliciousHashes = dynamic(["C26F04790C6FB7950D89AB1B08207ACE01EFB536","5265E8EDC9B5F7DD00FC772522511B8F3BE217E3","EF189737FB7D61B110B9293E8838526DCE920127","3A395DAAF518BE113FCFF2E5E48ACD9B9C0DE69D","5F1553F3AF9425EF5D68341E991B6C5EC96A82EB","CC350BA25947B7F9EC5D11EA8269407C0FD74095","1B06E877C2C12D74336E7532BC0ECF761E5FA5D4","EBC93A546BCDF6CC1EB61D7174BCB85407BBD892","D6D32A1F17D48FE695C0778018C0D51626DB4A3B","7D66B550EA68A86FCC0958E7C159531D4431B788","AA823148EEA6F43D8EB9BF20412402A7739D91C2","5DF3C882DB6BE14887182B7439B72A86BD28B83F","B9601E60F87545441BF8579B2F62668C56507F4A","4DF896624695EA2780552E9EA3C40661DC84EFC8","76C430B55F180A85F4E1A1E40E4A2EA37DB97599","873F98CAF234C3A8A9DB18343DAD7B42117E85D4","FDC44057E87D7C350E6DF84BB72541236A770BA2","BB2F5B573AC7A761015DAAD0B7FF03B294DC60F6","23E228D5603B4802398B2E7419187AEF71FF9DD5","2560B7E28B322BB7A56D0B1DA1B2652E1EFE76EA","E2B0851E2E281CC7BCA3D6D9B2FA0C4B7AC5A02B"]);
+let MaliciousIPs = dynamic(["43.254.216.195","103.85.25.166","45.131.179.24","216.238.106.150","27.102.113.240"]);
+let MaliciousDomains = dynamic(["amelicen.com","credits.offices-analytics.com"]);
+let FileHashMatches = DeviceFileEvents
+| where SHA1 in (MaliciousHashes)
+| extend IocType = "FileHash", MatchedIOC = SHA1, MatchedProcess = InitiatingProcessFileName, MatchedCommandLine = InitiatingProcessCommandLine
+| project TimeGenerated, DeviceName, IocType, MatchedIOC, MatchedProcess, MatchedCommandLine;
+let ProcessHashMatches = DeviceProcessEvents
+| where InitiatingProcessSHA1 in (MaliciousHashes) or SHA1 in (MaliciousHashes)
+| extend IocType = "ProcessHash", MatchedIOC = iff(SHA1 in (MaliciousHashes), SHA1, InitiatingProcessSHA1), MatchedProcess = FileName, MatchedCommandLine = ProcessCommandLine
+| project TimeGenerated, DeviceName, IocType, MatchedIOC, MatchedProcess, MatchedCommandLine;
+let NetworkIPMatches = DeviceNetworkEvents
+| where RemoteIP in (MaliciousIPs)
+| extend IocType = "C2_IP", MatchedIOC = RemoteIP, MatchedProcess = InitiatingProcessFileName, MatchedCommandLine = InitiatingProcessCommandLine
+| project TimeGenerated, DeviceName, IocType, MatchedIOC, MatchedProcess, MatchedCommandLine;
+let NetworkDomainMatches = DeviceNetworkEvents
+| where RemoteUrl has_any (MaliciousDomains)
+| extend IocType = "C2_Domain", MatchedIOC = RemoteUrl, MatchedProcess = InitiatingProcessFileName, MatchedCommandLine = InitiatingProcessCommandLine
+| project TimeGenerated, DeviceName, IocType, MatchedIOC, MatchedProcess, MatchedCommandLine;
+union FileHashMatches, ProcessHashMatches, NetworkIPMatches, NetworkDomainMatches
+| sort by TimeGenerated desc
