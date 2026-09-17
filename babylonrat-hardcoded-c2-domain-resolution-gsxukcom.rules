@@ -1,0 +1,1 @@
+alert dns any any -> any any (msg:"BabylonRAT hardcoded C2 domain resolution (gsx.uk.com)"; dns.query; content:"gsx.uk.com"; nocase; fast_pattern; pcre:"/(?:^|\.)gsx\.uk\.com$/i"; metadata: author Arnold Chan, attack_id T1071.001, attack_id T1568; classtype:trojan-activity; sid:1000101; rev:1;)
