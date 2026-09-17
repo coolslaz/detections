@@ -1,0 +1,8 @@
+// Detects a burst of new user account creations on a self-hosted git repository instance
+// consistent with unauthorized account creation following compromise (37 unauthorized users observed)
+CloudAppEvents
+| where TimeGenerated > ago(7d)
+| where ActionType has_any ("Add user", "CreateUser", "user.create", "AddUser")
+| summarize NewUserCount = count(), NewUsers = make_set(AccountDisplayName, 50) by IPAddress, bin(TimeGenerated, 30m)
+| where NewUserCount >= 8
+| sort by NewUserCount desc
