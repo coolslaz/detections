@@ -1,0 +1,20 @@
+// Detects ClickFix-style execution where a victim pastes an encoded PowerShell command
+// that fetches a loader, which subsequently downloads multiple encrypted payloads
+DeviceProcessEvents
+| where FileName in~ ("powershell.exe", "powershell_ise.exe")
+| where not(ProcessCommandLine has "-File")
+| where ProcessCommandLine has_any ("-EncodedCommand", "-enc", "-e ")
+| where ProcessCommandLine has_any ("-w hidden", "-windowstyle hidden", "-noprofile")
+| where ProcessCommandLine has_any ("DownloadString", "DownloadFile", "Net.WebClient", "Invoke-WebRequest", "iwr", "IEX", "Invoke-Expression")
+| where InitiatingProcessParentFileName in~ ("explorer.exe", "cmd.exe", "WindowsTerminal.exe")
+| project TimeGenerated, DeviceName, AccountName, InitiatingProcessParentFileName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, ProcessId
+| join kind=inner (
+    DeviceNetworkEvents
+    | where InitiatingProcessFileName in~ ("powershell.exe", "powershell_ise.exe")
+    | where RemoteUrl has_any (".zip", "get_file") or RemoteUrl matches regex @"(?i)\.(zip|enc|bin)(\?|$)"
+    | where not(RemoteUrl has_any (".microsoft.com", ".windowsupdate.com", ".powershellgallery.com", ".githubusercontent.com", ".nuget.org"))
+    | project TimeGenerated, DeviceName, InitiatingProcessId, RemoteUrl, RemoteIP
+) on DeviceName, $left.ProcessId == $right.InitiatingProcessId
+| summarize DownloadCount = dcount(RemoteUrl), DownloadedUrls = make_set(RemoteUrl, 10) by DeviceName, AccountName, ProcessCommandLine, bin(TimeGenerated, 15m)
+| where DownloadCount >= 3
+| project TimeGenerated, DeviceName, AccountName, ProcessCommandLine, DownloadCount, DownloadedUrls
