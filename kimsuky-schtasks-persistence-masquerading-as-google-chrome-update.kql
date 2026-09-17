@@ -1,0 +1,11 @@
+DeviceProcessEvents
+| where FileName =~ "schtasks.exe"
+| where ProcessCommandLine has "/create"
+| where ProcessCommandLine has "/tn"
+| where ProcessCommandLine has "Google Chrome Update"
+| where ProcessCommandLine has "/tr"
+| where ProcessCommandLine contains "powershell.exe"
+| where InitiatingProcessFileName =~ "powershell.exe"
+| where InitiatingProcessFolderPath !has @"\Google\Update\"
+| where InitiatingProcessFileName !~ "GoogleUpdate.exe"
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName
