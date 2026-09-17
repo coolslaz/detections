@@ -1,0 +1,18 @@
+// Detect newly installed/modified browser extension (manifest.json write) followed by browser network activity
+// to a trusted AI assistant domain within a short window - consistent with BragJack's content-script/DNR abuse
+let ExtensionInstall = DeviceFileEvents
+| where TimeGenerated > ago(1d)
+| where FileName =~ "manifest.json"
+| where FolderPath has_any ("Extensions", "extensions")
+| where ActionType == "FileCreated"
+| project InstallTime = TimeGenerated, DeviceId, DeviceName, FolderPath, InitiatingProcessAccountName;
+ExtensionInstall | join kind=inner (
+    DeviceNetworkEvents
+    | where TimeGenerated > ago(1d)
+    | where RemoteUrl has_any ("gemini.google.com", "perplexity.ai", "opera.com", "claude.ai", "copilot.microsoft.com", "testing.perplexity.com")
+    | where InitiatingProcessFileName has_any ("chrome.exe", "opera.exe", "msedge.exe", "comet.exe")
+    | project NetTime = TimeGenerated, DeviceId, RemoteUrl, InitiatingProcessFileName
+) on DeviceId
+| where NetTime between (InstallTime .. (InstallTime + 5m))
+| summarize FirstSeen = min(NetTime), LastSeen = max(NetTime), TargetDomains = make_set(RemoteUrl, 20) by DeviceId, DeviceName, FolderPath, InitiatingProcessFileName, InstallTime
+| sort by InstallTime desc
