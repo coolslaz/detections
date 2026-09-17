@@ -1,0 +1,32 @@
+let lookback = 14d;
+let KnownDomains = dynamic(["fb-market-play.cc", "streams-tv.lol", "stream-plus.lat"]);
+let KnownHashes = dynamic([
+ "f2042077e2d9fad0ad69e76e706311b3f690e0338ba4765491c4ed0257ad1189",
+ "568f1067735bb98185b9191998f798b6d59157673ca99446ce268f3ef6070154",
+ "6b7b09aa12a08951e822e6ab0e08bce4e4bf7b1ecd51bf9fe095cd06a7a445e3",
+ "7c24a56dcacc028648caafba5a209d0488db15412a2c22ac586db940710b5048"
+]);
+let NetworkHits = DeviceNetworkEvents
+| where TimeGenerated > ago(lookback)
+| extend UrlHost = tostring(parse_url(RemoteUrl).Host)
+| extend UrlHost = iff(isempty(UrlHost), RemoteUrl, UrlHost)
+| where UrlHost in~ (KnownDomains)
+ or UrlHost matches regex @"^[a-z0-9]{8,27}\.(icu|cfd)$"
+| extend MatchType = iff(UrlHost in~ (KnownDomains), "KnownC2Domain", "DGA_ICU_CFD_Pattern"),
+ IndicatorValue = UrlHost
+| project TimeGenerated, DeviceName, DeviceId, MatchType, IndicatorValue, RemoteUrl, RemoteIP, InitiatingProcessFileName, InitiatingProcessCommandLine, ReportId;
+let FileHits = DeviceFileEvents
+| where TimeGenerated > ago(lookback)
+| where SHA256 in~ (KnownHashes)
+| extend MatchType = "KnownMaliciousHash_FileEvent", IndicatorValue = SHA256
+| project TimeGenerated, DeviceName, DeviceId, MatchType, IndicatorValue, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, ReportId;
+let ProcessHits = DeviceProcessEvents
+| where TimeGenerated > ago(lookback)
+| where SHA256 in~ (KnownHashes)
+| extend MatchType = "KnownMaliciousHash_ProcessEvent", IndicatorValue = SHA256
+| project TimeGenerated, DeviceName, DeviceId, MatchType, IndicatorValue, FileName = ProcessCommandLine, FolderPath = "", InitiatingProcessFileName, InitiatingProcessCommandLine, ReportId;
+NetworkHits
+| project TimeGenerated, DeviceName, DeviceId, MatchType, IndicatorValue, Detail = strcat(RemoteUrl, " | ", RemoteIP), InitiatingProcessFileName, InitiatingProcessCommandLine, ReportId
+| union (FileHits | project TimeGenerated, DeviceName, DeviceId, MatchType, IndicatorValue, Detail = strcat(FileName, " | ", FolderPath), InitiatingProcessFileName, InitiatingProcessCommandLine, ReportId)
+| union (ProcessHits | project TimeGenerated, DeviceName, DeviceId, MatchType, IndicatorValue, Detail = strcat(FileName, " | ", FolderPath), InitiatingProcessFileName, InitiatingProcessCommandLine, ReportId)
+| sort by TimeGenerated desc
