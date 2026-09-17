@@ -1,0 +1,13 @@
+union
+    (DeviceNetworkEvents
+     | where TimeGenerated > ago(14d)
+     | where RemoteUrl has_any ("getmacouscloud.com", "ferncore13.com", "grove-89.com")
+     | where ActionType in ("ConnectionSuccess", "ConnectionFailed", "DnsConnectionInspected")
+     | project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteUrl, RemoteIP, RemotePort, ActionType),
+    (DeviceEvents
+     | where TimeGenerated > ago(14d)
+     | where ActionType == "DnsQueryResponse"
+     | extend AdditionalFields = parse_json(AdditionalFields)
+     | where AdditionalFields has_any ("getmacouscloud.com", "ferncore13.com", "grove-89.com")
+     | project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteUrl = tostring(AdditionalFields), RemoteIP = "", RemotePort = 0, ActionType)
+| sort by TimeGenerated desc
