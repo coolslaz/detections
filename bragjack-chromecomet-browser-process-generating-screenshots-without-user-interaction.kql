@@ -1,0 +1,10 @@
+// Detects a hijacked browser AI agent (Chrome or Comet) invoking screen-capture APIs and writing screenshot files with no corresponding user-initiated UI event, consistent with the BragJack attack chain
+DeviceFileEvents
+| where TimeGenerated > ago(1d)
+| where InitiatingProcessFileName in~ ("chrome.exe", "comet.exe")
+| where FileName has_any (".png", ".jpg", ".jpeg") and FileName has_any ("screenshot", "capture", "screencap")
+| where ActionType == "FileCreated"
+| summarize ScreenshotCount = count(), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), Files = make_set(FileName, 20) by DeviceId, InitiatingProcessFileName, InitiatingProcessId, InitiatingProcessCommandLine, bin(TimeGenerated, 5m)
+| where ScreenshotCount >= 3
+| project DeviceId, InitiatingProcessFileName, InitiatingProcessId, InitiatingProcessCommandLine, ScreenshotCount, FirstSeen, LastSeen, Files
+| sort by ScreenshotCount desc
