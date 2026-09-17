@@ -1,0 +1,17 @@
+// Detect Chrome camera/mic activation temporally correlated with live Gemini AI-agent network activity
+// (narrower than matching on command line alone, since --type=renderer covers virtually every Chrome tab/site)
+let CamMicEvents = DeviceEvents
+| where TimeGenerated > ago(1d)
+| where ActionType has_any ("CameraStarted", "CameraProcessAccessed", "MicrophoneStarted", "MicrophoneProcessAccessed")
+| where InitiatingProcessFileName =~ "chrome.exe"
+| project EventTime = TimeGenerated, DeviceId, DeviceName, ActionType, InitiatingProcessId, InitiatingProcessCommandLine, AccountName;
+CamMicEvents | join kind=inner (
+    DeviceNetworkEvents
+    | where TimeGenerated > ago(1d)
+    | where InitiatingProcessFileName =~ "chrome.exe"
+    | where RemoteUrl has "gemini.google.com"
+    | project GeminiTime = TimeGenerated, DeviceId, RemoteUrl
+) on DeviceId
+| where GeminiTime between ((EventTime - 2m) .. (EventTime + 2m))
+| project EventTime, GeminiTime, DeviceId, DeviceName, ActionType, InitiatingProcessId, InitiatingProcessCommandLine, AccountName, RemoteUrl
+| sort by EventTime desc
