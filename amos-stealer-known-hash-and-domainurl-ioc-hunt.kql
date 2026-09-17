@@ -1,0 +1,29 @@
+let amosStealerHashes = dynamic([
+    "71781ad8adefb499aee9bcbe1a166e69ccc37a47066682f617d65c76d8cde88c",
+    "7ea6ff8b12c59aaae1ab6f4f5a57045dad5a8127954f3ffd3d1c154d40d7ca3a",
+    "a598fcdcd49247312861ff90c16cb4a5d49fede6072e30e7416dd276668fa2a9",
+    "6bfcdb4920383375b7e519918df7eb4db751b974b5571a15ce66b82478012620",
+    "4504006d1911057be42435d4625f03d83c4d0b7b6898d14beb9cdeba6cf667b9"
+]);
+let amosStealerDomains = dynamic(["getmacouscloud.com", "ferncore13.com", "grove-89.com"]);
+union
+    (DeviceFileEvents
+     | where TimeGenerated > ago(14d)
+     | where SHA256 in (amosStealerHashes)
+     | project TimeGenerated, DeviceName, ActionType, FileName, FolderPath, SHA256, RemoteUrl = "", InitiatingProcessFileName, InitiatingProcessCommandLine, MatchType = "FileHash"),
+    (DeviceProcessEvents
+     | where TimeGenerated > ago(14d)
+     | where SHA256 in (amosStealerHashes)
+     | project TimeGenerated, DeviceName, ActionType, FileName, FolderPath, SHA256, RemoteUrl = "", InitiatingProcessFileName, InitiatingProcessCommandLine, MatchType = "ProcessHash"),
+    (DeviceNetworkEvents
+     | where TimeGenerated > ago(14d)
+     | where RemoteUrl has_any (amosStealerDomains)
+     | where ActionType in ("ConnectionSuccess", "ConnectionFailed", "DnsConnectionInspected")
+     | project TimeGenerated, DeviceName, ActionType, FileName = "", FolderPath = "", SHA256 = "", RemoteUrl, InitiatingProcessFileName, InitiatingProcessCommandLine, MatchType = "NetworkDomain"),
+    (DeviceEvents
+     | where TimeGenerated > ago(14d)
+     | where ActionType == "DnsQueryResponse"
+     | extend AdditionalFields = parse_json(AdditionalFields)
+     | where AdditionalFields has_any (amosStealerDomains)
+     | project TimeGenerated, DeviceName, ActionType, FileName = "", FolderPath = "", SHA256 = "", RemoteUrl = tostring(AdditionalFields), InitiatingProcessFileName, InitiatingProcessCommandLine, MatchType = "DnsQuery")
+| sort by TimeGenerated desc
