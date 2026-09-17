@@ -1,0 +1,13 @@
+union
+    (DeviceRegistryEvents
+    | where RegistryKey has @"SYSTEM\CurrentControlSet\Services\ProcAuditManager"
+    | where ActionType == "RegistryKeyCreated"
+        or (ActionType == "RegistryValueSet" and RegistryValueName in~ ("ImagePath", "ObjectName", "Start"))
+    | project Timestamp, DeviceName, ActionType, RegistryKey, RegistryValueName, RegistryValueData, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName),
+    (DeviceProcessEvents
+    | where FileName in~ ("sc.exe", "powershell.exe", "powershell_ise.exe", "cmd.exe")
+    | where ProcessCommandLine has "ProcAuditManager"
+    | where ProcessCommandLine has_any ("create", "binPath", "New-Service")
+    | where not(ProcessCommandLine has_any ("query", "qc ", "delete", "stop "))
+    | project Timestamp, DeviceName, ActionType = "ProcessCreated", RegistryKey = "", RegistryValueName = "", RegistryValueData = ProcessCommandLine, InitiatingProcessFileName = FileName, InitiatingProcessCommandLine = ProcessCommandLine, InitiatingProcessAccountName = AccountName)
+| sort by Timestamp desc
