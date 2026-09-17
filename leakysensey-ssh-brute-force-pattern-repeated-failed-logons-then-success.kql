@@ -1,0 +1,16 @@
+// Detects repeated SSH authentication failures followed by a successful logon from the same source, consistent with brute-force compromise of exposed SSH services (port 22)
+DeviceLogonEvents
+| where Protocol == "Ssh" or (isnotempty(RemoteIP) and RemotePort == 22)
+| where ActionType in ("LogonFailed", "LogonSuccess")
+| summarize 
+    FailedAttempts = countif(ActionType == "LogonFailed"),
+    SuccessCount = countif(ActionType == "LogonSuccess"),
+    FirstFailure = minif(TimeGenerated, ActionType == "LogonFailed"),
+    LastSuccess = maxif(TimeGenerated, ActionType == "LogonSuccess")
+    by DeviceId, DeviceName, RemoteIP, AccountName
+| where FailedAttempts >= 10 and SuccessCount >= 1
+| where LastSuccess > FirstFailure
+| extend TimeToCompromise = LastSuccess - FirstFailure
+| where TimeToCompromise < 30m
+| project DeviceId, DeviceName, RemoteIP, AccountName, FailedAttempts, SuccessCount, FirstFailure, LastSuccess, TimeToCompromise
+| sort by FailedAttempts desc
