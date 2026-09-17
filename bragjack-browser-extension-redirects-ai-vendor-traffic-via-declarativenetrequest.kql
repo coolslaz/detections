@@ -1,0 +1,8 @@
+let KnownBragJackInfra = dynamic(["testing.perplexity.com", "weizmangal.com"]);
+let BrowserProcesses = dynamic(["chrome.exe", "msedge.exe", "msedgewebview2.exe", "opera.exe"]);
+DeviceNetworkEvents
+| where TimeGenerated > ago(1d)
+| where InitiatingProcessFileName in~ (BrowserProcesses)
+| where RemoteUrl has_any (KnownBragJackInfra)
+| project TimeGenerated, DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessId, RemoteUrl, RemoteIP
+| sort by TimeGenerated desc
