@@ -1,0 +1,6 @@
+// Detects a Claude Code (or claude-code) process performing an unusually high volume of filesystem operations in a short window, consistent with a patched/jailbroken build that bypasses filesystem-access confirmation prompts for autonomous offensive operations
+DeviceFileEvents
+| where InitiatingProcessFileName has_any ("claude", "claude-code", "claude.exe")
+| summarize FileOpsCount = count(), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), Devices = make_set(DeviceId, 20), Files = make_set(FileName, 20) by InitiatingProcessAccountName, InitiatingProcessFileName, bin(TimeGenerated, 5m)
+| where FileOpsCount > 300
+| sort by FileOpsCount desc
