@@ -1,0 +1,1 @@
+alert tls $HOME_NET any -> $EXTERNAL_NET any (msg:"Koktevrat DGA-generated C2 domain contact (.icu/.cfd)"; flow:to_server,established; tls.sni; pcre:"/^[a-z0-9]{8,16}\.(icu|cfd)$/"; metadata: attack_id T1568.002, author Arnold Chan; classtype:command-and-control; sid:1000030; rev:1;)
