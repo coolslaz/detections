@@ -1,0 +1,29 @@
+rule movie_reaper_activity {
+  meta:
+    author = "Arnold Chan"
+    description = "Detects activity associated with MovieReaper campaign including process, file, and network indicators"
+    severity = "High"
+    campaign_start = "2026-08-01"
+    campaign_end = "2026-12-31"
+    tags = "kql"
+    reference = "https://securelist.com/moviereaper-malware-torrent-odyssey-solana/121344/"
+    false_positive1 = "Legitimate software that has been improperly flagged as malicious in the indicators list."
+    false_positive2 = "Network traffic involving infrastructure that was previously used by the threat actor but has been reallocated to a legitimate entity."
+events:
+    $p.metadata.event_type = "PROCESS_LAUNCH"
+    $p.target.process.file.md5 = /a0b13781edd7cfdab13d79afff3c83c1|4334bbaea8de33bf9d845e9b4e4e3bc2|4843f9fafcae492f11e2d4d33dbb4cdd|5310cabae3fbe6db8742849b588093f9|70060341caf3338697a7ddfe0fb62875|ad4643eea15ac286fa47d1131f9ef756|d0b967571ac8a3863c7f324bf5bde99c|d88d550d0fb8e60cffff3ea61ff7a067/ or
+    $p.target.process.file.sha256 = /a0b13781edd7cfdab13d79afff3c83c1|4334bbaea8de33bf9d845e9b4e4e3bc2|4843f9fafcae492f11e2d4d33dbb4cdd|5310cabae3fbe6db8742849b588093f9|70060341caf3338697a7ddfe0fb62875|ad4643eea15ac286fa47d1131f9ef756|d0b967571ac8a3863c7f324bf5bde99c|d88d550d0fb8e60cffff3ea61ff7a067/
+
+    $f.metadata.event_type = "FILE_CREATION"
+    $f.target.file.md5 = /a0b13781edd7cfdab13d79afff3c83c1|4334bbaea8de33bf9d845e9b4e4e3bc2|4843f9fafcae492f11e2d4d33dbb4cdd|5310cabae3fbe6db8742849b588093f9|70060341caf3338697a7ddfe0fb62875|ad4643eea15ac286fa47d1131f9ef756|d0b967571ac8a3863c7f324bf5bde99c|d88d550d0fb8e60cffff3ea61ff7a067/ or
+    $f.target.file.sha256 = /a0b13781edd7cfdab13d79afff3c83c1|4334bbaea8de33bf9d845e9b4e4e3bc2|4843f9fafcae492f11e2d4d33dbb4cdd|5310cabae3fbe6db8742849b588093f9|70060341caf3338697a7ddfe0fb62875|ad4643eea15ac286fa47d1131f9ef756|d0b967571ac8a3863c7f324bf5bde99c|d88d550d0fb8e60cffff3ea61ff7a067/
+
+    $n.metadata.event_type = "NETWORK_CONNECTION"
+    net.ip_in_range_cidr($n.target.ip, "193.23.118.155/32") or 
+    net.ip_in_range_cidr($n.target.ip, "208.64.33.90/32") or 
+    net.ip_in_range_cidr($n.target.ip, "208.94.246.53/32") or 
+    strings.contains($n.network.dns.question_name, "deadhub.org")
+
+  condition:
+    $p or $f or $n
+}
