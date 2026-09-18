@@ -1,0 +1,22 @@
+let LookbackDays = 90d;
+let MinBaselineSignins = 5;
+let KnownDeviceCodeApps = dynamic(["04b07795-8ddb-461a-bbee-02f9e1bf7b46","1950a258-227b-4e31-a9cf-717495945fc2","872cd9fa-d31f-45e0-9eab-6e460a02d1f1","aebc6443-996d-45c2-90f0-388ff96faa56"]); // Azure CLI, Azure PowerShell, Visual Studio, VS Code
+let KnownLocations = SigninLogs
+| where TimeGenerated between (ago(LookbackDays) .. ago(1d))
+| where AuthenticationProtocol !~ "deviceCode"
+| where ResultType == "0"
+| summarize KnownIPs = make_set(IPAddress, 1000), KnownCountries = make_set(tostring(LocationDetails.countryOrRegion), 1000), BaselineSigninCount = count() by UserPrincipalName
+| where BaselineSigninCount >= MinBaselineSignins;
+SigninLogs
+| where TimeGenerated > ago(1d)
+| where AuthenticationProtocol =~ "deviceCode"
+| where ResultType == "0"
+| where not(set_has_element(KnownDeviceCodeApps, AppId))
+| extend Country = tostring(LocationDetails.countryOrRegion), City = tostring(LocationDetails.city)
+| extend IsCompliantDevice = tobool(DeviceDetail.isCompliant)
+| join kind=inner KnownLocations on UserPrincipalName
+| extend IsNewIP = not(set_has_element(KnownIPs, IPAddress)), IsNewCountry = not(set_has_element(KnownCountries, Country))
+| where IsNewIP and IsNewCountry
+| where IsCompliantDevice != true
+| project TimeGenerated, UserPrincipalName, UserDisplayName, AppDisplayName, AppId, IPAddress, City, Country, IsNewIP, IsNewCountry, IsCompliantDevice, ResultType, ResultDescription, DeviceDetail
+| sort by TimeGenerated desc
