@@ -1,0 +1,7 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(14d)
+| where FileName =~ "powershell.exe"
+| where InitiatingProcessFileName =~ "explorer.exe"
+| where ProcessCommandLine has_any ("-enc", "-EncodedCommand") and ProcessCommandLine has_any ("-windowstyle hidden", "-w hidden")
+| where ProcessCommandLine matches regex @"(\^[A-Za-z]){3,}" or ProcessCommandLine contains_cs "WhErE" or ProcessCommandLine has_any ("configuration.ps1", "mnl.ac")
+| project TimeGenerated, DeviceId, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName
