@@ -1,0 +1,15 @@
+// Detects execution artifacts of the MovieReaper stage 2 implant's in-memory COFF module loading capability
+// The implant parses a COFF file, loads it into memory, and invokes its module_init export without writing files to disk
+let ProcessEvents = DeviceProcessEvents
+| where TimeGenerated > ago(14d)
+| where ProcessCommandLine has "module_init"
+| where not(FileName in~ ("devenv.exe","Code.exe","pycharm64.exe","node.exe","python.exe","dotnet.exe","powershell.exe","pwsh.exe"))
+| project TimeGenerated, DeviceId, DeviceName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, AccountName;
+let MemoryEvents = DeviceEvents
+| where TimeGenerated > ago(14d)
+| where ActionType in ("ImageLoadedFromMemory", "CreateRemoteThreadApiCall", "ReflectiveDllLoad")
+| where AdditionalFields has "module_init"
+| project TimeGenerated, DeviceId, DeviceName, FileName, FolderPath, ProcessCommandLine = tostring(AdditionalFields), InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, AccountName;
+ProcessEvents
+| union MemoryEvents
+| sort by TimeGenerated desc
