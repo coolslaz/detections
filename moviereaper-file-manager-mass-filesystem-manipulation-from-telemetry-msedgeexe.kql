@@ -1,0 +1,17 @@
+// Detects the MovieReaper 'file manager' module performing bulk filesystem operations
+// (create, copy, rename, move, delete, chmod, symlink) from the Stage 3 masquerade
+// binary running at C:\ProgramData\Microsoft\Windows\Telemetry\msedge.exe
+DeviceFileEvents
+| where InitiatingProcessFolderPath =~ @"C:\ProgramData\Microsoft\Windows\Telemetry\msedge.exe"
+| where ActionType in ("FileCreated", "FileDeleted", "FileRenamed", "FileModified", "FileCopied", "FileMoved")
+| summarize
+    DistinctActionTypes = dcount(ActionType),
+    ActionTypesSeen = make_set(ActionType, 10),
+    FileCount = count(),
+    AffectedFiles = make_set(FileName, 50),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated)
+    by DeviceId, InitiatingProcessAccountName, InitiatingProcessFolderPath, bin(TimeGenerated, 1h)
+| where DistinctActionTypes >= 3 and FileCount >= 10
+| project DeviceId, InitiatingProcessAccountName, InitiatingProcessFolderPath, DistinctActionTypes, ActionTypesSeen, FileCount, AffectedFiles, FirstSeen, LastSeen
+| sort by FileCount desc
