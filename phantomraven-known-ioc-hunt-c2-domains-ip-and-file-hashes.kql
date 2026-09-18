@@ -1,0 +1,40 @@
+// C2 IP 54.173.15.59 is AWS-hosted infrastructure and may be reallocated/reused over time by unrelated tenants.
+// IP-only hits are therefore lower-confidence in isolation compared to domain or hash matches.
+let lookback = 30d;
+let c2Domains = dynamic(["npm.jpartifacts.com","packages.storeartifact.com","registry.storageartifact.com","packages.storageartifact.com"]);
+let c2Ips = dynamic(["54.173.15.59"]);
+let c2Hashes = dynamic(["c31831d47fcbf52ff1f4e61838611916a4276d005a564e69946d5dac04235eed","95a7dcc6de46826b22c43bee7fc550f3b5e2e6cbc5f33b0c241faf523641cf63","db3fe46df0a65fe9f8c99d2e11126a032a72e9814e354ce017448ce088a01e02"]);
+let netConnActions = dynamic(["ConnectionSuccess","ConnectionAttempt"]);
+let domainHits = DeviceNetworkEvents
+| where TimeGenerated > ago(lookback)
+| where ActionType in (netConnActions)
+| extend UrlHost = tostring(parse_url(RemoteUrl).Host)
+| where UrlHost in~ (c2Domains)
+| extend MatchedIndicator = UrlHost
+| extend Confidence = "High"
+| project TimeGenerated, DeviceName, AccountName = InitiatingProcessAccountName, IndicatorType = "C2 Domain", MatchedIndicator, RemoteIP, RemoteUrl, Confidence;
+let ipHits = DeviceNetworkEvents
+| where TimeGenerated > ago(lookback)
+| where ActionType in (netConnActions)
+| where RemoteIP in (c2Ips)
+| extend MatchedIndicator = RemoteIP
+| extend Confidence = "Medium"
+| project TimeGenerated, DeviceName, AccountName = InitiatingProcessAccountName, IndicatorType = "C2 IP", MatchedIndicator, RemoteIP, RemoteUrl, Confidence;
+let fileHashHits = DeviceFileEvents
+| where TimeGenerated > ago(lookback)
+| where ActionType in ("FileCreated","FileRenamed")
+| where SHA256 in (c2Hashes)
+| extend MatchedIndicator = SHA256
+| extend Confidence = "High"
+| project TimeGenerated, DeviceName, AccountName = InitiatingProcessAccountName, IndicatorType = "File Hash", MatchedIndicator, RemoteIP = "", RemoteUrl = FolderPath, Confidence;
+let processHashHits = DeviceProcessEvents
+| where TimeGenerated > ago(lookback)
+| where ActionType == "ProcessCreated"
+| where SHA256 in (c2Hashes)
+| extend MatchedIndicator = SHA256
+| extend Confidence = "High"
+| project TimeGenerated, DeviceName, AccountName = AccountName, IndicatorType = "Process Hash", MatchedIndicator, RemoteIP = "", RemoteUrl = ProcessCommandLine, Confidence;
+domainHits
+| union ipHits, fileHashHits, processHashHits
+| summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), HitCount = count(), IndicatorType = any(IndicatorType), Confidence = any(Confidence), AccountName = any(AccountName), RemoteIP = any(RemoteIP), RemoteUrl = any(RemoteUrl) by DeviceName, MatchedIndicator
+| sort by LastSeen desc;
