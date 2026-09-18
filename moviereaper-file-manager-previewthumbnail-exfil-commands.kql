@@ -1,0 +1,4 @@
+DeviceProcessEvents
+| where FolderPath =~ @"C:\ProgramData\Microsoft\Windows\Telemetry\msedge.exe" and FileName =~ "msedge.exe"
+| where ProcessCommandLine has_any ("preview", "thumbnail")
+| project TimeGenerated, DeviceId, DeviceName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName
