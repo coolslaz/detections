@@ -1,0 +1,44 @@
+title: Potential Malicious Process Execution via MicrosoftEdgeUpdateTask
+id: b25a1f0a-7e39-4933-9e67-d0793774659b
+status: experimental
+description: Detects suspicious process execution involving common tools and specific
+  malicious indicators or MicrosoftEdgeUpdateTask paths.
+level: high
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_process:
+        Image|endswith:
+            - '\conhost.exe'
+            - '\powershell.exe'
+    selection_cmd:
+        CommandLine|contains:
+            - '-EncodedCommand'
+            - '-enc '
+            - 'irm '
+            - 'iex '
+    selection_indicator:
+        CommandLine|contains:
+            - 'MicrosoftEdgeUpdateTaskUserS-1-5-24'
+            - 'indiatodays.org/pv'
+            - 'indiatodays[.]org/pv'
+        InitiatingProcessCommandLine|contains: 'MicrosoftEdgeUpdateTaskUserS-1-5-24'
+    selection_parent:
+        InitiatingProcessFileName|endswith:
+            - '\svchost.exe'
+            - '\taskeng.exe'
+            - '\schtasks.exe'
+    filter_indicator:
+        CommandLine|contains:
+            - 'indiatodays.org/pv'
+            - 'indiatodays[.]org/pv'
+    condition: selection_process and selection_cmd and selection_indicator and (selection_parent or filter_indicator)
+author: Arnold Chan
+tags:
+  - attack.t1059.001
+falsepositives:
+  - Legitimate administrative scripts using PowerShell for automated updates or
+  - maintenance tasks scheduled via Task Scheduler.
+  - Third-party software that legitimately uses encoded PowerShell commands for
+  - background updates or configuration management.
