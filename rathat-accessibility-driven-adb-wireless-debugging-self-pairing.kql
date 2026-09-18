@@ -1,0 +1,12 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where ProcessCommandLine has "settings put" or ProcessCommandLine has "adb"
+| extend AccessibilityAbuse = ProcessCommandLine has_any ("enabled_accessibility_services", "accessibility_enabled")
+| extend WirelessDebuggingToggle = ProcessCommandLine has_any ("adb_wifi_enabled", "wifi_debugging")
+| extend AdbSelfPairing = ProcessCommandLine has "adb pair"
+| where AccessibilityAbuse or WirelessDebuggingToggle or AdbSelfPairing
+| extend StageLabel = case(AccessibilityAbuse, "accessibility", WirelessDebuggingToggle, "wireless_debug", "adb_pair")
+| summarize StageCount = dcount(StageLabel), Events = make_set(ProcessCommandLine, 10), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by DeviceId, DeviceName, AccountName, bin(TimeGenerated, 10m)
+| where StageCount >= 2
+| project FirstSeen, LastSeen, DeviceId, DeviceName, AccountName, Events
+| sort by LastSeen desc
