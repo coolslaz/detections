@@ -1,0 +1,48 @@
+title: Potential AI Agent-Assisted Git Checkout Anomaly
+description: Detects git checkout of a bare 40-hex commit SHA or the literal FETCH_HEAD ref,
+  executed by a recognized AI coding-agent process. Narrowed to the Plugin4Shell
+  exploitation fingerprint (checkout of a pinned-SHA-shaped or FETCH_HEAD ref)
+  rather than ordinary branch/tag checkouts, which these agents perform constantly
+  during normal plugin installs.
+status: experimental
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_checkout_suspicious:
+        Image|endswith: '\git.exe'
+        CommandLine|contains: 'checkout'
+        CommandLine|re: '(?i)checkout\s+(FETCH_HEAD|[0-9a-fA-F]{40})\b'
+    selection_agent_proc:
+        ParentImage|endswith:
+            - '\claude.exe'
+            - '\claude-code.exe'
+            - '\codex.exe'
+            - '\gh.exe'
+            - '\copilot.exe'
+            - '\gemini.exe'
+            - '\gemini-cli.exe'
+    selection_node_agent:
+        ParentImage|endswith: '\node.exe'
+        ParentCommandLine|contains:
+            - 'claude'
+            - 'claude-code'
+            - 'codex'
+            - 'copilot'
+            - 'gemini'
+            - 'gemini-cli'
+    condition: selection_checkout_suspicious and (selection_agent_proc or selection_node_agent)
+level: medium
+tags:
+    - attack.execution
+    - attack.t1059
+author: Arnold Chan
+falsepositives:
+  - Legitimate plugin installs/updates that pin-and-checkout a commit SHA or use
+  - Gemini CLI's normal fetch+checkout FETCH_HEAD flow -- this single-event Sigma
+  - rule cannot verify the non-GitHub host or clone/checkout correlation that the
+  - source KQL rule uses to further narrow this; treat matches as a lead requiring
+  - host/repo triage, not a confirmed compromise.
+references:
+  - https://www.air.security/blog-posts/plugin4shell
+  - https://thehackernews.com/2026/09/plugin4shell-lets-repository-owners.html
