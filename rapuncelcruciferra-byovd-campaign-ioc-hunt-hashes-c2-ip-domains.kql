@@ -1,0 +1,43 @@
+// Rapuncel/Cruciferra BYOVD MaaS campaign IOC hunt
+// Cloudflare-fronted shared proxy IPs (104.21.20.224, 104.21.18.89, 172.67.212.253) deliberately excluded as non-unique shared infrastructure
+let maliciousHashes = dynamic([
+ "ea8c31a86fa785ab514022c278a2f6e571c86aac9283745a96605c44d88382d6",
+ "aefbc6e04320e9a0e80f2323f8a897c4fdb222a37b0b87d76e850109decbfadd",
+ "611b3ba687b7f46319a19609605ddfe5225e6d85277d8e923eea3fdb6f7b5b61",
+ "75018b06c7105a1dca391805d17b402aed35ebd515b92d461236eafbd606cb40",
+ "26db14b956e33f69b3397a36387d32e01eb63613acff91069dc76b6ed7de45a8"
+]);
+let maliciousIPs = dynamic([
+ "2.26.126.50"
+]);
+let maliciousDomains = dynamic([
+ "albinofennel.com",
+ "hanselarinmusky.com",
+ "icansamyope.com",
+ "istatlmenus.com",
+ "macperformancetools.com",
+ "zaffersnouty.com",
+ "lastpass-authenticator.github.io",
+ "edgarcostartqd.github.io",
+ "dallikilic54.github.io"
+]);
+let FileHashHits = DeviceFileEvents
+| where SHA256 in (maliciousHashes)
+| project TimeGenerated, DeviceId, DeviceName, IOCType = "FileHash", IOCValue = SHA256, ActionType, ProcessName = InitiatingProcessFileName, ProcessCommandLine = InitiatingProcessCommandLine, RemoteIP = "", RemoteUrl = "";
+let ProcessHashHits = DeviceProcessEvents
+| where SHA256 in (maliciousHashes) or InitiatingProcessSHA256 in (maliciousHashes)
+| project TimeGenerated, DeviceId, DeviceName, IOCType = "FileHash", IOCValue = iff(SHA256 in (maliciousHashes), SHA256, InitiatingProcessSHA256), ActionType, ProcessName = FileName, ProcessCommandLine = ProcessCommandLine, RemoteIP = "", RemoteUrl = "";
+let ImageLoadHashHits = DeviceImageLoadEvents
+| where SHA256 in (maliciousHashes) or InitiatingProcessSHA256 in (maliciousHashes)
+| project TimeGenerated, DeviceId, DeviceName, IOCType = "FileHash", IOCValue = iff(SHA256 in (maliciousHashes), SHA256, InitiatingProcessSHA256), ActionType, ProcessName = InitiatingProcessFileName, ProcessCommandLine = InitiatingProcessCommandLine, RemoteIP = "", RemoteUrl = "";
+let DeviceEventHashHits = DeviceEvents
+| where SHA256 in (maliciousHashes) or InitiatingProcessSHA256 in (maliciousHashes)
+| project TimeGenerated, DeviceId, DeviceName, IOCType = "FileHash", IOCValue = iff(SHA256 in (maliciousHashes), SHA256, InitiatingProcessSHA256), ActionType, ProcessName = InitiatingProcessFileName, ProcessCommandLine = InitiatingProcessCommandLine, RemoteIP = "", RemoteUrl = "";
+let IPHits = DeviceNetworkEvents
+| where RemoteIP in (maliciousIPs)
+| project TimeGenerated, DeviceId, DeviceName, IOCType = "C2IP", IOCValue = RemoteIP, ActionType, ProcessName = InitiatingProcessFileName, ProcessCommandLine = InitiatingProcessCommandLine, RemoteIP, RemoteUrl;
+let DomainHits = DeviceNetworkEvents
+| where RemoteUrl has_any (maliciousDomains)
+| project TimeGenerated, DeviceId, DeviceName, IOCType = "Domain", IOCValue = RemoteUrl, ActionType, ProcessName = InitiatingProcessFileName, ProcessCommandLine = InitiatingProcessCommandLine, RemoteIP, RemoteUrl;
+union FileHashHits, ProcessHashHits, ImageLoadHashHits, DeviceEventHashHits, IPHits, DomainHits
+| sort by TimeGenerated desc
