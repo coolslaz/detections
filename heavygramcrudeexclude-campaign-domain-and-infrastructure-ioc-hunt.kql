@@ -1,0 +1,38 @@
+let iocDomains = dynamic(["justicehomeland.org","karmabelow80.org","handala-redwanted.to","handala-hack.to","ppt1.sgp1.vultrobjects.com","micbucket.ams1.vultrobjects.com"]);
+let iocHashes = dynamic([
+    "8219453084f370cee43aafe27b9def6b9d3d75fb31bacd7e2fa1d82d617f26dd",
+    "47fa634b13b8ba35bd5669da3059a0c7577911c16584a2ff173368f848825de4",
+    "d2d19c7f2e4a5fdcfb34b26f048077d2c4fe26637ed2c90e9e9bdf32307c377e",
+    "3befcca381deb6b492aa0c4eba222c29a25192aeacbf2315798c4754a4b74e81",
+    "6ddd145622cde2d2f91dace7e1f7edef22f4d49d3645fa9ad4bdb772829c30bf",
+    "4a3aa8f4f0eb37be9778fbdf0b7dd282fc407557da61735d2ae9cfc73ee2aa81",
+    "844108a626c15395059efa355a66c8462af0c822d8219b35b6038d9d42dcf61d"
+]);
+let networkHits = DeviceNetworkEvents
+| extend RemoteHost = tostring(parse_url(RemoteUrl).Host)
+| where isnotempty(RemoteHost) and RemoteHost has_any (iocDomains)
+| project TimeGenerated, DeviceId, DeviceName, ActionType, RemoteUrl, RemoteHost, RemoteIP, RemotePort, InitiatingProcessFileName, InitiatingProcessCommandLine
+| extend MatchType = "NetworkConnection";
+let processHits = DeviceProcessEvents
+| where ProcessCommandLine has_any (iocDomains)
+| project TimeGenerated, DeviceId, DeviceName, ActionType, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
+| extend MatchType = "ProcessCommandLine";
+let fileOriginHits = DeviceFileEvents
+| extend FileOriginHost = tostring(parse_url(FileOriginUrl).Host)
+| where isnotempty(FileOriginHost) and FileOriginHost has_any (iocDomains)
+| project TimeGenerated, DeviceId, DeviceName, ActionType, FileName, FolderPath, FileOriginUrl, InitiatingProcessFileName, InitiatingProcessCommandLine
+| extend MatchType = "FileOriginUrl";
+let fileHashHits = DeviceFileEvents
+| where isnotempty(SHA256) and SHA256 in~ (iocHashes)
+| project TimeGenerated, DeviceId, DeviceName, ActionType, FileName, FolderPath, SHA256, InitiatingProcessFileName, InitiatingProcessCommandLine
+| extend MatchType = "FileHash";
+let processHashHits = DeviceProcessEvents
+| where isnotempty(SHA256) and SHA256 in~ (iocHashes)
+| project TimeGenerated, DeviceId, DeviceName, ActionType, FileName, ProcessCommandLine, SHA256, InitiatingProcessFileName, InitiatingProcessCommandLine
+| extend MatchType = "ProcessHash";
+networkHits
+| union processHits
+| union fileOriginHits
+| union fileHashHits
+| union processHashHits
+| sort by TimeGenerated desc
