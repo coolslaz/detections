@@ -1,0 +1,7 @@
+DeviceFileEvents
+| where TimeGenerated > ago(30d)
+| where FolderPath has @"\Microsoft\Windows\Start Menu\Programs\Startup\"
+| where FileName endswith ".lnk"
+| where InitiatingProcessFileName =~ "wscript.exe" or InitiatingProcessFileName =~ "cscript.exe"
+| where InitiatingProcessCommandLine has_any ("powershell", "-enc", "-EncodedCommand", "-w hidden", "-windowstyle hidden", "-nop", "IEX", "FromBase64String", "Reflection.Assembly")
+| project TimeGenerated, DeviceId, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName, SHA256
