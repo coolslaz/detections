@@ -1,0 +1,28 @@
+let lookback = 15m;
+let excludedProcs = dynamic(["MsMpEng.exe", "BackupExec.exe", "wuauclt.exe", "msiexec.exe", "7z.exe", "robocopy.exe", "rclone.exe", "restic.exe", "manage-bde.exe"]);
+let ransomProc = DeviceProcessEvents
+| where FileName matches regex @"^[A-Za-z0-9]+(\.[A-Za-z0-9]+)?_win64\.exe$"
+| where not(FileName has_any (excludedProcs))
+| where not(FileName startswith "veeam" or FileName startswith "SentinelAgent" or FileName startswith "duplicati" or FileName startswith "Cryptomator")
+| where InitiatingProcessFolderPath has_any (@"\Temp\", @"\AppData\", @"\Public\", @"\Downloads\", @"\ProgramData\", @"\Users\Public\")
+| project DeviceId, ProcessTimestamp = TimeGenerated, ProcessFileName = FileName, InitiatingProcessAccountName, ProcessCommandLine, InitiatingProcessFolderPath;
+let encryptionActivity = DeviceFileEvents
+| where ActionType in ("FileRenamed", "FileModified")
+| where FileName endswith ".locked" or FileName endswith ".locked_wip"
+| where FileName matches regex @"\.[A-Za-z0-9]{2,5}\.locked(_wip)?$"
+| where not(InitiatingProcessFileName has_any (excludedProcs))
+| where not(InitiatingProcessFileName startswith "veeam" or InitiatingProcessFileName startswith "SentinelAgent" or InitiatingProcessFileName startswith "duplicati" or InitiatingProcessFileName startswith "Cryptomator")
+| summarize EncryptedFileCount = dcount(FileName), DistinctFolderCount = dcount(FolderPath), EncryptSampleFiles = make_set(FileName, 10), FirstEncryptTime = min(TimeGenerated), LastEncryptTime = max(TimeGenerated) by DeviceId;
+let ransomNote = DeviceFileEvents
+| where FileName =~ "RESTORE_FILES.txt"
+| summarize NoteDropCount = dcount(FolderPath), NoteFolders = make_set(FolderPath, 10), FirstNoteTime = min(TimeGenerated) by DeviceId;
+ransomProc
+| join kind=inner (encryptionActivity) on DeviceId
+| where FirstEncryptTime between (ProcessTimestamp .. (ProcessTimestamp + lookback))
+| where EncryptedFileCount > 50
+| where DistinctFolderCount >= 3
+| join kind=inner (ransomNote) on DeviceId
+| where FirstNoteTime between (ProcessTimestamp .. (ProcessTimestamp + lookback))
+| where NoteDropCount >= 2
+| project DeviceId, InitiatingProcessAccountName, ProcessFileName, ProcessCommandLine, InitiatingProcessFolderPath, ProcessTimestamp, EncryptedFileCount, DistinctFolderCount, FirstEncryptTime, LastEncryptTime, EncryptSampleFiles, NoteDropCount, NoteFolders, FirstNoteTime
+| sort by ProcessTimestamp desc
