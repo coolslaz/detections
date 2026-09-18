@@ -1,0 +1,19 @@
+// Detects the MovieReaper 'file manager' final-stage payload: mass file enumeration/access
+// followed by outbound network activity from the same masquerading process
+// (e.g. the Telemetry-folder msedge.exe persistence binary)
+let fileManagerProc = @"C:\ProgramData\Microsoft\Windows\Telemetry\msedge.exe";
+let MassFileAccess = DeviceFileEvents
+| where FolderPath =~ fileManagerProc or InitiatingProcessFolderPath =~ fileManagerProc
+| where ActionType in ("FileCreated", "FileModified", "FileRenamed", "FileDeleted", "FileAccessed")
+| summarize FileEventCount = count(), DistinctFiles = dcount(FileName), FileNames = make_set(FileName, 20) by DeviceId, InitiatingProcessId, InitiatingProcessFolderPath, bin(TimeGenerated, 15m)
+| where DistinctFiles >= 20;
+let OutboundAfterAccess = DeviceNetworkEvents
+| where InitiatingProcessFolderPath =~ fileManagerProc
+| where RemoteIPType == "Public"
+| summarize ConnectionCount = count(), RemoteIPs = make_set(RemoteIP, 10) by DeviceId, InitiatingProcessId, InitiatingProcessFolderPath, bin(TimeGenerated, 15m)
+| where ConnectionCount >= 3;
+MassFileAccess
+| join kind=inner (OutboundAfterAccess) on DeviceId, InitiatingProcessId, InitiatingProcessFolderPath
+| where abs(datetime_diff('minute', TimeGenerated, TimeGenerated1)) <= 30
+| project DeviceId, InitiatingProcessId, InitiatingProcessFolderPath, FileEventCount, DistinctFiles, FileNames, ConnectionCount, RemoteIPs, TimeGenerated, TimeGenerated1
+| sort by TimeGenerated desc
