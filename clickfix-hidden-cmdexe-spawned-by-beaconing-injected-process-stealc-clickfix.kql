@@ -1,0 +1,18 @@
+// Detects hidden-window cmd.exe spawned specifically from the same process that beaconed to known StealC C2 infrastructure, tightened to require both the hidden-window flag and a direct parent-process match to the injected chain process
+let c2_ips = dynamic(["45.74.7.27","23.227.198.199"]);
+let suspicious_parents = dynamic(["csc.exe","chrome.exe","msedge.exe","SearchIndexer.exe","powershell.exe"]);
+DeviceNetworkEvents
+| where RemoteIP in (c2_ips)
+| project NetTimestamp = TimeGenerated, DeviceId, NetInitiatingProcessFileName = InitiatingProcessFileName, RemoteIP
+| where NetInitiatingProcessFileName has_any (suspicious_parents)
+| join kind=inner (
+    DeviceProcessEvents
+    | where FileName =~ "cmd.exe"
+    | where ProcessCommandLine has_any ("hidden", "-WindowStyle Hidden")
+    | where InitiatingProcessFileName has_any (suspicious_parents)
+    | project ProcTimestamp = TimeGenerated, DeviceId, InitiatingProcessFileName, FileName, ProcessCommandLine, AccountName
+) on DeviceId
+| where InitiatingProcessFileName =~ NetInitiatingProcessFileName
+| where ProcTimestamp between (NetTimestamp .. (NetTimestamp + 15m))
+| project ProcTimestamp, DeviceId, NetInitiatingProcessFileName, RemoteIP, InitiatingProcessFileName, FileName, ProcessCommandLine, AccountName
+| sort by ProcTimestamp desc
