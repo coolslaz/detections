@@ -1,0 +1,28 @@
+let LookbackDays = 30d;
+let artoken_ips = dynamic(["64.23.137.206", "159.65.36.134", "24.144.85.33", "134.199.198.129"]);
+let artoken_domains = dynamic(["pamconj.com", "private.pamconj.com", "spx.pamconj.com", "corabuild.eu", "analytics.corabuild.eu", "redirecttm.workers.dev", "rajesh-das1010.workers.dev"]);
+let net_hits = DeviceNetworkEvents
+| where TimeGenerated > ago(LookbackDays)
+| where (isnotempty(RemoteIP) and RemoteIP in (artoken_ips)) or (isnotempty(RemoteUrl) and RemoteUrl has_any (artoken_domains))
+| extend MatchedIndicator = iff(isnotempty(RemoteIP) and RemoteIP in (artoken_ips), RemoteIP, RemoteUrl)
+| extend IndicatorType = iff(isnotempty(RemoteIP) and RemoteIP in (artoken_ips), "IP", "Domain")
+| extend Confidence = iff(IndicatorType == "IP", "Medium - shared hosting IP, may be reassigned", "High - attacker-registered domain")
+| project TimeGenerated, DeviceName, AccountName = InitiatingProcessAccountName, MatchedIndicator, IndicatorType, Confidence, Destination = strcat(RemoteIP, ":", RemoteUrl), Source = "DeviceNetworkEvents";
+let http_hits = DeviceEvents
+| where TimeGenerated > ago(LookbackDays)
+| where ActionType == "HttpEvent"
+| extend RemoteIP = tostring(parse_json(AdditionalFields).RemoteIP), Url = tostring(parse_json(AdditionalFields).Url)
+| where (isnotempty(RemoteIP) and RemoteIP in (artoken_ips)) or (isnotempty(Url) and Url has_any (artoken_domains))
+| extend MatchedIndicator = iff(isnotempty(RemoteIP) and RemoteIP in (artoken_ips), RemoteIP, Url)
+| extend IndicatorType = iff(isnotempty(RemoteIP) and RemoteIP in (artoken_ips), "IP", "Domain")
+| extend Confidence = iff(IndicatorType == "IP", "Medium - shared hosting IP, may be reassigned", "High - attacker-registered domain")
+| project TimeGenerated, DeviceName, AccountName = InitiatingProcessAccountName, MatchedIndicator, IndicatorType, Confidence, Destination = Url, Source = "DeviceEvents";
+let email_url_hits = EmailUrlInfo
+| where TimeGenerated > ago(LookbackDays)
+| where isnotempty(Url) and Url has_any (artoken_domains)
+| extend MatchedIndicator = Url
+| extend IndicatorType = "Domain"
+| extend Confidence = "High - attacker-registered domain"
+| project TimeGenerated, DeviceName = "", AccountName = "", MatchedIndicator, IndicatorType, Confidence, Destination = Url, Source = "EmailUrlInfo";
+union net_hits, http_hits, email_url_hits
+| sort by TimeGenerated desc
