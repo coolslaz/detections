@@ -1,0 +1,9 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(14d)
+| where FileName in~ ("npm.exe", "npm", "npm.cmd", "node.exe", "node")
+| where (FileName in~ ("npm.exe", "npm", "npm.cmd") and ProcessCommandLine has_any ("install", " i ", "add", "ci", "npx"))
+    or (FileName in~ ("node.exe", "node") and ProcessCommandLine has "node_modules")
+| where ProcessCommandLine matches regex @"(?i)(@biz44/(id10|id12|id44|id79|id95|id99)-client|@biz44/(process-runtime-utils|runtime-utils)|\bengin1\b|\bid79-client\b|\bprocess-lhpm\b|\bprocess-mite\b|\bprocess-tailwind\b)"
+| extend PackageName = extract(@"(@biz44/[a-zA-Z0-9-]+|engin1|id79-client|process-lhpm|process-mite|process-tailwind)", 1, ProcessCommandLine)
+| project TimeGenerated, DeviceId, DeviceName, AccountName, FileName, ProcessCommandLine, PackageName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine
+| sort by TimeGenerated desc
