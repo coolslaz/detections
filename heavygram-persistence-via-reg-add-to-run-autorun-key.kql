@@ -1,0 +1,13 @@
+union DeviceRegistryEvents, DeviceProcessEvents
+| where TimeGenerated > ago(14d)
+| where (ActionType in ("RegistryValueSet","RegistryKeyCreated")
+        and RegistryKey has @"Software\Microsoft\Windows\CurrentVersion\Run"
+        and InitiatingProcessFileName in~ ("reg.exe","cmd.exe","powershell.exe","python.exe","pythonw.exe")
+        and RegistryValueData has_any (@"\AppData\", @"\ProgramData\", @"\Temp\", @"\Users\Public\", @"\Downloads\")
+        and not(RegistryValueData has_any (@"\Program Files\", @"\Program Files (x86)\", @"\Windows\System32\", @"\Windows\SysWOW64\")))
+    or (FileName =~ "reg.exe"
+        and ProcessCommandLine has "add"
+        and ProcessCommandLine has_any (@"CurrentVersion\Run", @"CurrentVersion\\Run")
+        and ProcessCommandLine has_any (@"\AppData\", @"\ProgramData\", @"\Temp\", @"\Users\Public\", @"\Downloads\")
+        and not(ProcessCommandLine has_any (@"\Program Files\", @"\Program Files (x86)\", @"\Windows\System32\", @"\Windows\SysWOW64\")))
+| project TimeGenerated, DeviceName, ActionType, RegistryKey, RegistryValueName, RegistryValueData, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName
