@@ -1,0 +1,7 @@
+alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"ClickFix - Malicious JavaScript with Overlay Signature Retrieved from cdnsuicaches[.]com CDN"; flow:to_client,established; http.host; content:"cdnsuicaches.com"; nocase; endswith; file.data; content:"cookie-captcha-complete"; nocase; fast_pattern; sid:1000020; rev:2; classtype:trojan-activity; metadata: attack_id T1189, attack_id T1584.004, attack_id T1204.001, author Arnold Chan;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET any (msg:"ClickFix - cookie-captcha-complete Cookie Check Indicative of ClickFix Overlay from cdnsuicaches[.]com"; flow:to_client,established; http.host; content:"cdnsuicaches.com"; nocase; endswith; file.data; content:"cookie-captcha-complete"; nocase; fast_pattern; sid:1000021; rev:2; classtype:trojan-activity; metadata:attack_id T1189, attack_id T1204.001;)
+
+alert dns $HOME_NET any -> any any (msg:"ClickFix - DNS Query for cdnsuicaches.com Malicious CDN"; dns.query; content:"cdnsuicaches.com"; nocase; endswith; sid:1000022; rev:2; classtype:trojan-activity; metadata:attack_id T1189, attack_id T1584.004;)
+
+alert tls $HOME_NET any -> $EXTERNAL_NET any (msg:"ClickFix - TLS SNI Match for cdnsuicaches.com Preceding Overlay Delivery"; flow:to_server,established; tls.sni; content:"cdnsuicaches.com"; nocase; endswith; sid:1000023; rev:2; classtype:trojan-activity; metadata:attack_id T1189, attack_id T1584.004;)
