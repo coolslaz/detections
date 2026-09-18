@@ -1,0 +1,12 @@
+// Detects execution of the MovieReaper initial loader, which performs extensive
+// anti-sandboxing/anti-analysis checks before proceeding to later stages.
+// Grounded on the known disguised filename pattern and hash of the loader.
+DeviceProcessEvents
+| where FileName endswith ".exe"
+| where MD5 =~ "A0B13781EDD7CFDAB13D79AFFF3C83C1"
+   or SHA256 in ("4334BBAEA8DE33BF9D45E9B4E4E3BC2", "4843F9FAFCAE492F11E2D4D33DBB4CDD", "5310CABAE3FBE6DB8742849B588093F9", "70060341CAF3338697A7DDFE0FB62875", "AD4643EEA15AC286FA47D1131F9EF756")
+   or (strlen(FileName) >= 80
+       and FileName has_any ("1080p", "720p", "2160p", "webrip", "bluray", "x264", "x265")
+       and FolderPath has_any (@"\Downloads\", @"\AppData\Local\Temp\", @"\Temp\", @"\Users\Public\", @"\Desktop\"))
+| extend PossibleGlobalMutexPattern = ProcessCommandLine has "Global\\"
+| project TimeGenerated, DeviceName, FileName, FolderPath, ProcessCommandLine, MD5, SHA256, InitiatingProcessFileName, AccountName, PossibleGlobalMutexPattern
