@@ -1,0 +1,23 @@
+let MovieReaperHashes = dynamic(["a0b13781edd7cfdab13d79afff3c83c1","4334bbaea8de33bf9d845e9b4e4e3bc2","4843f9fafcae492f11e2d4d33dbb4cdd","5310cabae3fbe6db8742849b588093f9","70060341caf3338697a7ddfe0fb62875","ad4643eea15ac286fa47d1131f9ef756","d0b967571ac8a3863c7f324bf5bde99c","d88d550d0fb8e60cffff3ea61ff7a067"]);
+let MovieReaperIPs = dynamic(["193.23.118.155","208.64.33.90","208.94.246.53"]);
+let MovieReaperDomains = dynamic(["deadhub.org"]);
+// C2 IPs/domain are time-bounded to the campaign's known-active window: unlike file hashes, network
+// infrastructure can be reassigned to unrelated, legitimate tenants after takedown, so matching it
+// indefinitely risks false positives on stale indicators. Extend CampaignStart/End as new activity is confirmed.
+let CampaignStart = datetime(2026-08-01);
+let CampaignEnd = datetime(2026-12-31);
+let ProcessEvents = DeviceProcessEvents
+| where MD5 in~ (MovieReaperHashes) or SHA256 in~ (MovieReaperHashes)
+| extend MatchedIndicatorType = "hash", MatchedIndicator = iff(MD5 in~ (MovieReaperHashes), MD5, SHA256)
+| project TimeGenerated, MatchedIndicatorType, MatchedIndicator, DeviceId, DeviceName, AccountName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine;
+let FileEvents = DeviceFileEvents
+| where MD5 in~ (MovieReaperHashes) or SHA256 in~ (MovieReaperHashes)
+| extend MatchedIndicatorType = "hash", MatchedIndicator = iff(MD5 in~ (MovieReaperHashes), MD5, SHA256)
+| project TimeGenerated, MatchedIndicatorType, MatchedIndicator, DeviceId, DeviceName, InitiatingProcessAccountName, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine;
+let NetworkEvents = DeviceNetworkEvents
+| where TimeGenerated between (CampaignStart .. CampaignEnd)
+| where RemoteIP in (MovieReaperIPs) or RemoteUrl has_any (MovieReaperDomains)
+| extend MatchedIndicatorType = iff(RemoteIP in (MovieReaperIPs), "ip", "domain"), MatchedIndicator = iff(RemoteIP in (MovieReaperIPs), RemoteIP, RemoteUrl)
+| project TimeGenerated, MatchedIndicatorType, MatchedIndicator, DeviceId, DeviceName, InitiatingProcessAccountName, RemoteIP, RemoteUrl, RemotePort, InitiatingProcessFileName, InitiatingProcessCommandLine;
+union ProcessEvents, FileEvents, NetworkEvents
+| sort by TimeGenerated desc
