@@ -1,0 +1,9 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(14d)
+| where FileName in~ ("powershell.exe", "cmd.exe")
+| where ProcessCommandLine has "ExecutionPolicy" and ProcessCommandLine has "Bypass"
+| where ProcessCommandLine has_any ("mnl.ac", "149.255.35.135")
+| where ProcessCommandLine has "configuration.ps1"
+| where ProcessCommandLine has_any ("Invoke-WebRequest", "IWR", "DownloadString", "DownloadFile", "Net.WebClient")
+| extend IsCaretObfuscated = ProcessCommandLine matches regex @"(\^[A-Za-z]){3,}"
+| project TimeGenerated, DeviceId, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName, IsCaretObfuscated
