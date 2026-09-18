@@ -1,0 +1,8 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where ProcessCommandLine has "adb" and ProcessCommandLine has "pair"
+| where ProcessCommandLine has "libadb-android"
+| where ProcessCommandLine matches regex @"pair\s+\S+\s+\d{6}"
+| where InitiatingProcessFileName !in~ ("adb", "adb.exe", "studio64.exe", "androidstudio.exe")
+| project TimeGenerated, DeviceId, DeviceName, AccountName, InitiatingProcessFileName, FileName, ProcessCommandLine, FolderPath
+| sort by TimeGenerated desc
