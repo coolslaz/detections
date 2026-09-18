@@ -1,0 +1,29 @@
+// Detects the MovieReaper loader technique: registering/rewriting a Vectored Exception Handler,
+// allocating RWX memory, and triggering a debug-break exception that redirects into a raw
+// NtProtectVirtualMemory syscall to bypass user-mode API hooks (T1620, T1055, T1106)
+DeviceEvents
+| where TimeGenerated > ago(14d)
+| where ActionType in ("AddVectoredExceptionHandler", "AddVectoredContinueHandler", "VirtualProtectExRemoteApiCall", "VirtualAllocExRemoteApiCall")
+| extend ParsedFields = parse_json(AdditionalFields)
+| extend ProtectionFlags = tostring(ParsedFields.ProtectionFlags), AllocationFlags = tostring(ParsedFields.AllocationProtection)
+| join kind=inner (
+    DeviceEvents
+    | where TimeGenerated > ago(14d)
+    | where ActionType in ("AddVectoredExceptionHandler", "AddVectoredContinueHandler", "VirtualProtectExRemoteApiCall", "VirtualAllocExRemoteApiCall")
+    | extend ParsedFields2 = parse_json(AdditionalFields)
+    | extend ProtectionFlags2 = tostring(ParsedFields2.ProtectionFlags)
+) on DeviceId, InitiatingProcessId
+| where ProtectionFlags has "EXECUTE_READWRITE" or ProtectionFlags2 has "EXECUTE_READWRITE"
+| where InitiatingProcessFileName endswith ".exe"
+| where not(InitiatingProcessFileName =~ "msedge.exe" and InitiatingProcessFolderPath has_any (@"Program Files\Microsoft\Edge", @"Program Files (x86)\Microsoft\Edge"))
+| where not(InitiatingProcessFileName in~ ("chrome.exe","firefox.exe","java.exe","javaw.exe","node.exe","dotnet.exe","devenv.exe","Discord.exe","Code.exe"))
+| summarize
+    ActionTypes = make_set(ActionType, 10),
+    EventCount = count(),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated)
+    by DeviceId, InitiatingProcessId, InitiatingProcessFileName, InitiatingProcessAccountName, InitiatingProcessFolderPath
+| where array_length(ActionTypes) >= 2
+| where EventCount >= 2
+| project FirstSeen, LastSeen, DeviceId, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessAccountName, ActionTypes, EventCount
+| sort by LastSeen desc
