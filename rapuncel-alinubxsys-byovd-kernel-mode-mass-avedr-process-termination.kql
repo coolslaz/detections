@@ -1,0 +1,31 @@
+// Detects the Alinubx.sys (renamed CcProtect.sys, dropped as nvfsflt64.sys / service NvFsFilter) kernel driver load
+// followed by a rapid, simultaneous mass termination of AV/EDR processes consistent with the
+// Rapuncel/Cruciferra BYOVD attack chain (IOCTL 0x222024 -> ObOpenObjectByPointer(KernelMode) -> ZwTerminateProcess)
+let hashIOC = "611b3ba687b7f46319a19609605ddfe5225e6d85277d8e923eea3fdb6f7b5b61";
+let driverLoad = DeviceEvents
+| where ActionType == "DriverLoaded"
+| where FolderPath has "nvfsflt64.sys"
+    or AdditionalFields has "NvFsFilter"
+    or AdditionalFields has "Alinubx"
+    or SHA256 == hashIOC
+| extend IsHighConfidenceHash = SHA256 == hashIOC
+| project DeviceId, DriverLoadTime = TimeGenerated, FolderPath, SHA256, IsHighConfidenceHash;
+let massTermination = DeviceProcessEvents
+| where ActionType == "ProcessTerminated"
+| where FileName has_any ("avp.exe","MsMpEng.exe","MBAMService.exe","SentinelAgent.exe","CSFalconService.exe","cb.exe","elastic-endpoint.exe","WRSA.exe","ekrn.exe","avastui.exe","avgui.exe","bdagent.exe","mcshield.exe","savservice.exe","sophosav.exe","ccsvchst.exe","NortonSecurity.exe","psanhost.exe","vsserv.exe","cyserver.exe")
+// exclude terminations attributable to routine user-mode uninstall/update tooling rather than kernel-mode IOCTL-driven kills
+| where not(InitiatingProcessFileName has_any ("msiexec.exe","TrustedInstaller.exe"))
+| summarize KilledProcesses = make_set(FileName, 50), KillCount = dcount(FileName), MinTime = min(TimeGenerated), MaxTime = max(TimeGenerated) by DeviceId, bin(TimeGenerated, 1m)
+| where KillCount >= 5
+| where datetime_diff("second", MaxTime, MinTime) <= 15;
+let correlated = driverLoad
+| join kind=inner (massTermination) on DeviceId
+| where MinTime between (DriverLoadTime .. (DriverLoadTime + 3m))
+| project DeviceId, DriverLoadTime, FolderPath, MinTime, MaxTime, KillCount, KilledProcesses, DetectionType = "DriverLoad+MassTermination", IsHighConfidenceHash;
+// treat exact SHA256 match on the confirmed Alinubx.sys hash as a high-confidence standalone indicator, even absent a correlated termination burst
+let standaloneHash = driverLoad
+| where IsHighConfidenceHash
+| project DeviceId, DriverLoadTime, FolderPath, MinTime = DriverLoadTime, MaxTime = DriverLoadTime, KillCount = int(null), KilledProcesses = dynamic(null), DetectionType = "HighConfidenceHashOnly", IsHighConfidenceHash;
+correlated
+| union standaloneHash
+| sort by DriverLoadTime asc
