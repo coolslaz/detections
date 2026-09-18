@@ -1,0 +1,24 @@
+// Detects the ClickFix/StealC anti-debugging + process-injection chain
+// Requires the injecting PowerShell process to be part of the campaign's
+// suspicious lineage: spawned from explorer.exe (Run dialog ClickFix lure)
+// with an obfuscated/encoded command line, before it injects into
+// legitimate Windows/browser processes (csc.exe, chrome.exe, msedge.exe,
+// SearchIndexer.exe) as part of an evasion routine that polls
+// Debugger.IsAttached / Debugger.IsLogging and CheckRemoteDebuggerPresent.
+let SuspiciousPowerShell = 
+    DeviceProcessEvents
+    | where TimeGenerated > ago(7d)
+    | where FileName =~ "powershell.exe"
+    | where InitiatingProcessFileName =~ "explorer.exe"
+    | where ProcessCommandLine has_any ("-enc", "-EncodedCommand", "-e ", "-w hidden", "-windowstyle hidden", "-nop", "-noprofile", "IEX", "Invoke-Expression", "-bxor", "FromBase64String")
+    | project DeviceId, PowerShellProcessId = ProcessId, PowerShellCommandLine = ProcessCommandLine, PowerShellCreationTime = TimeGenerated;
+DeviceEvents
+| where TimeGenerated > ago(7d)
+| where ActionType in ("ProcessInjection", "SuspiciousProcessInjection", "AntimalwareProcessInjection")
+| where InitiatingProcessFileName =~ "powershell.exe"
+| where FileName has_any ("csc.exe", "chrome.exe", "msedge.exe", "SearchIndexer.exe")
+| join kind=inner (SuspiciousPowerShell) on DeviceId, $left.InitiatingProcessId == $right.PowerShellProcessId
+| where TimeGenerated >= PowerShellCreationTime
+| extend AdditionalFieldsParsed = parse_json(AdditionalFields)
+| project TimeGenerated, DeviceId, DeviceName, ActionType, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessId, PowerShellCommandLine, PowerShellCreationTime, FileName, FolderPath, AccountName, AdditionalFieldsParsed
+| sort by TimeGenerated desc
