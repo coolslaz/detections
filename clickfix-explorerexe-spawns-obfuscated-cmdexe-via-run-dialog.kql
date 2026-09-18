@@ -1,0 +1,10 @@
+DeviceProcessEvents
+| where InitiatingProcessFileName =~ "explorer.exe"
+| where FileName =~ "cmd.exe"
+| where ProcessCommandLine has "/c"
+| where ProcessCommandLine matches regex @"(\^[A-Za-z]){3,}" // caret-obfuscation
+    or ProcessCommandLine matches regex @"([a-z][A-Z]|[A-Z][a-z]){4,}" and ProcessCommandLine has_cs "owerShell" // mixed-case evasion of PowerShell token, case-sensitive
+    or ProcessCommandLine matches regex @"[A-Za-z0-9+/]{40,}={0,2}" // base64-like blob
+| where ProcessCommandLine contains "mnl.ac" or ProcessCommandLine contains "configuration.ps1" or (ProcessCommandLine has "-ExecutionPolicy" and ProcessCommandLine has "Bypass")
+| project TimeGenerated, DeviceName, AccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, ProcessId, InitiatingProcessId
+| order by TimeGenerated desc
