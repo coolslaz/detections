@@ -1,0 +1,8 @@
+DeviceProcessEvents
+| where InitiatingProcessFileName =~ "explorer.exe"
+| where FileName =~ "cmd.exe"
+| where FolderPath =~ @"C:\Windows\System32\cmd.exe" or FolderPath =~ @"C:\Windows\SysWOW64\cmd.exe"
+| where ProcessCommandLine has "/c"
+| where ProcessCommandLine has @"doxc\doxc.bat"
+   or (ProcessCommandLine has "config.bat" and ProcessCommandLine has_any ("Documents_Details", "windowSysUpdates"))
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName, FolderPath
