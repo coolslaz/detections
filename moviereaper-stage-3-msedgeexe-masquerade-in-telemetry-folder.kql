@@ -1,0 +1,6 @@
+DeviceProcessEvents
+| where FileName =~ "msedge.exe"
+| where FolderPath =~ @"C:\ProgramData\Microsoft\Windows\Telemetry\msedge.exe"
+| where not(InitiatingProcessFileName =~ "MicrosoftEdgeUpdate.exe" and (InitiatingProcessFolderPath contains @"Program Files\Microsoft\EdgeUpdate" or InitiatingProcessFolderPath contains @"Program Files (x86)\Microsoft\EdgeUpdate"))
+| summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), ExecutionCount = count(), AccountNames = make_set(AccountName), ProcessCommandLines = make_set(ProcessCommandLine), SHA256Values = make_set(SHA256), MD5Values = make_set(MD5) by DeviceId, DeviceName, FolderPath, FileName, bin(TimeGenerated, 1d)
+| sort by LastSeen desc
