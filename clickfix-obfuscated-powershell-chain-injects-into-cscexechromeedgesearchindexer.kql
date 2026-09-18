@@ -1,0 +1,15 @@
+DeviceEvents
+| where ActionType in ("CreateRemoteThreadApiCall", "OpenProcessApiCall", "NtAllocateVirtualMemoryRemoteApiCall", "NtSetContextThreadRemoteApiCall")
+| where InitiatingProcessFileName =~ "powershell.exe"
+| where FileName has_any ("csc.exe", "chrome.exe", "msedge.exe", "SearchIndexer.exe")
+// require the injecting powershell process itself look like the ClickFix-style obfuscated Run-dialog execution
+| where InitiatingProcessCommandLine has_any ("-enc", "-EncodedCommand", "-nop", "-noprofile", "-w hidden", "-windowstyle hidden", "IEX", "Invoke-Expression", "FromBase64String", "-bypass", "-ExecutionPolicy Bypass")
+| extend ParsedFields = parse_json(AdditionalFields)
+| extend ApiName = tostring(ParsedFields.ApiName)
+| where ApiName has_any ("NtAllocateVirtualMemoryRemote", "NtSetContextThreadRemote") or ActionType in ("CreateRemoteThreadApiCall", "OpenProcessApiCall")
+// require a multi-step injection chain (allocate/setcontext/createremotethread/openprocess) from the same initiating process and target, not a single isolated call
+| summarize DistinctActions = dcount(ActionType), Actions = make_set(ActionType, 10), ApiNames = make_set(ApiName, 10), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), CommandLines = make_set(InitiatingProcessCommandLine, 5)
+    by DeviceId, InitiatingProcessId, InitiatingProcessFileName, FileName, ProcessId
+| where DistinctActions >= 2
+| project FirstSeen, LastSeen, DeviceId, InitiatingProcessFileName, InitiatingProcessId, CommandLines, FileName, ProcessId, DistinctActions, Actions, ApiNames
+| sort by LastSeen desc
