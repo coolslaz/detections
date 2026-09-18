@@ -1,0 +1,7 @@
+// Detects use of the undocumented ntdll export EtwpCreateEtwThread as a CreateThread alternative
+// associated with MovieReaper shellcode execution to evade thread-creation monitoring
+DeviceEvents
+| where ActionType in ("ThreadCreated", "CreateRemoteThreadApiCall", "NtdllExportInvoked")
+| where AdditionalFields has "EtwpCreateEtwThread"
+| project TimeGenerated, DeviceId, DeviceName, ActionType, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessId, FileName, ProcessCommandLine, AdditionalFields
+| sort by TimeGenerated desc
