@@ -1,0 +1,20 @@
+// Tightened PhantomRaven detection: original logic matched any node.exe spawned by npm with preinstall/postinstall
+// in the command line, which fires on countless legitimate build-time npm scripts.
+// This version requires the npm-lifecycle -> node.exe pairing AND a correlated outbound network
+// connection from that same node process within 2 minutes of spawn, since PhantomRaven's malicious
+// lifecycle scripts immediately fetch a remote dynamic dependency / exfiltrate rather than just
+// compiling locally. Known npm registry/CDN endpoints and common benign postinstall tooling are excluded.
+let BenignDomains = dynamic(['registry.npmjs.org', 'npmjs.com', 'github.com', 'raw.githubusercontent.com']);
+let NodeSpawns = DeviceProcessEvents
+| where FileName =~ "node.exe"
+| where InitiatingProcessFileName =~ "npm.exe"
+| where ProcessCommandLine has_any ("preinstall", "postinstall")
+| project TimeGenerated, DeviceId, InitiatingProcessId, ProcessId, InitiatingProcessCommandLine, ProcessCommandLine;
+let NetworkConnections = DeviceNetworkEvents
+| where RemotePort in (80, 443)
+| where isnotempty(RemoteUrl)
+| where not(RemoteUrl has_any (BenignDomains));
+NodeSpawns
+| join kind=inner (NetworkConnections) on DeviceId, $left.ProcessId == $right.InitiatingProcessId
+| where TimeGenerated1 between (TimeGenerated .. datetime_add('minute', 2, TimeGenerated))
+| project TimeGenerated, DeviceId, InitiatingProcessCommandLine, ProcessCommandLine, RemoteIP, RemoteUrl
