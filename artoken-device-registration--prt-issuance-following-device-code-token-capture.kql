@@ -1,0 +1,20 @@
+let lookback = 1d;
+let KnownDeviceCodeApps = dynamic(["04b07795-8ddb-461a-bbee-02f9e1bf7b46","1950a258-227b-4e31-a9cf-717495945fc2","872cd9fa-d31f-45e0-9eab-6e460a02d1f1","aebc6443-996d-45c2-90f0-388ff96faa56"]); // Azure CLI, Azure PowerShell, Visual Studio, VS Code
+let DeviceCodeSignins = SigninLogs
+| where TimeGenerated > ago(lookback)
+| where AuthenticationProtocol =~ "deviceCode"
+| where ResultType == "0"
+| where not(set_has_element(KnownDeviceCodeApps, AppId))
+| project DeviceCodeTime = TimeGenerated, UserPrincipalName, DeviceCodeIP = IPAddress, DeviceCodeLocation = tostring(LocationDetails.city), CorrelationId;
+let BrokerOrDeviceRegSignins = SigninLogs
+| where TimeGenerated > ago(lookback)
+| where ResultType == "0"
+| where ResourceDisplayName =~ "Device Registration Service"
+| project RegTime = TimeGenerated, UserPrincipalName, RegIP = IPAddress, RegLocation = tostring(LocationDetails.city), AppDisplayName, ResourceDisplayName;
+DeviceCodeSignins
+| join kind=inner BrokerOrDeviceRegSignins on UserPrincipalName
+| where RegTime > DeviceCodeTime and RegTime - DeviceCodeTime <= 30m
+| extend LocationMismatch = (DeviceCodeLocation != RegLocation) or (DeviceCodeIP != RegIP)
+| where LocationMismatch
+| project UserPrincipalName, DeviceCodeTime, DeviceCodeIP, DeviceCodeLocation, RegTime, RegIP, RegLocation, AppDisplayName, ResourceDisplayName, LocationMismatch
+| sort by DeviceCodeTime desc
