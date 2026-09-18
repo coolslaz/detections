@@ -1,0 +1,8 @@
+DeviceProcessEvents
+| where FolderPath =~ @"C:\ProgramData\Microsoft\Windows\Telemetry\msedge.exe"
+| where FileName =~ "msedge.exe"
+| where isnotempty(ProcessCommandLine)
+| where ProcessCommandLine != FileName
+| where not(ProcessCommandLine has_any ("--type=", "--no-sandbox", "--disable-gpu", "--enable-features"))
+| where not(InitiatingProcessFileName =~ "MicrosoftEdgeUpdate.exe" and InitiatingProcessFolderPath has "Microsoft\\EdgeUpdate")
+| project TimeGenerated, DeviceName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName
