@@ -1,0 +1,12 @@
+DeviceProcessEvents
+| where FileName =~ "powershell.exe"
+| extend HasReflectiveLoad = ProcessCommandLine has_any ("[Reflection.Assembly]::Load", "Reflection.Assembly")
+| where HasReflectiveLoad
+| extend HasGzip = ProcessCommandLine has_any ("GzipStream", "Gzip", "Decompress")
+| extend HasAESKey = ProcessCommandLine has "9422c81325a47a186e9a8e3841c497ba9e4d99d952ca4838e8e21b7b31427109"
+| extend HasKnownObfuscationMarker = ProcessCommandLine has "BOyBdSXJMJHWV"
+| extend HasEncodedFlag = ProcessCommandLine has_any ("-enc", "-EncodedCommand", "-nop", "-noni", "-w hidden", "-windowstyle hidden")
+| extend SuspiciousParent = InitiatingProcessFileName has_any ("explorer.exe", "mshta.exe", "cmd.exe", "rundll32.exe", "wscript.exe")
+| where HasGzip or HasAESKey or HasKnownObfuscationMarker or HasEncodedFlag or SuspiciousParent
+| project TimeGenerated, DeviceName, AccountName, InitiatingProcessFileName, FileName, ProcessCommandLine, HasGzip, HasAESKey, HasKnownObfuscationMarker, HasEncodedFlag, SuspiciousParent
+| order by TimeGenerated desc
