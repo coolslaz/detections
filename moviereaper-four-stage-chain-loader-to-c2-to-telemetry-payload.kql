@@ -1,0 +1,25 @@
+let lookback = 1d;
+let loaderHashes = dynamic(["a0b13781edd7cfdab13d79afff3c83c1"]);
+let mutexNames = dynamic(["fnulSktzSqvVLXHU"]);
+let c2Domain = "deadhub.org";
+let c2Ip = "193.23.118.155";
+let telemetryPath = @"C:\ProgramData\Microsoft\Windows\Telemetry\msedge.exe";
+let stage1_loader = DeviceProcessEvents
+| where TimeGenerated > ago(lookback)
+| where MD5 in~ (loaderHashes) or ProcessCommandLine has_any (mutexNames)
+| project DeviceId, LoaderTime = TimeGenerated, LoaderFile = FileName, LoaderSHA1 = SHA1;
+let stage2_c2 = DeviceNetworkEvents
+| where TimeGenerated > ago(lookback)
+| where RemoteUrl has c2Domain or RemoteIP == c2Ip
+| project DeviceId, C2Time = TimeGenerated, RemoteUrl, RemoteIP;
+let stage3_telemetry = DeviceFileEvents
+| where TimeGenerated > ago(lookback)
+| where FolderPath =~ telemetryPath
+| project DeviceId, TelemetryTime = TimeGenerated, FolderPath, SHA1;
+stage1_loader
+| join kind=inner (stage2_c2) on DeviceId
+| where C2Time between (LoaderTime .. (LoaderTime + 2h))
+| join kind=inner (stage3_telemetry) on DeviceId
+| where TelemetryTime between (C2Time .. (C2Time + 2h))
+| project DeviceId, LoaderTime, LoaderFile, LoaderSHA1, C2Time, RemoteUrl, RemoteIP, TelemetryTime, FolderPath
+| sort by LoaderTime asc
