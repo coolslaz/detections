@@ -1,0 +1,17 @@
+let KnownHashes = dynamic(["411460a835461658ea596a9f52826e65","72b34401413cd684b7ba0a36f626811b","4c64d98210c7fc53b91ffe8572db9187","1d0a37a19233bc64d31f77697247e8f1","1b5d96e5b41d9720a4b35919a807bc34","41724f263cac4520874765b11027eaa1","8cd05fd628ed7927871e9dd53d4e613b","43ec61c2a96acef6e36a4b69b8f8e333","88d5d4c30c6732f9ddaa674621f8b3d4","ec0d9f04adb2946f2257a63c16407da5","abf20c1b86dec4209c2bfc6d565a9a4a","208d83a5b80f6069d828a36c56155e43"]);
+let KnownC2IPs = dynamic(["93.127.133.151"]);
+let KnownC2Domains = dynamic(["monitorondomainwintgt.store","monitorondomainwintgt2.store"]);
+let FileEvents = DeviceFileEvents
+| where MD5 in (KnownHashes) or SHA256 in (KnownHashes)
+| extend IOCType = "hash", IOCValue = iff(MD5 in (KnownHashes), MD5, SHA256)
+| project TimeGenerated, DeviceName, ActionType, FileName, FolderPath, MD5, SHA256, IOCType, IOCValue, ProcessCommandLine = "", RemoteIP = "", RemoteUrl = "", RemotePort = 0, InitiatingProcessFileName = "";
+let ProcessEvents = DeviceProcessEvents
+| where MD5 in (KnownHashes) or SHA256 in (KnownHashes)
+| extend IOCType = "hash", IOCValue = iff(MD5 in (KnownHashes), MD5, SHA256)
+| project TimeGenerated, DeviceName, ActionType, FileName = "", FolderPath = "", MD5, SHA256, IOCType, IOCValue, ProcessCommandLine, RemoteIP = "", RemoteUrl = "", RemotePort = 0, InitiatingProcessFileName = "";
+let NetworkEvents = DeviceNetworkEvents
+| where RemoteIP in (KnownC2IPs) or RemoteUrl has_any (KnownC2Domains)
+| extend IOCType = iff(RemoteIP in (KnownC2IPs), "ip", "domain"), IOCValue = iff(RemoteIP in (KnownC2IPs), RemoteIP, RemoteUrl)
+| project TimeGenerated, DeviceName, ActionType, FileName = "", FolderPath = "", MD5 = "", SHA256 = "", IOCType, IOCValue, ProcessCommandLine = "", RemoteIP, RemoteUrl, RemotePort, InitiatingProcessFileName;
+union FileEvents, ProcessEvents, NetworkEvents
+| sort by TimeGenerated desc
