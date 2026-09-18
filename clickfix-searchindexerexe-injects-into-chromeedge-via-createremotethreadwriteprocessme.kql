@@ -1,0 +1,13 @@
+DeviceEvents
+| where InitiatingProcessFileName =~ "SearchIndexer.exe"
+| where ActionType in ("CreateRemoteThreadApiCall", "OpenProcessApiCall", "ProcessInjection", "WriteToProcessMemory", "ReadFromProcessMemory")
+| where FileName has_any ("chrome.exe", "msedge.exe")
+| project TimeGenerated, DeviceId, ActionType, InitiatingProcessId, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessId, RemoteUrl, AdditionalFields
+| join kind=leftouter (
+    DeviceProcessEvents
+    | where InitiatingProcessFileName =~ "SearchIndexer.exe"
+    | where FileName has_any ("chrome.exe", "msedge.exe")
+    | project DeviceId, InitiatingProcessId, SpawnedProcessId = ProcessId, SpawnedProcessCommandLine = ProcessCommandLine, SpawnTime = TimeGenerated, AccountName
+) on DeviceId, InitiatingProcessId
+| project TimeGenerated, DeviceId, InitiatingProcessFileName, InitiatingProcessId, InitiatingProcessCommandLine, FileName, ProcessId, ActionType, RemoteUrl, AdditionalFields, SpawnedProcessId, SpawnedProcessCommandLine, AccountName
+| sort by TimeGenerated desc
