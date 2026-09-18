@@ -1,0 +1,6 @@
+// MovieReaper initial loader avoids LoadLibrary/GetProcAddress and instead walks the PEB Ldr double-linked list to resolve APIs.
+// Direct PEB-walking is not independently logged by EDR telemetry, so detect execution of the known loader binary (by hash and masquerade filename) as the concrete artifact of this technique.
+DeviceProcessEvents
+| where MD5 =~ "A0B13781EDD7CFDAB13D79AFFF3C83C1"
+ or FileName has "the odyssey (2026) [1080p] [webrip] [5.1].exe"
+| project TimeGenerated, DeviceName, AccountName, FileName, FolderPath, MD5, SHA256, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
