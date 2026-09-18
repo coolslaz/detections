@@ -1,0 +1,14 @@
+let ps_run_dialog = DeviceProcessEvents
+    | where InitiatingProcessFileName =~ "explorer.exe"
+    | where FileName =~ "powershell.exe"
+    | where ProcessCommandLine has_any ("-enc", "-EncodedCommand", "-e ", "FromBase64String", "IEX", "Invoke-Expression", "[Convert]::FromBase64", "-Join", "-join")
+    | where ProcessCommandLine has_any ("-windowstyle hidden", "-w hidden", "-ExecutionPolicy Bypass", "-nop", "-noni", "-NonInteractive")
+    | project TimeGenerated, DeviceId, DeviceName, AccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, InitiatingProcessParentFileName, RegistryKey = "", RegistryValueName = "", RegistryValueData = "";
+let runmru_registry = DeviceRegistryEvents
+    | where RegistryKey has "RunMRU"
+    | where ActionType in ("RegistryValueSet", "RegistryValueCreated")
+    | where RegistryValueData has_any ("powershell", "cmd.exe", "cmd ")
+    | where RegistryValueData has_any ("-enc", "-EncodedCommand", "-e ", "FromBase64String", "IEX", "Invoke-Expression", "[Convert]::FromBase64", "-windowstyle hidden", "-w hidden", "-ExecutionPolicy Bypass", "-nop", "/c", "/k")
+    | project TimeGenerated, DeviceId, DeviceName, AccountName = InitiatingProcessAccountName, InitiatingProcessFileName, InitiatingProcessCommandLine = "", FileName = "", ProcessCommandLine = "", InitiatingProcessParentFileName = "", RegistryKey, RegistryValueName, RegistryValueData;
+union ps_run_dialog, runmru_registry
+| sort by TimeGenerated desc
