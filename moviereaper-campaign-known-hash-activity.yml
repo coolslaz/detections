@@ -1,0 +1,27 @@
+title: MovieReaper Campaign Known-Hash Activity
+status: experimental
+author: Arnold Chan
+description: Detects process and file creation activity matching known MovieReaper loader and
+  downstream module file hashes (MD5/SHA256). C2 IP/domain network indicators for
+  this campaign require a separate network_connection-category rule, since Sigma
+  logsource categories cannot be mixed within a single rule.
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_hashes:
+        Hashes|contains:
+            - 'a0b13781edd7cfdab13d79afff3c83c1'
+            - '4334bbaea8de33bf9d845e9b4e4e3bc2'
+            - '4843f9fafcae492f11e2d4d33dbb4cdd'
+            - '5310cabae3fbe6db8742849b588093f9'
+            - '70060341caf3338697a7ddfe0fb62875'
+            - 'ad4643eea15ac286fa47d1131f9ef756'
+            - 'd0b967571ac8a3863c7f324bf5bde99c'
+            - 'd88d550d0fb8e60cffff3ea61ff7a067'
+    condition: selection_hashes
+falsepositives:
+    - 'Legitimate software incorrectly flagged in the indicator list (negligible risk given exact hash matching)'
+level: high
+tags:
+  - attack.t1204
