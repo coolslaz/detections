@@ -1,0 +1,9 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where InitiatingProcessFileName =~ "explorer.exe"
+| where FileName in~ ("cmd.exe", "powershell.exe", "powershell_ise.exe", "mshta.exe", "wscript.exe", "cscript.exe")
+| where ProcessCommandLine has_any ("finger.exe", "curl.exe")
+| where ProcessCommandLine has_any ("http://", "https://", "finger ")
+| where not(ProcessCommandLine has_any ("chocolatey", "winget", "AppData\\Local\\Microsoft\\EdgeUpdate", "GoogleUpdate", "Program Files\\Git"))
+| project TimeGenerated, DeviceName, AccountName, InitiatingProcessFileName, FileName, ProcessCommandLine, InitiatingProcessCommandLine
+| sort by TimeGenerated desc
