@@ -1,0 +1,9 @@
+let TargetFile = "gdrv.sys";
+union DeviceEvents, DeviceProcessEvents, DeviceRegistryEvents
+| where TimeGenerated > ago(7d)
+| where FileName =~ TargetFile or FolderPath endswith TargetFile or ProcessCommandLine has TargetFile or RegistryValueData has TargetFile
+| where (Type == "DeviceEvents" and ActionType in ("DriverLoad", "ServiceInstalled"))
+    or (Type == "DeviceProcessEvents" and ActionType == "ProcessCreated" and (FileName =~ TargetFile or ProcessCommandLine has TargetFile or ProcessCommandLine has_any ("sc.exe", "rundll32")))
+    or (Type == "DeviceRegistryEvents" and RegistryKey contains @"\Services\")
+| project TimeGenerated, DeviceId, DeviceName, ActionType, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, RegistryKey, RegistryValueData, AdditionalFields
+| sort by TimeGenerated desc
