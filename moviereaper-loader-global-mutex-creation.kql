@@ -1,0 +1,9 @@
+DeviceEvents
+| where ActionType in ("MutexCreated", "MutexEvent")
+| extend MutexName = tostring(parse_json(AdditionalFields).MutexName)
+| where isnotempty(MutexName)
+| where MutexName == @"Global\fnulSktzSqvVLXHU"
+   or (MutexName matches regex @"^Global\\[A-Za-z0-9]{15,20}$"
+       and InitiatingProcessFileName endswith ".exe"
+       and InitiatingProcessFolderPath has_any (@"\Downloads\", @"\AppData\Local\Temp\", @"\Temp\", @"\Users\Public\"))
+| project TimeGenerated, DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessFolderPath, MutexName, ActionType
