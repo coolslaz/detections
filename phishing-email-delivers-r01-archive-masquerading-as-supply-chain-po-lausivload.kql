@@ -1,0 +1,10 @@
+EmailAttachmentInfo
+| where FileName endswith ".r01"
+| join kind=inner (
+    EmailEvents
+    | where EmailDirection == "Inbound"
+    | where Subject has_any ("purchase order", "quotation", "supply chain", "requirements")
+    | where AuthenticationDetails has "SPF" and AuthenticationDetails has "fail"
+    | where AuthenticationDetails has "DMARC" and AuthenticationDetails has "fail"
+) on NetworkMessageId
+| project TimeGenerated, NetworkMessageId, SenderFromAddress, SenderDisplayName, RecipientEmailAddress, Subject, FileName, SHA256, AuthenticationDetails
