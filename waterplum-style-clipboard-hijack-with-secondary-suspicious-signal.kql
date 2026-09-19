@@ -1,0 +1,24 @@
+let ExcludedNames = dynamic(["ditto.exe", "clipboardfusion.exe", "clipboardfusionpro.exe", "mstsc.exe", "teamviewer.exe", "anydesk.exe", "rdpclip.exe", "chrome_remote_desktop_host.exe", "1password.exe", "lastpass.exe", "bitwarden.exe", "keepass.exe", "keepassxc.exe", "dashlane.exe", "ctfmon.exe", "textinputhost.exe", "pinyin.exe", "chsime.exe", "jpnime.exe"]);
+let ExcludedPaths = dynamic(["\\ditto\\", "\\clipboardfusion\\", "\\1password\\", "\\lastpass\\", "\\bitwarden\\", "\\keepass\\", "\\dashlane\\", "\\teamviewer\\", "\\anydesk\\"]);
+let WaterPlumIndicators = dynamic(["beavertail", "invisibleferret", "ottercookie", "ottercandy", "stoatwaffle", "ratatouille"]);
+let SuspiciousProcs =
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where (FileName in~ ("node.exe", "python.exe", "python3.exe", "powershell.exe", "pwsh.exe") or ProcessCommandLine has_any ("node", "python"))
+| where ProcessCommandLine has_any ("GetClipboardData", "OpenClipboard", "Get-Clipboard", "clipboard.readText", "clipboardy", "pyperclip", "win32clipboard")
+| where not(FileName in~ (ExcludedNames))
+| where not(FolderPath has_any (ExcludedPaths))
+| extend NonStandardPath = not(FolderPath has_any ("\\program files\\", "\\program files (x86)\\", "\\windows\\system32\\", "\\windows\\syswow64\\"))
+| extend KnownMalwareMatch = (FileName has_any (WaterPlumIndicators) or ProcessCommandLine has_any (WaterPlumIndicators))
+| project TimeGenerated, DeviceId, AccountName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, ProcessId = InitiatingProcessId, NonStandardPath, KnownMalwareMatch;
+let NetworkCorrelatedProcs =
+DeviceNetworkEvents
+| where TimeGenerated > ago(1d)
+| where RemoteIPType == "Public"
+| project DeviceId, NetTime = TimeGenerated, InitiatingProcessId, RemoteIP, RemoteUrl;
+SuspiciousProcs
+| join kind=leftouter (NetworkCorrelatedProcs) on DeviceId, $left.ProcessId == $right.InitiatingProcessId
+| extend NetworkCorrelated = isnotnull(NetTime) and abs(datetime_diff('second', NetTime, TimeGenerated)) <= 300
+| where NonStandardPath or KnownMalwareMatch or NetworkCorrelated
+| summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), Count = count(), Commands = make_set(ProcessCommandLine, 10), RemoteHosts = make_set(RemoteIP, 10), NonStandardPathFlag = max(tolong(NonStandardPath)), KnownMalwareFlag = max(tolong(KnownMalwareMatch)), NetworkCorrelatedFlag = max(tolong(NetworkCorrelated)) by DeviceId, AccountName, FileName, FolderPath, InitiatingProcessFileName
+| where Count >= 1
