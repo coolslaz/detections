@@ -1,0 +1,9 @@
+// Detects malware patching ETW (EtwEventWrite) functions in ntdll.dll memory to blind telemetry
+// Indicators grounded in LausivLoader .NET assembly behavior: dynamic API resolution and in-memory patch of EtwEventWrite
+DeviceEvents
+| where TimeGenerated > ago(1d)
+| where ActionType in ("ProcessTampering", "ProcessMemoryModified", "AmsiTamperingDetected")
+| where AdditionalFields has "EtwEventWrite" and AdditionalFields has "ntdll.dll"
+| where FileName in~ ("powershell.exe", "pwsh.exe", "rundll32.exe", "mshta.exe", "wscript.exe", "cscript.exe")
+| project TimeGenerated, DeviceId, DeviceName, ActionType, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName, FileName, AdditionalFields
+| sort by TimeGenerated desc
