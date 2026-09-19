@@ -1,0 +1,45 @@
+let hashes = dynamic([
+  "de03a0ae5c7aa0c237ae36a649875f986fd9701ac06857dd214054367ce5090c",
+  "694bfbe44bcd9b4844e15294be74dafe86ff8ae40b8b1067f4dae70a6ef75da8",
+  "be2738c8a2beb55ac484d71c329381f3caabac80664283ad9a24dbab82b5b590",
+  "7a963211a052a78899a8881d36b42b55690c02e95c1485f5d78d3cfdb3d2842a",
+  "083c9ee06ed2ee1bc0051358b3eeb3242f474eacea4c88b3b10b06d15389b753",
+  "5f60e5b45ecd67a987bdb1173d6a8063aa20a7946377da4698aaba3ebe72d088",
+  "4a4a346df72c839272ea835e4717cd88f843333b3563e745e657895347ea3dbe"
+]);
+let ips = dynamic(["154.86.119.60", "185.132.53.56"]);
+let c2host = "rogue-orbit-ryzhuuxu.expresshost.cloud";
+let c2urlmarker = "vk.com/wall-163997495";
+let fileHashHits =
+    DeviceFileEvents
+    | where SHA256 in (hashes)
+    | extend MatchedIndicator = SHA256, IndicatorType = "SHA256", Detail = FileName
+    | project TimeGenerated, DeviceId, DeviceName, AccountName = InitiatingProcessAccountName, MatchedIndicator, IndicatorType, Detail;
+let procHashHits =
+    DeviceProcessEvents
+    | where SHA256 in (hashes)
+    | extend MatchedIndicator = SHA256, IndicatorType = "SHA256", Detail = FileName
+    | project TimeGenerated, DeviceId, DeviceName, AccountName, MatchedIndicator, IndicatorType, Detail;
+let networkIpHits =
+    DeviceNetworkEvents
+    | where RemoteIP in (ips)
+    | extend MatchedIndicator = RemoteIP, IndicatorType = "IP", Detail = strcat(RemoteUrl, " port:", tostring(RemotePort))
+    | project TimeGenerated, DeviceId, DeviceName, AccountName = InitiatingProcessAccountName, MatchedIndicator, IndicatorType, Detail;
+let networkHostHits =
+    DeviceNetworkEvents
+    | where RemoteUrl has c2host
+    | extend MatchedIndicator = c2host, IndicatorType = "Hostname", Detail = RemoteUrl
+    | project TimeGenerated, DeviceId, DeviceName, AccountName = InitiatingProcessAccountName, MatchedIndicator, IndicatorType, Detail;
+let networkUrlMarkerHits =
+    DeviceNetworkEvents
+    | where RemoteUrl has c2urlmarker
+    | extend MatchedIndicator = c2urlmarker, IndicatorType = "URL", Detail = RemoteUrl
+    | project TimeGenerated, DeviceId, DeviceName, AccountName = InitiatingProcessAccountName, MatchedIndicator, IndicatorType, Detail;
+let dnsHostHits =
+    DeviceEvents
+    | where ActionType == "DnsQueryResponse" or ActionType == "DnsEvent"
+    | where AdditionalFields has c2host
+    | extend MatchedIndicator = c2host, IndicatorType = "DNS", Detail = tostring(AdditionalFields)
+    | project TimeGenerated, DeviceId, DeviceName, AccountName = InitiatingProcessAccountName, MatchedIndicator, IndicatorType, Detail;
+union fileHashHits, procHashHits, networkIpHits, networkHostHits, networkUrlMarkerHits, dnsHostHits
+| sort by TimeGenerated desc
