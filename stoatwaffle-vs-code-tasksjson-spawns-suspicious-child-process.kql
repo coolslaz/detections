@@ -1,0 +1,10 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(14d)
+| where InitiatingProcessFileName =~ "Code.exe"
+| where ProcessCommandLine has ".vscode" and ProcessCommandLine has "tasks.json"
+| where FileName in~ ("cmd.exe","powershell.exe","pwsh.exe","wscript.exe","cscript.exe","node.exe","python.exe","curl.exe","mshta.exe")
+| where not(ProcessCommandLine has_any ("npm run", "npm test", "yarn ", "tsc ", "eslint", "pytest", "make ", "jest", "webpack"))
+| where not(ProcessCommandLine has_any ("npm install", "npm ci", "pip install", "python -m venv", "git clone", "git pull"))
+| where ProcessCommandLine has_any ("http://", "https://", "curl", "wget", "Invoke-WebRequest", "iwr", "iex", "DownloadString", "DownloadFile", "-enc", "-EncodedCommand", "-e ", "FromBase64String", "base64", "\\Temp\\", "\\AppData\\", "\\ProgramData\\") or ProcessCommandLine matches regex @"(?i)\\Users\\[^\\]+\\AppData\\(Local|Roaming)\\"
+| project TimeGenerated, DeviceName, AccountName, InitiatingProcessFileName, InitiatingProcessFolderPath, FileName, ProcessCommandLine, InitiatingProcessCommandLine
+| sort by TimeGenerated desc
