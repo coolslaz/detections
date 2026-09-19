@@ -1,0 +1,82 @@
+// Tightened detection: attacker persistence actions shortly after a Google Workspace sign-in,
+// consistent with post-AiTM session/token replay abuse (new OAuth app grants, MFA registration
+// changes, mailbox forwarding, or inbox rule creation).
+//
+// Tightening logic:
+// 1) Correlation window narrowed from 30m to 10m - AiTM operators typically abuse a hijacked
+//    session within minutes of the victim's live authentication, so a tighter window cuts
+//    noise from unrelated legitimate admin activity later in the same session.
+// 2) Higher-confidence flag: when the persistence-action IP (SrcIpAddr) differs from the
+//    LoginIp, the action is coming from infrastructure other than the victim's own login
+//    client - a strong signal of a replayed/stolen session cookie or token rather than the
+//    user's own follow-on activity. Same-IP cases are NOT dropped, only downgraded via
+//    Severity/HighConfidence columns so they remain visible for triage.
+// 3) Benign self-service exclusion: a user's own first-ever 2sv_enroll performed immediately
+//    after completing MFA setup from the SAME IP as their login is a common, benign
+//    self-service pattern and is excluded here (EventName == "2sv_enroll" and IPs match).
+//    Limitation: GoogleWorkspaceReports does not expose a reliable "first-ever MFA setup"
+//    marker in this dataset, so this exclusion only approximates that scenario using the
+//    same-IP condition; it cannot fully distinguish first-time self-enrollment from an
+//    attacker enrolling MFA from the victim's own network.
+//
+// Further FP-reduction additions:
+// A) KnownCorporateIpRanges allowlist - if the persistence-action IP falls inside a trusted
+//    corporate CIDR range, the cross-IP ("IpMismatch"/High-confidence) branch is suppressed
+//    for that event, since admins routinely perform self-service actions from a different
+//    corporate egress IP than the one used at login (VPN exit nodes, office NAT pools, etc.).
+//    Same-IP low-confidence cases are unaffected by this list.
+// B) TrustedOAuthAppNames allowlist - well-known first-party/internal-tenant OAuth apps that
+//    users routinely re-consent to (Google Drive, Google Calendar, Google Docs, internal SSO
+//    apps) are excluded from the OAuth-grant leg entirely, since routine re-authorization of
+//    these apps is not evidence of attacker-driven app-grant persistence.
+// C) Trailing 30-day recurrence suppression - if the SAME actor has performed the SAME
+//    EventName combination repeatedly in the 30 days before the event (excluding the current
+//    occurrence), the case is suppressed. A recurring per-user pattern (e.g. a user who
+//    regularly updates filters or re-enrolls MFA) is far more consistent with routine
+//    self-service behavior than a one-off attacker persistence action.
+let lookback = 1d;
+let recurrenceLookback = 30d;
+let correlationWindow = 10m;
+// A) Trusted corporate CIDR ranges - actions from these ranges are treated as routine
+// admin/IT self-service infrastructure and excluded from the high-confidence cross-IP branch.
+let KnownCorporateIpRanges = dynamic(["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]);
+// B) Well-known first-party/internal-tenant OAuth applications that are routinely
+// re-consented to by users as part of normal Workspace usage.
+let TrustedOAuthAppNames = dynamic(["Google Drive", "Google Calendar", "Google Docs", "Google Sheets", "Google Slides", "Internal SSO"]);
+let SuspiciousEvents = GoogleWorkspaceReports
+| where TimeGenerated > ago(lookback)
+| where (EventType in ("token", "authorize") and not(ApplicationName in (TrustedOAuthAppNames))) // OAuth application grants, minus trusted first-party apps
+    or EventName in ("2sv_enroll", "2sv_change", "recovery_email_edit", "recovery_phone_edit") // MFA method changes
+    or EventName in ("create_forwarding", "enable_forwarding") // mailbox forwarding rules
+    or EventName in ("create_filter", "update_filter") // inbox rule creation
+| project TimeGenerated, ActorEmail, EventName, EventType, IpAddress = SrcIpAddr, ApplicationName;
+let RecentLogins = GoogleWorkspaceReports
+| where TimeGenerated > ago(lookback)
+| where EventType == "login" and EventName in ("login_success")
+| project LoginTime = TimeGenerated, ActorEmail, LoginIp = SrcIpAddr;
+// C) Prior occurrences of the same actor + EventName pair over the trailing 30 days,
+// used to identify recurring per-user behavior that is more likely benign self-service.
+let PriorOccurrences = GoogleWorkspaceReports
+| where TimeGenerated > ago(recurrenceLookback) and TimeGenerated <= ago(lookback)
+| where EventType in ("token", "authorize")
+    or EventName in ("2sv_enroll", "2sv_change", "recovery_email_edit", "recovery_phone_edit")
+    or EventName in ("create_forwarding", "enable_forwarding")
+    or EventName in ("create_filter", "update_filter")
+| summarize PriorCount = count() by ActorEmail, EventName;
+SuspiciousEvents
+| join kind=inner (RecentLogins) on ActorEmail
+| where TimeGenerated between (LoginTime .. (LoginTime + correlationWindow))
+| extend IpMismatch = (IpAddress != LoginIp)
+| extend IsCorporateIp = ipv4_is_in_any_range(IpAddress, KnownCorporateIpRanges)
+// A) Downgrade the cross-IP high-confidence signal when the action IP is a known corporate range.
+| extend HighConfidence = IpMismatch and not(IsCorporateIp)
+// Exclude the benign self-service pattern: user's own 2sv_enroll immediately after their
+// own login from the same IP (approximation - see limitation note above).
+| where not(EventName == "2sv_enroll" and IpMismatch == false)
+| join kind=leftouter (PriorOccurrences) on ActorEmail, EventName
+| extend PriorCount = coalesce(PriorCount, 0)
+// C) Suppress recurring self-service patterns for the same actor + EventName over the last 30 days.
+| where PriorCount == 0
+| extend Severity = iff(HighConfidence, "High", "Medium")
+| project TimeGenerated, ActorEmail, EventName, EventType, ApplicationName, IpAddress, LoginTime, LoginIp, IpMismatch, IsCorporateIp, Severity, HighConfidence, PriorCount
+| sort by Severity asc, TimeGenerated desc
