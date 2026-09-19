@@ -1,0 +1,24 @@
+// Detects GitHub organization member removal (org.remove_member) occurring days after
+// the same account performed bulk repository access (git.clone / repo.download), indicating
+// retained access for a departed employee was exploited before deprovisioning occurred.
+// Requires the pre-removal access activity to involve meaningful volume (multiple distinct
+// repos or multiple clone/download actions) to filter out routine same-day access.
+let TerminationLagThreshold = 1d;
+let MinDistinctRepos = 2;
+let MinAccessActions = 3;
+let RemovalEvents = AuditLogs
+| where OperationName =~ "org.remove_member"
+| project RemovalTime = TimeGenerated, RemovedUser = InitiatedBy.user.id, Organization = tostring(TargetResources[0].displayName);
+let AccessEvents = AuditLogs
+| where OperationName has_any ("git.clone", "repo.download_zip", "git.fetch")
+| project AccessTime = TimeGenerated, AccessUser = InitiatedBy.user.id, Organization = tostring(TargetResources[0].displayName), Action = OperationName, Repo = tostring(TargetResources[1].displayName);
+AccessEvents
+| join kind=inner (RemovalEvents) on Organization
+| where AccessUser == RemovedUser
+| where RemovalTime > AccessTime
+| extend DeprovisioningLag = RemovalTime - AccessTime
+| where DeprovisioningLag > TerminationLagThreshold
+| summarize AccessActions = count(), DistinctRepos = dcount(Repo), Repos = make_set(Repo, 20), Actions = make_set(Action, 20), FirstAccess = min(AccessTime), LastAccess = max(AccessTime), MaxLag = max(DeprovisioningLag) by AccessUser, Organization, RemovalTime
+| where DistinctRepos >= MinDistinctRepos or AccessActions >= MinAccessActions
+| project FirstAccess, LastAccess, AccessUser, Organization, AccessActions, DistinctRepos, Repos, Actions, RemovalTime, MaxLag
+| sort by MaxLag desc
