@@ -1,0 +1,7 @@
+DeviceProcessEvents
+| where FileName =~ "unshare"
+| where ProcessCommandLine has "unshare"
+| where ProcessCommandLine has_any ("--user", "-U", "--net", "-n", "CLONE_NEWUSER", "CLONE_NEWNET")
+| where InitiatingProcessAccountName !in ("root", "SYSTEM")
+| where not(InitiatingProcessFileName has_any ("runc", "containerd-shim", "containerd-shim-runc-v2", "conmon", "crun", "podman", "dockerd", "flatpak", "bwrap", "firejail", "snapd", "snap-confine", "systemd-nspawn"))
+| project TimeGenerated, DeviceName, InitiatingProcessAccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, ProcessId, InitiatingProcessId
