@@ -1,0 +1,19 @@
+// Tightened logic: bucket by rolling 1h window instead of unbounded count so bursts trigger detection.
+// Require distinct recipient-domain count >=5 to distinguish mass phishing blasts from single internal distribution lists.
+// Lowered raw EmailCount threshold since distinct-domain condition adds specificity.
+// Editable allowlist: known legitimate voicemail/UC telephony platforms that legitimately mass-send voicemail notifications.
+let LegitVoicemailPlatformDomains = dynamic(["ringcentral", "8x8", "cisco", "avaya"]);
+// Editable allowlist: org's own verified/owned telephony or corporate domains (a legitimate internal voicemail system would send from one of these).
+let OrgVerifiedDomains = dynamic(["contoso.com"]);
+EmailEvents
+| where Subject =~ "New VM Received"
+| extend SenderDomain = tostring(split(SenderFromAddress, "@")[1])
+| extend RecipientDomain = tostring(split(RecipientEmailAddress, "@")[1])
+// Exclusion (1): drop senders whose domain matches a known legitimate voicemail/UC platform vendor.
+| where not(SenderDomain has_any (LegitVoicemailPlatformDomains))
+// Exclusion (2): drop senders whose domain is one of the org's own verified/owned domains -- a legitimate internal
+// voicemail-to-email system would originate from a known corporate domain, not an external/unverified one.
+| where not(SenderDomain has_any (OrgVerifiedDomains))
+| summarize EmailCount = count(), RecipientDomainCount = dcount(RecipientDomain), Recipients = make_set(RecipientEmailAddress, 5000), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by SenderFromAddress, SenderDisplayName, SenderDomain, bin(TimeGenerated, 1h)
+| where EmailCount > 20 and RecipientDomainCount >= 5
+| sort by EmailCount desc
