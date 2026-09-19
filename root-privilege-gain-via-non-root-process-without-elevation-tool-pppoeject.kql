@@ -1,0 +1,17 @@
+// Detects the PPPoEject post-exploitation signature: a non-privileged process directly spawns or transitions to a root (uid 0) context
+// without going through a legitimate privilege-escalation binary, consistent with a hijacked fd/struct-file callback installing root credentials
+// Tightened to require a direct parent-child lineage link (InitiatingProcessId is the actual parent of the resulting process),
+// a short temporal window between parent and child process creation, and exclusion of container/sandbox runtimes as the lineage root
+// and of legitimate elevation tools as the immediate parent of the root-owned process.
+DeviceProcessEvents
+| where TimeGenerated > ago(1h)
+| where InitiatingProcessAccountSid != "S-1-5-18" and InitiatingProcessAccountSid != ""
+| where AccountSid == "S-1-5-18"
+| where isnotempty(InitiatingProcessId) and isnotempty(ProcessId)
+| where FileName !in~ ("sudo.exe", "su.exe", "pkexec.exe", "doas.exe", "login.exe", "sshd.exe", "systemd.exe", "crond.exe", "cron.exe")
+| where InitiatingProcessFileName !in~ ("sudo.exe", "su.exe", "pkexec.exe", "doas.exe", "login.exe", "sshd.exe", "systemd.exe")
+| where InitiatingProcessFileName !in~ ("runc", "containerd-shim", "podman", "dockerd", "bwrap", "flatpak", "firejail", "snapd")
+| extend LineageDeltaSeconds = datetime_diff("Second", TimeGenerated, InitiatingProcessCreationTime)
+| where isnotnull(LineageDeltaSeconds) and LineageDeltaSeconds >= 0 and LineageDeltaSeconds <= 60
+| project TimeGenerated, DeviceId, DeviceName, InitiatingProcessAccountSid, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessCreationTime, AccountSid, FileName, ProcessCommandLine, InitiatingProcessId, ProcessId, LineageDeltaSeconds
+| sort by TimeGenerated asc
