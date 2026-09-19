@@ -1,0 +1,25 @@
+// Detects PPPoEject exploitation staging: creation of a GRE/IP6GRE port on an empty team/bonding device
+// occurring near-simultaneously with FUSE filesystem mount/I-O activity, consistent with racing
+// pppoe_sendmsg() skb reallocation via dev_hard_header() -> pskb_expand_head()
+// Tightened to reduce false positives from legitimate GRE bonding and FUSE-based backup/sync tooling.
+let lookback = 1h;
+let gre_bonding_events = DeviceProcessEvents
+| where TimeGenerated > ago(lookback)
+| where FileName in~ ("ip", "teamd", "teamdctl", "ifenslave")
+| where not(FileName in~ ("NetworkManager", "systemd-networkd"))
+| where not(InitiatingProcessFileName in~ ("NetworkManager", "systemd-networkd"))
+| where ProcessCommandLine has_any ("gretap", "ip6gretap", "gre", "ip6gre")
+| where ProcessCommandLine has_any ("team", "bond", "bonding", "master")
+| project GreTime = TimeGenerated, DeviceId, DeviceName, GreCmd = ProcessCommandLine, GreAccount = AccountName, GreInitiatingProcess = InitiatingProcessFileName;
+let fuse_events = DeviceProcessEvents
+| where TimeGenerated > ago(lookback)
+| where FileName in~ ("fusermount", "fusermount3", "mount.fuse", "mount.fuse3") or ProcessCommandLine contains "fuse"
+| where not(FileName in~ ("sshfs", "rclone", "gocryptfs", "s3fs"))
+| where not(InitiatingProcessFileName in~ ("sshfs", "rclone", "gocryptfs", "s3fs"))
+| where not(ProcessCommandLine has_any ("sshfs", "rclone", "gocryptfs", "s3fs"))
+| project FuseTime = TimeGenerated, DeviceId, DeviceName, FuseCmd = ProcessCommandLine, FuseAccount = AccountName, FuseInitiatingProcess = InitiatingProcessFileName;
+gre_bonding_events
+| join kind=inner (fuse_events) on DeviceId
+| where abs(datetime_diff('second', GreTime, FuseTime)) <= 5
+| project DeviceId, DeviceName, GreTime, GreCmd, GreAccount, GreInitiatingProcess, FuseTime, FuseCmd, FuseAccount, FuseInitiatingProcess
+| sort by GreTime desc
