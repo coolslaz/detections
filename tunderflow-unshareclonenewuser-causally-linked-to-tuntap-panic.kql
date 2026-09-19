@@ -1,0 +1,25 @@
+// Detects the TUNderflow (CVE-2026-81000) local root exploitation chain:
+// an unprivileged process creates a user/network namespace via unshare(CLONE_NEWUSER)
+// and the SAME process lineage (matched by PID chain, not just device/time co-occurrence)
+// subsequently triggers a kernel panic/oops referencing the tun/tap driver,
+// consistent with an oversized value passed through Open vSwitch causing an
+// integer wraparound in TUN/TAP buffer size calculation.
+let lookback = 5m;
+let containerRuntimes = dynamic(["runc", "containerd-shim", "podman", "dockerd", "bwrap", "flatpak", "firejail", "snapd"]);
+let unshareEvents =
+    DeviceProcessEvents
+    | where FileName in~ ("unshare", "nsenter")
+    | where ProcessCommandLine has "CLONE_NEWUSER" or ProcessCommandLine has "-U" or ProcessCommandLine has "--user"
+    | where not(InitiatingProcessFileName in~ (containerRuntimes))
+    | where not(FileName in~ (containerRuntimes))
+    | project UnshareTime = TimeGenerated, DeviceId, UnshareProcessId = ProcessId, UnsharePid = ProcessId, UnshareParentPid = InitiatingProcessId, UnshareAccount = AccountName, UnshareCmd = ProcessCommandLine;
+let panicEvents =
+    DeviceProcessEvents
+    | where ProcessCommandLine has_any ("tun", "tap") and ProcessCommandLine has_any ("panic", "oops", "kernel BUG", "Call Trace")
+    | project PanicTime = TimeGenerated, DeviceId, PanicProcessId = ProcessId, PanicParentPid = InitiatingProcessId, PanicCmd = ProcessCommandLine;
+unshareEvents
+| join kind=inner (panicEvents) on DeviceId
+| where PanicTime - UnshareTime between (0min .. lookback)
+| where PanicProcessId == UnsharePid or PanicParentPid == UnsharePid or PanicProcessId == UnshareParentPid or PanicParentPid == UnshareParentPid
+| project DeviceId, UnshareAccount, UnshareTime, UnshareCmd, UnsharePid, UnshareParentPid, PanicTime, PanicCmd, PanicProcessId, PanicParentPid, TimeDeltaMinutes = datetime_diff('minute', PanicTime, UnshareTime)
+| sort by PanicTime desc
