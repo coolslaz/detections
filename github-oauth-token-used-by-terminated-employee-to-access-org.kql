@@ -1,0 +1,16 @@
+// Detects GitHub audit log activity where an OAuth token tied to a former/offboarded employee's account is used to authenticate and access organization repositories after their termination date, with a grace period to exclude legitimate last-day offboarding activity.
+let GracePeriod = 2h;
+let TerminatedEmployees = _GetWatchlist('TerminatedEmployees')
+| project ActorLogin = tolower(tostring(column_ifexists('UserPrincipalName', ''))), TerminationDate = todatetime(column_ifexists('TerminationDate', datetime(null)));
+AuditLogs
+| where LoggedByService == "GitHub"
+| where isnotempty(InitiatedBy.user.userPrincipalName)
+| extend ActorLogin = tolower(tostring(InitiatedBy.user.userPrincipalName))
+| where OperationName has_any ('oauth_application.create', 'oauth_authorization.create', 'git.clone', 'repo.access', 'org.oauth_grant_approve')
+| extend EventTime = TimeGenerated
+| join kind=inner (TerminatedEmployees) on ActorLogin
+| where EventTime > TerminationDate + GracePeriod
+| extend DaysAfterTermination = datetime_diff('day', EventTime, TerminationDate)
+| summarize FirstEventTime = min(EventTime), LastEventTime = max(EventTime), EventCount = count(), TerminationDate = any(TerminationDate), DaysAfterTermination = any(DaysAfterTermination) by ActorLogin, OperationName, bin(EventTime, 1h)
+| project FirstEventTime, LastEventTime, ActorLogin, OperationName, TerminationDate, DaysAfterTermination, EventCount
+| sort by FirstEventTime desc
