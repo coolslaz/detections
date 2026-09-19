@@ -1,0 +1,21 @@
+// Detect developer/contractor workstations running Node.js/npm (used to install TanStack packages) that lack active EDR sensor coverage
+// Gap enables undetected supply-chain malware execution (e.g. Shai Hulud) and credential theft
+// Tightened: exclude decommissioned devices (require recent activity) and require the non-compliant state to have persisted beyond a 24h grace period
+let NodeDevices = DeviceTvmSoftwareInventory
+| where SoftwareName has_any ("node", "nodejs", "npm")
+| distinct DeviceId;
+DeviceInfo
+| where DeviceId in (NodeDevices)
+| where TimeGenerated > ago(7d)
+| summarize
+    LatestTimeGenerated = arg_max(TimeGenerated, TimeGenerated),
+    LatestDeviceName = arg_max(TimeGenerated, DeviceName),
+    LatestOnboardingStatus = arg_max(TimeGenerated, OnboardingStatus),
+    LatestSensorHealthState = arg_max(TimeGenerated, SensorHealthState),
+    LatestOSPlatform = arg_max(TimeGenerated, OSPlatform),
+    FirstNonCompliantTimestamp = minif(TimeGenerated, OnboardingStatus != "Onboarded" or SensorHealthState != "Active")
+    by DeviceId
+| where LatestTimeGenerated > ago(3d)
+| where LatestOnboardingStatus != "Onboarded" or LatestSensorHealthState != "Active"
+| where isnotnull(FirstNonCompliantTimestamp) and FirstNonCompliantTimestamp < ago(24h)
+| project DeviceId, LatestDeviceName, LatestTimeGenerated, LatestOnboardingStatus, LatestSensorHealthState, LatestOSPlatform, FirstNonCompliantTimestamp
