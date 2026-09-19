@@ -1,0 +1,20 @@
+// Detects bulk cloning/download of GitHub repositories containing sensitive proprietary code (Consensus Algorithm) or PII-bearing repos, consistent with the TeamPCP/Shai Hulud exfiltration of ~170 CrowdSec repositories on 2026-05-22 using a gho_ prefixed OAuth token from a Toronto (UTC-4) IP.
+AuditLogs
+| where TimeGenerated > ago(30d)
+| where OperationName in~ ("git.clone", "repo.download_zip", "repo.access")
+| extend OAuthTokenPrefix = tostring(parse_json(ResultDescription).OAuthTokenPrefix)
+| where OAuthTokenPrefix startswith "gho_" or isnotempty(OAuthTokenPrefix)
+| extend UPN = tostring(InitiatedBy.user.userPrincipalName)
+| where not(UPN endswith "[bot]")
+| extend IsSensitiveRepo = TargetResources[0].displayName has_any ("consensus", "consensus-algorithm", "ip-blocklist", "blocklist-algorithm", "employee", "investor", "pii")
+| summarize
+ RepoCount = dcount(tostring(TargetResources[0].displayName)),
+ SensitiveRepoCount = countif(IsSensitiveRepo),
+ SensitiveRepos = make_set(tostring(TargetResources[0].displayName), 50),
+ FirstEvent = min(TimeGenerated),
+ LastEvent = max(TimeGenerated),
+ SourceIPs = make_set(tostring(InitiatedBy.user.ipAddress), 10)
+ by UPN, bin(TimeGenerated, 15m)
+| where SensitiveRepoCount > 1 and RepoCount >= 20
+| where datetime_diff('minute', LastEvent, FirstEvent) <= 15
+| project Actor = UPN, FirstEvent, LastEvent, RepoCount, SensitiveRepoCount, SensitiveRepos, SourceIPs
