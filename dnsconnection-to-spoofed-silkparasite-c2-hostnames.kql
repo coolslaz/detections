@@ -1,0 +1,9 @@
+let suspiciousHostnames = dynamic(["ns2.asiainfo.it.com", "www.wordcheck.info"]);
+DeviceNetworkEvents
+| where TimeGenerated > ago(14d)
+| where ActionType == "ConnectionSuccess"
+| where RemoteUrl in (suspiciousHostnames)
+    or RemoteUrl endswith ".asiainfo.it.com"
+    or RemoteUrl endswith ".wordcheck.info"
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteUrl, RemoteIP, RemotePort, ReportId
+| sort by TimeGenerated desc
