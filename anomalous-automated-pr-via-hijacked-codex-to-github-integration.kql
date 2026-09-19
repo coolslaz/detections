@@ -1,0 +1,22 @@
+CloudAppEvents
+| where TimeGenerated > ago(1d)
+| where Application has "GitHub"
+| where ActionType has_any ("CreatePullRequest", "pull_request.created", "PullRequestEvent")
+| where RawEventData has_any ("Codex", "codex")
+| extend ActorType = tostring(parse_json(RawEventData).actor.type)
+| extend ActorLogin = tostring(parse_json(RawEventData).actor.login)
+| extend RepoName = tostring(parse_json(RawEventData).repository.full_name)
+| where ActorType has_any ("Bot", "App", "integration") or ActorLogin has "codex"
+// baseline: exclude repos where Codex has routinely opened PRs over the prior 30 days - only alert on a
+// repo Codex has NOT touched before, matching the actual incident (a PR in a repo reached via hijacked access)
+| join kind=leftanti (
+    CloudAppEvents
+    | where TimeGenerated between (ago(31d) .. ago(1d))
+    | where Application has "GitHub"
+    | where ActionType has_any ("CreatePullRequest", "pull_request.created", "PullRequestEvent")
+    | where RawEventData has_any ("Codex", "codex")
+    | extend RepoName = tostring(parse_json(RawEventData).repository.full_name)
+    | distinct RepoName
+) on RepoName
+| project TimeGenerated, Application, AccountDisplayName, ActorLogin, ActorType, RepoName, ActionType, IPAddress, RawEventData
+| sort by TimeGenerated desc
