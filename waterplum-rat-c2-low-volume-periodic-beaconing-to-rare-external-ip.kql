@@ -1,0 +1,43 @@
+let lookback = 14d;
+let minConnections = 6;
+let maxAvgIntervalMinutes = 240;
+let maxIntervalCV = 0.35; // coefficient of variation threshold for low jitter (regular interval)
+let minRegularDays = 2; // require pattern to persist across 2+ non-overlapping days
+let maxDestDeviceCount = 3; // destination must be rare across the environment
+let knownUpdateProcesses = dynamic(["svchost.exe","usoclient.exe","MoUsoCoreWorker.exe","OneDrive.exe","msedgeupdate.exe","GoogleUpdate.exe","softwareupdated","CrashPlanService.exe","chrome.exe","msedge.exe","firefox.exe","Teams.exe","OUTLOOK.EXE","Slack.exe","Zoom.exe","CptHost.exe","webexmta.exe","atmgr.exe","ptagent.exe","nssm.exe","AnyDesk.exe","TeamViewer.exe","TeamViewer_Service.exe","ScreenConnect.ClientService.exe","ConnectWiseControl.ClientService.exe","LogMeIn.exe","GoToAssist.exe","splashtop.exe","SplashtopRemoteService.exe","NinjaRMMAgent.exe","KaseyaAgent.exe","AgentService.exe","MsMpEng.exe","MsSense.exe","SenseIR.exe","CSFalconService.exe","CrowdStrike.exe","cb.exe","CylanceSvc.exe","SentinelAgent.exe","SentinelServiceHost.exe","CarbonBlack.exe","openvpnas.exe","openvpn.exe","GlobalProtect.exe","PanGPA.exe","PanGPS.exe","cisco anyconnect","vpnagent.exe","FortiClient.exe","FCConfig.exe","pulsesecure.exe","jamf.exe","jamfAgent","BackupClient.exe","veeamagent.exe","AcronisAgent.exe"]);
+let knownCloudDomains = dynamic(["windowsupdate.com","microsoft.com","office.com","office365.com","googleapis.com","google.com","apple.com","icloud.com","akamai.net","cloudfront.net","amazonaws.com","azureedge.net","gstatic.com","teams.microsoft.com","microsoftteams.com","slack.com","slack-edge.com","zoom.us","webex.com","cisco.com","anydesk.com","teamviewer.com","screenconnect.com","connectwise.com","logmein.com","gotoassist.com","splashtop.com","ninjarmm.com","kaseya.com","crowdstrike.com","sentinelone.net","carbonblack.com","cylance.com","paloaltonetworks.com","globalprotect.com","fortinet.com","pulsesecure.net","jamf.com","jamfcloud.com","veeam.com","acronis.com","pool.ntp.org"]);
+let trustedPathPrefixes = dynamic(["c:\\program files\\","c:\\program files (x86)\\","c:\\windows\\","c:\\windows\\system32\\"]);
+let userWritablePathFragments = dynamic(["\\appdata\\","\\temp\\","\\programdata\\","\\users\\"]);
+let destDeviceCounts = DeviceNetworkEvents
+| where TimeGenerated > ago(lookback)
+| where ActionType == "ConnectionSuccess"
+| where isnotempty(RemoteIP) and not(ipv4_is_private(RemoteIP))
+| summarize DistinctDevices = dcount(DeviceId) by RemoteIP, RemoteUrl;
+DeviceNetworkEvents
+| where TimeGenerated > ago(lookback)
+| where ActionType == "ConnectionSuccess"
+| where isnotempty(RemoteIP) and RemotePort !in (0)
+| where not(ipv4_is_private(RemoteIP))
+| where not(InitiatingProcessFileName in~ (knownUpdateProcesses))
+| where not(RemoteUrl has_any (knownCloudDomains))
+| extend FolderPathLower = tolower(InitiatingProcessFolderPath)
+| extend IsTrustedPath = FolderPathLower has_any (trustedPathPrefixes)
+| extend IsUserWritablePath = FolderPathLower has_any (userWritablePathFragments)
+| where IsUserWritablePath or not(IsTrustedPath)
+| extend Day = startofday(TimeGenerated)
+| summarize Connections = count(), Timestamps = make_list(TimeGenerated) by DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath, RemoteIP, RemoteUrl, Day
+| where Connections >= minConnections
+| extend SortedTimestamps = array_sort_asc(Timestamps)
+| extend IntervalsSeconds = series_subtract(array_shift_left(SortedTimestamps, -1), SortedTimestamps)
+| mv-expand Interval = IntervalsSeconds to typeof(long)
+| summarize AvgIntervalSec = avg(Interval), StdevIntervalSec = stdev(Interval), IntervalCount = count() by DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath, RemoteIP, RemoteUrl, Connections, Day
+| extend AvgIntervalMinutes = AvgIntervalSec / 60.0
+| extend IntervalCV = iff(AvgIntervalSec > 0, todouble(StdevIntervalSec) / todouble(AvgIntervalSec), 1.0)
+| where AvgIntervalMinutes > 0 and AvgIntervalMinutes <= maxAvgIntervalMinutes
+| where IntervalCV <= maxIntervalCV
+| summarize RegularDays = dcount(Day), TotalConnections = sum(Connections), AvgIntervalMinutes = avg(AvgIntervalMinutes), AvgIntervalCV = avg(IntervalCV) by DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath, RemoteIP, RemoteUrl
+| where RegularDays >= minRegularDays
+| join kind=inner (destDeviceCounts) on RemoteIP, RemoteUrl
+| where DistinctDevices <= maxDestDeviceCount
+| project DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath, RemoteIP, RemoteUrl, TotalConnections, RegularDays, AvgIntervalMinutes, AvgIntervalCV, DistinctDevices
+| sort by AvgIntervalCV asc, RegularDays desc, TotalConnections desc
