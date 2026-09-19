@@ -1,0 +1,22 @@
+DeviceProcessEvents
+| where FileName in~ ("powershell.exe", "powershell_ise.exe", "reg.exe", "gpupdate.exe")
+| where ProcessCommandLine has_any (
+    "Add-MpPreference",
+    "Set-MpPreference",
+    "Invoke-CimMethod",
+    "defender-exclusions.ps1"
+)
+    or (FileName =~ "reg.exe" and ProcessCommandLine contains @"SOFTWARE\Policies\Microsoft\Windows Defender\Exclusions\Paths")
+    or (ProcessCommandLine contains @"SOFTWARE\Microsoft\Windows Defender\Features\TamperProtection")
+| where ProcessCommandLine matches regex @"(?i)(-ExclusionPath\s+[""']?[A-Za-z]:\\?[""']?\s*($|[|;])|-ExclusionExtension\s+\*|-DisableRealtimeMonitoring\s+\$?true|-DisableBehaviorMonitoring\s+\$?true|-DisableIOAVProtection\s+\$?true|-DisableScriptScanning\s+\$?true|TamperProtection[^\n]{0,30}(/d\s*0|=\s*0|\b0\b)|-MethodName\s+Add\b|REG_DWORD\s*/d\s*0)"
+| extend DefenderBypassMethod = case(
+    ProcessCommandLine contains "Add-MpPreference", "Method1_AddMpPreference",
+    ProcessCommandLine contains "Set-MpPreference", "Method2_SetMpPreference",
+    ProcessCommandLine contains "Invoke-CimMethod", "Method3_CimWmi",
+    ProcessCommandLine contains @"SOFTWARE\Policies\Microsoft\Windows Defender\Exclusions\Paths", "Method5_GPORegistry",
+    ProcessCommandLine contains "TamperProtection", "TamperProtectionDisable",
+    ProcessCommandLine contains "gpupdate", "GPOForceRefresh",
+    "Other"
+)
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, DefenderBypassMethod, InitiatingProcessFileName, InitiatingProcessCommandLine
+| order by TimeGenerated desc
