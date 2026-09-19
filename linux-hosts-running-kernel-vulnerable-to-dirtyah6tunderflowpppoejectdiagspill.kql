@@ -1,0 +1,27 @@
+// Detect Linux devices reporting a kernel version below the patched builds for CVE-2026-80844, CVE-2026-81000, CVE-2026-68121, CVE-2026-74469
+// Patched releases: 5.10.270, 5.15.221, 6.1.188, 6.6.157, 6.12.109, 6.18.50, 7.2.4
+DeviceInfo
+| where OSPlatform == "Linux"
+| where isnotempty(OSBuild)
+| extend KernelMajor = toint(extract(@"^(\d+)\.", 1, OSBuild))
+| extend KernelMinor = toint(extract(@"^\d+\.(\d+)\.", 1, OSBuild))
+| extend KernelPatch = toint(extract(@"^\d+\.\d+\.(\d+)", 1, OSBuild))
+| where isnotnull(KernelMajor) and isnotnull(KernelMinor) and isnotnull(KernelPatch)
+| extend IsVulnerable = case(
+    KernelMajor == 5 and KernelMinor == 10 and KernelPatch < 270, true,
+    KernelMajor == 5 and KernelMinor == 15 and KernelPatch < 221, true,
+    KernelMajor == 6 and KernelMinor == 1 and KernelPatch < 188, true,
+    KernelMajor == 6 and KernelMinor == 6 and KernelPatch < 157, true,
+    KernelMajor == 6 and KernelMinor == 12 and KernelPatch < 109, true,
+    KernelMajor == 6 and KernelMinor == 18 and KernelPatch < 50, true,
+    KernelMajor == 7 and KernelMinor == 2 and KernelPatch < 4, true,
+    (KernelMajor == 2 and KernelMinor >= 6) or (KernelMajor == 3) or (KernelMajor == 4) or
+    (KernelMajor == 5 and KernelMinor < 10) or
+    (KernelMajor == 6 and KernelMinor < 1) or
+    (KernelMajor == 6 and KernelMinor > 1 and KernelMinor < 6) or
+    (KernelMajor == 6 and KernelMinor > 6 and KernelMinor < 12) or
+    (KernelMajor == 6 and KernelMinor > 12 and KernelMinor < 18) or
+    (KernelMajor == 7 and KernelMinor < 2), true,
+    false)
+| where IsVulnerable == true
+| project DeviceId, DeviceName, OSPlatform, OSBuild, KernelMajor, KernelMinor, KernelPatch, TimeGenerated
