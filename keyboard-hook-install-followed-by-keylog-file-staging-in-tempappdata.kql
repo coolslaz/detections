@@ -1,0 +1,24 @@
+let LegitHookProcesses = dynamic(["autohotkey.exe","autohotkeyu32.exe","autohotkeyu64.exe","narrator.exe","nvda.exe","jaws.exe","zoomtext.exe","magnify.exe","teamviewer.exe","teamviewer_service.exe","anydesk.exe","logmein.exe","logmeinsystray.exe","screenconnect.exe","screenconnect.clientservice.exe","atera agent.exe","ateragent.exe","ninjarmmagent.exe","kaseya.exe","agentmon.exe","ctfmon.exe","discord.exe","steam.exe","overwolf.exe","rtss.exe","msiafterburner.exe","gameoverlayui.exe"]);
+let LegitPathHints = dynamic(["\\AutoHotkey\\", "\\TeamViewer\\", "\\AnyDesk\\", "\\LogMeIn\\", "\\ScreenConnect\\", "\\Atera\\", "\\NinjaRMMAgent\\", "\\Kaseya\\", "\\Discord\\", "\\Steam\\", "\\Overwolf\\", "\\MSI Afterburner\\"]);
+DeviceEvents
+| where TimeGenerated > ago(1d)
+| where ActionType in ("SetWindowsHookExSignature", "SetWindowsHookEx")
+| where not(InitiatingProcessFileName has_any (LegitHookProcesses))
+| where not(InitiatingProcessFolderPath has_any (LegitPathHints))
+| join kind=inner (
+    DeviceFileEvents
+    | where TimeGenerated > ago(1d)
+    | where FolderPath has_any ("\\AppData\\Local\\Temp", "\\Windows\\Temp", "/tmp", "\\AppData\\Roaming")
+    | where not(InitiatingProcessFileName has_any (LegitHookProcesses))
+    | where not(FolderPath has_any (LegitPathHints))
+    // suspicious staging: keylog-related name, hidden dotfile, or randomly-named short alphanumeric file
+    | where FileName has_any ("keylog", "kl.log", "kl.dat", "log.txt", "keys.log", ".tmp")
+        or FileName matches regex @"^\.[a-zA-Z0-9]{4,}$"
+        or FileName matches regex @"^[a-f0-9]{16,}(\.[a-z]{2,4})?$"
+        or FileName matches regex @"^[a-zA-Z0-9]{8,}\.(dat|bin|tmp|log)$"
+    | project DeviceId, FileTimeGenerated = TimeGenerated, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine
+) on DeviceId
+| where abs(datetime_diff('minute', TimeGenerated, FileTimeGenerated)) <= 10
+| project HookTime = TimeGenerated, FileTime = FileTimeGenerated, DeviceId, ActionType, HookProcess = InitiatingProcessFileName, FileName, FolderPath, StagingCommandLine = InitiatingProcessCommandLine
+| summarize KeylogArtifacts = make_set(FileName, 20), FirstSeen = min(HookTime), LastSeen = max(FileTime) by DeviceId, HookProcess
+| where array_length(KeylogArtifacts) > 0
