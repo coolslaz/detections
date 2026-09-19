@@ -1,0 +1,12 @@
+// Detects requests to wp-admin/theme-install.php carrying the Click2Shell theme-slug selector-injection payload,
+// which forces an unauthenticated theme install through an authenticated admin's browser.
+W3CIISLog
+| where TimeGenerated > ago(24h)
+| where csUriStem has "wp-admin/theme-install.php"
+| extend ThemeParam = csUriQuery
+| where ThemeParam contains "theme="
+| where ThemeParam has_any ("%22%5D%3E", "%5D%3E%2A", "%2F%2A", "theme%3D%22")
+| extend HasCrossSiteReferer = isnotempty(csReferer) and not(csReferer has "wp-admin")
+| where HasCrossSiteReferer or isempty(csReferer)
+| project TimeGenerated, cIP, csUriStem, ThemeParam, csReferer, csUserAgent, sPort
+| sort by TimeGenerated desc
