@@ -1,0 +1,29 @@
+// Detects a short-lived GitHub OAuth access token (gho_ prefix) that is created, used to clone/fetch an abnormally large number of private repositories, and then deleted shortly after, leaving no persistent record beyond the usage event.
+// NOTE: GitHubAuditLogs is assumed; verify table name for your environment
+AuditLogs
+| where OperationName in ("oauth_authorization.create", "oauth_access_token.create", "git.clone", "git.fetch", "oauth_authorization.destroy", "oauth_access_token.destroy")
+| where isnotempty(InitiatedBy.user.userPrincipalName)
+| extend ActorLogin = tostring(InitiatedBy.user.userPrincipalName)
+| extend Repository = tostring(TargetResources[0].displayName)
+| extend Action = OperationName
+| extend ClientIP = tostring(InitiatedBy.user.ipAddress)
+// Exclude GitHub App/bot-issued tokens and known CI/service account patterns; installation tokens are ephemeral by design and would otherwise false-positive on this pattern
+| where not(ActorLogin endswith "[bot]")
+| where not(ActorLogin has_any ("github-actions", "dependabot", "renovate", "service-account", "ci-bot", "jenkins", "gitlab-ci", "circleci", "travis-ci"))
+| summarize 
+    CreateTime = minif(TimeGenerated, Action in ("oauth_authorization.create", "oauth_access_token.create")),
+    DestroyTime = minif(TimeGenerated, Action in ("oauth_authorization.destroy", "oauth_access_token.destroy")),
+    CloneEvents = countif(Action in ("git.clone", "git.fetch")),
+    DistinctRepos = dcountif(Repository, Action in ("git.clone", "git.fetch")),
+    FirstCloneTime = minif(TimeGenerated, Action in ("git.clone", "git.fetch")),
+    LastCloneTime = maxif(TimeGenerated, Action in ("git.clone", "git.fetch"))
+    by ActorLogin, ClientIP
+| where isnotempty(CreateTime) and isnotempty(DestroyTime)
+| where DestroyTime > CreateTime
+| extend TokenLifetime = datetime_diff('minute', DestroyTime, CreateTime)
+| where TokenLifetime <= 60
+| where DistinctRepos >= 50
+| where FirstCloneTime between (CreateTime .. DestroyTime)
+| where LastCloneTime between (CreateTime .. DestroyTime)
+| project ActorLogin, ClientIP, CreateTime, FirstCloneTime, LastCloneTime, DestroyTime, TokenLifetime, DistinctRepos, CloneEvents
+| sort by DistinctRepos desc
