@@ -1,0 +1,20 @@
+let webserverProcs = dynamic(["php-fpm","php-fpm7","php-fpm8","php","apache2","httpd","nginx","w3wp.exe"]);
+let fileWrites = DeviceFileEvents
+| where TimeGenerated > ago(1d)
+| where FolderPath has "wp-content" and FolderPath has "themes"
+| where FileName endswith ".php"
+| where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+| where InitiatingProcessFileName has_any (webserverProcs)
+| where InitiatingProcessAccountName has_any ("www-data","wordpress","apache")
+| project WriteTime = TimeGenerated, DeviceId, FolderPath, FileName, InitiatingProcessFileName, InitiatingProcessAccountName, InitiatingProcessId;
+let shellSpawns = DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where InitiatingProcessFileName has_any (webserverProcs)
+| where FileName in~ ("sh","bash","dash","cmd.exe","powershell.exe")
+| where InitiatingProcessAccountName has_any ("www-data","wordpress","apache")
+| project SpawnTime = TimeGenerated, DeviceId, ProcessCommandLine, FileName, InitiatingProcessFileName, InitiatingProcessId, InitiatingProcessAccountName;
+fileWrites
+| join kind=inner (shellSpawns) on DeviceId, InitiatingProcessId
+| where SpawnTime between (WriteTime .. (WriteTime + 15m))
+| project WriteTime, SpawnTime, DeviceId, FolderPath, FileName, InitiatingProcessFileName, InitiatingProcessAccountName, ShellProcess = FileName1, ShellCommandLine = ProcessCommandLine
+| sort by WriteTime desc
