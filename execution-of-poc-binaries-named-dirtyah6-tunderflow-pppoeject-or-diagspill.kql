@@ -1,0 +1,16 @@
+DeviceProcessEvents
+| where FileName matches regex @"^(dirtyah6|tunderflow|pppoeject|diagspill)(\.[a-z0-9]+)?$"
+| where FolderPath startswith "/tmp" or FolderPath startswith "/home" or FolderPath startswith "/root"
+| where not(FolderPath has_any (
+    "/var/cache/apt", "/var/lib/apt", "/var/lib/dpkg", "/var/cache/pacman", "/var/cache/yum", "/var/cache/dnf",
+    "/.cache/pip", "/.cargo", "/.npm", "/node_modules", "/.m2", "/.gradle", "/.cache/go-build", "/go/pkg",
+    "/builds/", "/home/runner/", "/github/workspace", "/.gitlab-runner", "/azp/", "/ci/", "/jenkins/", "/gitlab-ci/",
+    "/opt/research", "/research", "/sandbox", "/poc-lab", "/vuln-lab", "/cve-lab", "/pentest", "/security-research"
+))
+| where not(ProcessCommandLine has_any (
+    "/var/cache/apt", "/var/lib/apt", "/var/lib/dpkg", "/var/cache/pacman", "/var/cache/yum", "/var/cache/dnf",
+    "/.cache/pip", "/.cargo", "/.npm", "/node_modules", "/.m2", "/.gradle", "/.cache/go-build", "/go/pkg",
+    "/builds/", "/home/runner/", "/github/workspace", "/.gitlab-runner", "/azp/", "/ci/", "/jenkins/", "/gitlab-ci/",
+    "/opt/research", "/research", "/sandbox", "/poc-lab", "/vuln-lab", "/cve-lab", "/pentest", "/security-research"
+))
+| project TimeGenerated, DeviceName, AccountName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
