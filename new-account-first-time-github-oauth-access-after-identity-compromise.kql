@@ -1,0 +1,28 @@
+// Detect accounts newly accessing GitHub via OAuth/SSO integration with no prior repository access history
+let lookback = 30d;
+let detectionWindow = 1d;
+let pivotWindow = 30m;
+// scope to accounts whose first-ever GitHub access follows a sign-in to the low-trust public forum -
+// without this, every legitimately onboarding new employee's first GitHub login would also match
+let forumSignIns = SigninLogs
+| where TimeGenerated > ago(detectionWindow)
+| where AppDisplayName has_any ("community.openai.com", "OpenAI Community", "Discourse", "OpenAI Forum")
+| project ForumSignInTime = TimeGenerated, ForumUser = UserPrincipalName;
+CloudAppEvents
+| where TimeGenerated > ago(lookback + detectionWindow)
+| where Application =~ "GitHub"
+| where ActionType has_any ("Add OAuth application", "OAuthApplication", "Login", "Repository", "AccessGranted", "AuthorizeApplication")
+| extend AccountId = tostring(AccountObjectId)
+| summarize FirstSeen = min(TimeGenerated), EventTimes = make_list(TimeGenerated, 100) by AccountId, AccountDisplayName
+| where FirstSeen > ago(detectionWindow)
+// Exclude accounts with any GitHub activity prior to the detection window (established baseline users)
+| join kind=leftanti (
+    CloudAppEvents
+    | where TimeGenerated between (ago(lookback + detectionWindow) .. ago(detectionWindow))
+    | where Application =~ "GitHub"
+    | extend AccountId = tostring(AccountObjectId)
+    | distinct AccountId
+) on AccountId
+| join kind=inner (forumSignIns) on $left.AccountDisplayName == $right.ForumUser
+| where FirstSeen > ForumSignInTime and FirstSeen - ForumSignInTime <= pivotWindow
+| project AccountId, AccountDisplayName, ForumSignInTime, FirstSeen, EventTimes
