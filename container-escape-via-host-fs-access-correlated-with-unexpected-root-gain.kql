@@ -1,0 +1,22 @@
+// Container escape attempt: process reaches into host filesystem from within a container namespace
+// followed shortly by unexpected root capability gain (not attributable to authenticated sudo/su) on the same device
+let lookback = 1h;
+let OrchestrationProcesses = dynamic(["containerd", "containerd-shim", "dockerd", "docker", "kubelet", "runc"]);
+let EscapeIndicators = DeviceProcessEvents
+| where TimeGenerated > ago(7d)
+| where ProcessCommandLine has_any ("/proc/1/root", "/host", "nsenter --target 1", "nsenter -t 1", "chroot /host", "mount --bind /", "mount -o bind /")
+| where not(FileName in~ ("containerd", "containerd-shim", "dockerd", "docker", "kubelet", "runc"))
+| where not(InitiatingProcessFileName in~ ("containerd", "containerd-shim", "dockerd", "docker", "kubelet", "runc"))
+| project EscapeTime = TimeGenerated, DeviceId, EscapeAccount = AccountName, EscapeProcess = FileName, EscapeCommandLine = ProcessCommandLine, EscapeSHA256 = SHA256, EscapeInitiatingProcess = InitiatingProcessFileName;
+let RootGainIndicators = DeviceProcessEvents
+| where TimeGenerated > ago(7d)
+| where (AccountName =~ "root" or ProcessCommandLine has "setuid(0)")
+| where not(ProcessCommandLine has_any ("su -", "sudo -i", "sudo "))
+| where not(FileName in~ ("sudo", "su"))
+| where not(InitiatingProcessFileName in~ ("sudo", "su"))
+| project RootTime = TimeGenerated, DeviceId, RootAccount = AccountName, RootProcess = FileName, RootCommandLine = ProcessCommandLine, RootInitiatingProcess = InitiatingProcessFileName;
+EscapeIndicators
+| join kind=inner (RootGainIndicators) on DeviceId
+| where RootTime between (EscapeTime .. (EscapeTime + lookback))
+| project DeviceId, EscapeTime, EscapeAccount, EscapeProcess, EscapeCommandLine, EscapeSHA256, EscapeInitiatingProcess, RootTime, RootAccount, RootProcess, RootCommandLine, RootInitiatingProcess
+| sort by EscapeTime desc
