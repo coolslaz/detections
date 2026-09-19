@@ -1,0 +1,23 @@
+// Detects cross-application SSO session/token reuse where a sign-in to the OpenAI community forum app is followed shortly by a sign-in to ChatGPT/Codex for the same identity, potentially from a different IP, without fresh interactive authentication
+let forumApps = dynamic(["community.openai.com","OpenAI Community","Discourse","OpenAI Forum"]);
+let internalApps = dynamic(["ChatGPT","Codex","OpenAI ChatGPT","OpenAI Codex"]);
+SigninLogs
+| where TimeGenerated > ago(7d)
+| where AppDisplayName has_any (forumApps) or AppDisplayName has_any (internalApps)
+| extend AppCategory = case(AppDisplayName has_any (forumApps), "Forum", AppDisplayName has_any (internalApps), "Internal", "Other")
+| where AppCategory in ("Forum", "Internal")
+| project TimeGenerated, UserPrincipalName, AppDisplayName, AppCategory, IPAddress, UserAgent, AuthenticationRequirement, IsInteractive
+| sort by UserPrincipalName asc, TimeGenerated asc
+| serialize
+| extend PrevApp = prev(AppCategory), PrevUser = prev(UserPrincipalName), PrevTime = prev(TimeGenerated), PrevIP = prev(IPAddress), PrevAuthReq = prev(AuthenticationRequirement), PrevInteractive = prev(IsInteractive), PrevUserAgent = prev(UserAgent)
+| where PrevUser == UserPrincipalName
+| where PrevApp == "Forum" and AppCategory == "Internal"
+| extend TimeDeltaMinutes = datetime_diff('minute', TimeGenerated, PrevTime)
+| where TimeDeltaMinutes between (0 .. 15)
+| where IsInteractive == false or AuthenticationRequirement != "multiFactorAuthentication"
+| extend IPMismatch = iff(IPAddress != PrevIP, true, false)
+// require BOTH weak-auth session reuse AND a device/network change - either signal alone is common in
+// legitimate same-session SSO app-switching; together they match genuine token replay from a different host
+| where IPMismatch == true or UserAgent != PrevUserAgent
+| project UserPrincipalName, ForumSignInTime = PrevTime, ForumApp = AppDisplayName, ForumIP = PrevIP, InternalSignInTime = TimeGenerated, InternalApp = AppDisplayName, InternalIP = IPAddress, TimeDeltaMinutes, IPMismatch, IsInteractive, AuthenticationRequirement
+| sort by TimeDeltaMinutes asc
