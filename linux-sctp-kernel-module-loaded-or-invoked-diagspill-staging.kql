@@ -1,0 +1,16 @@
+// Hosts running telecom/signaling stacks, Kubernetes CNI plugins, or multihomed HA clusters may legitimately load the SCTP kernel module.
+// Allowlist such hosts (e.g. by DeviceName or tag) to avoid recurring noise from this rule.
+DeviceProcessEvents
+| where DeviceName has "Linux"
+| where (FileName in~ ("modprobe", "insmod") and ProcessCommandLine has "sctp")
+ or ProcessCommandLine has "sctp.ko"
+ or ProcessCommandLine has "/proc/net/sctp"
+ or ProcessCommandLine has_all ("AF_INET", "IPPROTO_SCTP")
+ or ProcessCommandLine has "IPPROTO_SCTP"
+// Exclude module loads driven by systemd, kmod, and package managers (boot-time / package install activity)
+| where not(InitiatingProcessFileName in~ ("systemd", "systemd-udevd", "systemd-modules-load", "kmod", "apt", "apt-get", "dpkg", "yum", "rpm", "dnf"))
+| where not(InitiatingProcessCommandLine has_any ("systemd", "apt", "apt-get", "dpkg", "yum", "rpm", "dnf"))
+// Exclude system/service accounts performing the load, focusing on interactive/ad-hoc loading
+| where not(AccountName in~ ("root", "systemd", "systemd-network", "daemon"))
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
+| order by TimeGenerated desc
