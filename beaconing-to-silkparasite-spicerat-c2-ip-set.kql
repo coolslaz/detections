@@ -1,0 +1,11 @@
+let SpiceRATC2 = dynamic(["171.22.16.187","31.58.220.250","193.29.59.159","188.190.29.126","46.30.191.230"]);
+DeviceNetworkEvents
+| where TimeGenerated > ago(14d)
+| where ActionType == "ConnectionSuccess"
+| where RemoteIP in (SpiceRATC2)
+| where RemotePort in (443, 80)
+| extend C2Hostname = iff(RemoteIP == "188.190.29.126", "ns2.asiainfo.it.com", "")
+| project TimeGenerated, DeviceName, DeviceId, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteIP, RemotePort, C2Hostname, LocalIP
+| summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), ConnectionCount = count(), Ports = make_set(RemotePort, 10), Processes = make_set(InitiatingProcessFileName, 10) by DeviceId, DeviceName, RemoteIP
+| where ConnectionCount >= 3
+| order by ConnectionCount desc
