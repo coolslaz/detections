@@ -1,0 +1,11 @@
+AWSCloudTrail
+| where TimeGenerated > ago(14d)
+| where EventSource == "sns.amazonaws.com" or EventSource == "sts.amazonaws.com"
+| where EventName in ("Publish", "GetCallerIdentity", "ListTopics")
+| where UserIdentityArn has "assertible-zapier-sns-sender" or RequestParameters has "assertible-zapier-sns-sender"
+| extend SourceIPAddress = tostring(SourceIpAddress)
+| where SourceIPAddress == "23.234.84.102"
+| where isempty(ErrorCode) and isempty(ErrorMessage)
+| summarize MatchCount = count(), Events = make_set(EventName, 10), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), RequestParametersSample = any(RequestParameters), ResponseElementsSample = any(ResponseElements) by UserIdentityArn, SourceIPAddress
+| where MatchCount >= 2
+| project FirstSeen, LastSeen, UserIdentityArn, SourceIPAddress, MatchCount, Events, RequestParametersSample, ResponseElementsSample
