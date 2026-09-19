@@ -1,0 +1,41 @@
+// Detect a GitHub OAuth token authenticating and then being used to mass-clone/download
+// private repositories in a short window, consistent with the TeamPCP (UNC6780) Shai Hulud
+// campaign following the TanStack npm supply chain compromise (CVE-2026-45321).
+let lookback = 14d;
+let baselineWindow = 30d;
+let cloneWindow = 15m;
+let minReposCloned = 20;
+let ExcludedAccountPattern = @"(?i)(github-actions|dependabot|^svc-|-bot$|^ci-)";
+let Baseline = CloudAppEvents
+    | where TimeGenerated between (ago(lookback + baselineWindow) .. ago(lookback))
+    | where Application =~ "GitHub"
+    | summarize KnownIPs = make_set(IPAddress, 500), KnownCountries = make_set(CountryCode, 50) by AccountObjectId;
+CloudAppEvents
+| where TimeGenerated > ago(lookback)
+| where Application =~ "GitHub"
+| where not(AccountDisplayName matches regex ExcludedAccountPattern)
+| extend IsAuthEvent = ActionType has_any ("OAuth", "Authorize", "TokenCreate")
+| extend IsCloneEvent = ActionType has_any ("Clone", "Download", "Export")
+| where IsAuthEvent or IsCloneEvent
+| summarize
+    FirstAuthTime = minif(TimeGenerated, IsAuthEvent),
+    CloneEvents = countif(IsCloneEvent),
+    DistinctReposCloned = dcountif(ObjectName, IsCloneEvent),
+    ClonedRepoList = make_set_if(ObjectName, IsCloneEvent, 200),
+    FirstCloneTime = minif(TimeGenerated, IsCloneEvent),
+    LastCloneTime = maxif(TimeGenerated, IsCloneEvent),
+    ActorIPs = make_set(IPAddress, 10),
+    ActorCountries = make_set(CountryCode, 10)
+    by AccountDisplayName, AccountObjectId
+| where DistinctReposCloned >= minReposCloned
+| extend CloneDuration = LastCloneTime - FirstCloneTime
+| where CloneDuration <= cloneWindow
+| extend TimeFromAuthToFirstClone = iff(isnotempty(FirstAuthTime), FirstCloneTime - FirstAuthTime, timespan(null))
+| extend EphemeralTokenSignal = iff(isnotempty(TimeFromAuthToFirstClone) and TimeFromAuthToFirstClone <= 1h, true, false)
+| join kind=leftouter Baseline on AccountObjectId
+| extend NewIPs = set_difference(ActorIPs, KnownIPs)
+| extend NewCountries = set_difference(ActorCountries, KnownCountries)
+| extend IsAnomalousLocation = iff(array_length(NewIPs) > 0 or array_length(NewCountries) > 0, true, false)
+| where EphemeralTokenSignal and IsAnomalousLocation
+| project AccountDisplayName, AccountObjectId, ActorIPs, NewIPs, ActorCountries, NewCountries, FirstAuthTime, FirstCloneTime, LastCloneTime, CloneDuration, DistinctReposCloned, CloneEvents, EphemeralTokenSignal, IsAnomalousLocation, ClonedRepoList
+| sort by DistinctReposCloned desc
