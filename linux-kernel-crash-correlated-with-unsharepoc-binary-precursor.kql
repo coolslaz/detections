@@ -1,0 +1,21 @@
+let LookbackWindow = 15m;
+let CrashEvents = DeviceProcessEvents
+| where FileName in~ ("dmesg", "journalctl", "syslog")
+| where ProcessCommandLine has_any ("kernel: BUG:", "Kernel panic - not syncing", "use-after-free", "slab-out-of-bounds")
+| where ProcessCommandLine has_any ("ah6", "tun", "pppoe", "sctp_diag")
+| project CrashTime = TimeGenerated, DeviceName, FileName, ProcessCommandLine, AccountName, InitiatingProcessFileName;
+let CrashEventsSyslog = Syslog
+| where SyslogMessage has_any ("kernel: BUG:", "Kernel panic - not syncing", "use-after-free", "slab-out-of-bounds")
+| where SyslogMessage has_any ("ah6", "tun", "pppoe", "sctp_diag")
+| project CrashTime = TimeGenerated, DeviceName = Computer, FileName = ProcessName, ProcessCommandLine = SyslogMessage, AccountName = "", InitiatingProcessFileName = "";
+let AllCrashEvents = CrashEvents
+| union CrashEventsSyslog;
+let PrecursorEvents = DeviceProcessEvents
+| where (FileName =~ "unshare" or ProcessCommandLine has "unshare")
+ or (FileName has_any ("dirtyah6", "tunderflow", "pppoeject", "diagspill") or ProcessCommandLine has_any ("dirtyah6", "tunderflow", "pppoeject", "diagspill"))
+| project PrecursorTime = TimeGenerated, DeviceName, PrecursorFileName = FileName, PrecursorCommandLine = ProcessCommandLine, PrecursorAccountName = AccountName, PrecursorInitiatingProcessFileName = InitiatingProcessFileName;
+AllCrashEvents
+| join kind=inner (PrecursorEvents) on DeviceName
+| where PrecursorTime between ((CrashTime - LookbackWindow) .. CrashTime)
+| project CrashTime, DeviceName, FileName, ProcessCommandLine, AccountName, InitiatingProcessFileName, PrecursorTime, PrecursorFileName, PrecursorCommandLine, PrecursorAccountName, PrecursorInitiatingProcessFileName
+| sort by CrashTime desc
