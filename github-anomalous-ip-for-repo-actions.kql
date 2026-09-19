@@ -1,0 +1,19 @@
+let lookback = 30d;
+let baselineIPs = CloudAppEvents
+| where TimeGenerated between (ago(lookback) .. ago(1d))
+| where Application =~ "GitHub"
+| where ActionType has_any ("Clone", "Download", "Export", "OAuth", "Authorize", "TokenCreate")
+| summarize KnownIPs = make_set(IPAddress, 1000) by AccountObjectId;
+CloudAppEvents
+| where TimeGenerated > ago(1d)
+| where Application =~ "GitHub"
+| where ActionType has_any ("Clone", "Download", "Export", "OAuth", "Authorize", "TokenCreate")
+| where isnotempty(IPAddress)
+| where not(AccountDisplayName endswith "[bot]")
+| join kind=leftouter baselineIPs on AccountObjectId
+| where isnotnull(KnownIPs) and array_length(KnownIPs) > 0
+| extend IsKnownIP = set_has_element(KnownIPs, IPAddress)
+| where not(IsKnownIP)
+| summarize ActionCount = count(), DistinctRepos = dcount(ObjectName), Actions = make_set(ActionType), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by AccountObjectId, AccountDisplayName, IPAddress
+| where ActionCount >= 3 or DistinctRepos >= 2
+| sort by LastSeen desc
