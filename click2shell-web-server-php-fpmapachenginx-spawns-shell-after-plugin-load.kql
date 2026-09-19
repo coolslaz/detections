@@ -1,0 +1,9 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where InitiatingProcessFileName has_any ("php-fpm", "php-fpm7", "php-fpm8", "apache2", "httpd", "nginx")
+| where FileName in~ ("sh", "bash", "dash")
+| where AccountName has_any ("www-data", "wordpress", "apache")
+| where ProcessCommandLine matches regex @"(^|[;&|]\s*)(id|whoami)(\s|$)"
+| where not(InitiatingProcessCommandLine has_any ("composer", "wp-cli", "artisan", "cron"))
+| project TimeGenerated, DeviceName, AccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, InitiatingProcessParentFileName
+| sort by TimeGenerated desc
