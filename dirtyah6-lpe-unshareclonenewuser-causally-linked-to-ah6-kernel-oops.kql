@@ -1,0 +1,19 @@
+let lookback = 2m;
+let sandbox_runtimes = dynamic(["runc", "containerd-shim", "podman", "dockerd", "bwrap", "flatpak", "firejail", "snapd"]);
+let userns_events = DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where FileName in~ ("unshare", "clone")
+| where ProcessCommandLine has "unshare" and ProcessCommandLine has "CLONE_NEWUSER"
+| where not(InitiatingProcessFileName has_any (sandbox_runtimes))
+| where not(InitiatingProcessCommandLine has_any (sandbox_runtimes))
+| project UsernsTime = TimeGenerated, DeviceId, DeviceName, AccountName, ProcessId, InitiatingProcessId, InitiatingProcessCommandLine, ProcessCommandLine;
+let ah6_crash_events = Syslog
+| where TimeGenerated > ago(1d)
+| where SyslogMessage has_any ("ah6", "ipsec") and SyslogMessage has_any ("kernel: BUG:", "Kernel panic - not syncing", "use-after-free", "slab-out-of-bounds", "oops")
+| extend CrashPid = toint(extract(@"\[(\d+)\]", 1, SyslogMessage))
+| project CrashTime = TimeGenerated, Computer, SyslogMessage, CrashPid;
+userns_events
+| join kind=inner (ah6_crash_events) on $left.DeviceName == $right.Computer
+| where CrashTime between (UsernsTime .. (UsernsTime + lookback))
+| where isnotnull(CrashPid) and (CrashPid == ProcessId or CrashPid == InitiatingProcessId)
+| project UsernsTime, CrashTime, DeviceId, DeviceName, AccountName, ProcessId, InitiatingProcessId, CrashPid, ProcessCommandLine, SyslogMessage
