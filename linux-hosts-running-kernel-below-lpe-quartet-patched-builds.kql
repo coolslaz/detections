@@ -1,0 +1,23 @@
+// Detects Linux devices reporting a kernel version older than the fixed releases
+// for the DirtyAH6 / TUNderflow / PPPoEject / DiagSpill LPE quartet
+// Patched releases: 5.10.270, 6.1.188, 6.6.157, 7.2.4
+DeviceInfo
+| where OSPlatform == "Linux"
+| where isnotempty(OSBuild)
+| extend KernelVersion = extract(@"(\d+)\.(\d+)\.(\d+)", 0, OSBuild)
+| extend Major = toint(extract(@"(\d+)\.(\d+)\.(\d+)", 1, OSBuild))
+| extend Minor = toint(extract(@"(\d+)\.(\d+)\.(\d+)", 2, OSBuild))
+| extend Patch = toint(extract(@"(\d+)\.(\d+)\.(\d+)", 3, OSBuild))
+| where isnotnull(Major) and isnotnull(Minor) and isnotnull(Patch)
+| extend IsVulnerable = case(
+    Major == 5 and Minor == 10 and Patch < 270, true,
+    Major == 6 and Minor == 1 and Patch < 188, true,
+    Major == 6 and Minor == 6 and Patch < 157, true,
+    Major == 7 and Minor == 2 and Patch < 4, true,
+    Major < 5, true,
+    Major == 5 and Minor < 10, true,
+    Major == 6 and Minor < 1, true,
+    false
+)
+| where IsVulnerable == true
+| project DeviceId, DeviceName, KernelVersion, OSBuild
