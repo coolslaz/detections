@@ -1,0 +1,7 @@
+DeviceEvents
+| where TimeGenerated > ago(1d)
+| where AdditionalFields has_any ("AmsiScanBuffer", "AmsiScanString", "amsi.dll")
+| where ActionType == "AmsiTamperingDetected"
+    or (ActionType in ("ProcessTampering", "ProcessMemoryModified") and FileName in~ ("powershell.exe", "pwsh.exe", "rundll32.exe", "mshta.exe", "wscript.exe", "cscript.exe"))
+| project TimeGenerated, DeviceId, DeviceName, ActionType, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, FolderPath, AdditionalFields
+| sort by TimeGenerated desc
