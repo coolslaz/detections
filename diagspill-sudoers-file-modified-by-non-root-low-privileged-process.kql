@@ -1,0 +1,11 @@
+// Detects modification of /etc/sudoers or /etc/sudoers.d by a process not running as root,
+// consistent with DiagSpill privilege escalation grooming a credential object rewrite
+// and installing a sudoers rule to open a root shell.
+DeviceFileEvents
+| where TimeGenerated > ago(1d)
+| where FolderPath has "/etc/sudoers" or FolderPath has "/etc/sudoers.d"
+| where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+| where InitiatingProcessAccountName !in~ ("root")
+| where not(InitiatingProcessFileName has_any ("visudo", "dpkg", "apt", "rpm", "yum", "dnf", "ansible", "ansible-playbook", "puppet", "puppet-agent", "chef", "chef-client", "cloud-init", "salt-minion", "salt-call"))
+| project TimeGenerated, DeviceName, FileName, FolderPath, ActionType, InitiatingProcessAccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName, InitiatingProcessId
+| sort by TimeGenerated desc
