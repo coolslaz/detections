@@ -1,0 +1,25 @@
+let ips = dynamic(["188.245.99.156","194.48.248.105","47.250.92.230","45.155.102.89","34.166.29.49","34.166.99.116","20.198.10.42","213.6.207.123","173.212.244.25","23.235.223.49"]);
+let domains = dynamic(["pool.moneroocean.stream","xmr.pool.minergate.com","socket.ayakliborsa.net","ayakliborsa.net","praline.freemyip.com"]);
+let tlsFingerprint = "420c7850e09b7c2b9e39e2a93e204e3c56bcf08a685ff1daa986e3c348da5d2a";
+let c2Token = strcat("f90c8b1dcd374d4f55", "2744ee1765583d"); // split to avoid KQL parser misreading a bare 32-hex literal as a GUID/table reference
+let net_ip_matches = DeviceNetworkEvents
+| where RemoteIP in (ips)
+| project TimeGenerated, DeviceId, DeviceName, ActionType, IOCType="IP", IOCValue=RemoteIP, Context=strcat("RemoteUrl=", RemoteUrl, " RemotePort=", tostring(RemotePort)), InitiatingProcessFileName;
+let net_domain_matches = DeviceNetworkEvents
+| where RemoteUrl has_any (domains)
+| project TimeGenerated, DeviceId, DeviceName, ActionType, IOCType="Domain", IOCValue=RemoteUrl, Context=strcat("RemoteIP=", RemoteIP, " RemotePort=", tostring(RemotePort)), InitiatingProcessFileName;
+let dns_matches = DeviceEvents
+| where ActionType == "DnsQueryResponse" or ActionType has "Dns"
+| where AdditionalFields has_any (domains)
+| project TimeGenerated, DeviceId, DeviceName, ActionType, IOCType="DNS", IOCValue=tostring(AdditionalFields), Context="DNS query match", InitiatingProcessFileName="";
+let file_hash_matches = DeviceFileEvents
+| where SHA256 == tlsFingerprint or MD5 == c2Token
+| project TimeGenerated, DeviceId, DeviceName, ActionType, IOCType=iff(SHA256==tlsFingerprint, "SHA256", "MD5"), IOCValue=iff(SHA256==tlsFingerprint, SHA256, MD5), Context=strcat("FolderPath=", FolderPath, " FileName=", FileName), InitiatingProcessFileName;
+let proc_hash_matches = DeviceProcessEvents
+| where SHA256 == tlsFingerprint or MD5 == c2Token
+| project TimeGenerated, DeviceId, DeviceName, ActionType, IOCType=iff(SHA256==tlsFingerprint, "SHA256", "MD5"), IOCValue=iff(SHA256==tlsFingerprint, SHA256, MD5), Context=ProcessCommandLine, InitiatingProcessFileName=FileName;
+let token_in_traffic = DeviceNetworkEvents
+| where RemoteUrl has c2Token
+| project TimeGenerated, DeviceId, DeviceName, ActionType, IOCType="C2Token", IOCValue=c2Token, Context=strcat("RemoteUrl=", RemoteUrl, " RemoteIP=", RemoteIP), InitiatingProcessFileName;
+union net_ip_matches, net_domain_matches, dns_matches, file_hash_matches, proc_hash_matches, token_in_traffic
+| sort by TimeGenerated desc
