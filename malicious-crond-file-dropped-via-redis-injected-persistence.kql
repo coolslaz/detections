@@ -1,0 +1,8 @@
+DeviceFileEvents
+| where TimeGenerated > ago(30d)
+| where ActionType == "FileCreated"
+| where FolderPath has "/etc/cron.d/"
+| where FileName has_any (".redis-miner", "redis-miner", "xminer")
+| where InitiatingProcessFileName has "redis" or InitiatingProcessParentFileName has "redis"
+| project TimeGenerated, DeviceId, DeviceName, ActionType, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName
+| sort by TimeGenerated desc
