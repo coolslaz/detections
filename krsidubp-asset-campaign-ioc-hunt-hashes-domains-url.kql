@@ -1,0 +1,22 @@
+let iocHashesMD5 = dynamic(["6d2cd65dbd0df30404b08ff007359e54","a9cce44c4d42b07f114dd2b340f0046a","f86b2ece324cfd36e832a3b48cc3719b"]);
+let iocDomains = dynamic(["phf-ubp.com","ub900.org"]);
+let iocUrl = "https://phf-ubp.com/UBPA/_hts_tv/user";
+let fileHashHits = DeviceFileEvents
+    | where TimeGenerated > ago(30d)
+    | where MD5 in~ (iocHashesMD5)
+    | extend IOCType = "FileHashMD5", MatchedIndicator = MD5
+    | project TimeGenerated, DeviceName, IOCType, MatchedIndicator, FileName, FolderPath;
+let processHashHits = DeviceProcessEvents
+    | where TimeGenerated > ago(30d)
+    | where MD5 in~ (iocHashesMD5)
+    | extend IOCType = "ProcessHashMD5", MatchedIndicator = MD5
+    | project TimeGenerated, DeviceName, IOCType, MatchedIndicator, FileName, FolderPath;
+let networkHits = DeviceNetworkEvents
+    | where TimeGenerated > ago(30d)
+    | extend ParsedUrl = parse_url(RemoteUrl)
+    | extend RemoteHost = tostring(ParsedUrl["Host"])
+    | where RemoteHost in~ (iocDomains) or RemoteUrl =~ iocUrl
+    | extend IOCType = "NetworkDomainOrUrl", MatchedIndicator = iif(isnotempty(RemoteHost) and RemoteHost in~ (iocDomains), RemoteHost, RemoteUrl)
+    | project TimeGenerated, DeviceName, IOCType, MatchedIndicator, FileName = InitiatingProcessFileName, FolderPath = InitiatingProcessFolderPath;
+union fileHashHits, processHashHits, networkHits
+| sort by TimeGenerated desc
