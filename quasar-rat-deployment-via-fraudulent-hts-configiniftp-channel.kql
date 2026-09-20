@@ -1,0 +1,15 @@
+// Detects config.Ini presence within the fraudulent UBP-Asset HTS install path alongside FTP-based update traffic consistent with Quasar RAT delivery
+let knownProcs = dynamic(["UBPUpdater.exe","UBPPatch.Psh","cmd.exe","UBP.exe"]);
+let suspiciousConfigFiles = DeviceFileEvents
+| where FolderPath has @"\UBP-Asset\"
+| where FileName =~ "config.ini"
+| project ConfigTimestamp = TimeGenerated, DeviceId, DeviceName, FolderPath, FileName, InitiatingProcessFileName, InitiatingProcessCommandLine;
+let ftpNetworkEvents = DeviceNetworkEvents
+| where RemotePort == 21 or Protocol =~ "FTP"
+| where InitiatingProcessFolderPath has @"\UBP-Asset\"
+| where InitiatingProcessFileName in~ (knownProcs)
+| project NetTimestamp = TimeGenerated, DeviceId, DeviceName, RemoteIP, RemoteUrl, RemotePort, Protocol, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessFolderPath;
+suspiciousConfigFiles
+| join kind=inner (ftpNetworkEvents) on DeviceId
+| where NetTimestamp between ((ConfigTimestamp - 15m) .. (ConfigTimestamp + 2h))
+| project ConfigTimestamp, NetTimestamp, DeviceId, DeviceName, FolderPath, FileName, RemoteIP, RemoteUrl, RemotePort, Protocol, InitiatingProcessFileName, InitiatingProcessCommandLine;
