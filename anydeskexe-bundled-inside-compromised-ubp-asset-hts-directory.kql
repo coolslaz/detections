@@ -1,0 +1,13 @@
+let legitAnyDeskPaths = dynamic(["\\Program Files (x86)\\AnyDesk\\", "\\Program Files\\AnyDesk\\", "\\AppData\\Roaming\\AnyDesk\\"]);
+let fileHits = DeviceFileEvents
+    | where FileName =~ "AnyDesk.exe"
+    | where FolderPath has @"\UBP-Asset\"
+    | where not(FolderPath has_any (legitAnyDeskPaths))
+    | project TimeGenerated, DeviceName, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, SHA256;
+let procHits = DeviceProcessEvents
+    | where FileName =~ "AnyDesk.exe"
+    | where FolderPath has @"\UBP-Asset\"
+    | where not(FolderPath has_any (legitAnyDeskPaths))
+    | project TimeGenerated, DeviceName, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine=ProcessCommandLine, SHA256;
+union fileHits, procHits
+| sort by TimeGenerated desc
