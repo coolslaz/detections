@@ -1,0 +1,18 @@
+DeviceFileEvents
+| where TimeGenerated > ago(1d)
+| where FileName endswith ".krsid"
+| where ActionType in ("FileCreated", "FileRenamed")
+| where FolderPath !contains @"\Windows\SoftwareDistribution\"
+    and FolderPath !contains @"\ProgramData\Microsoft\Windows Defender\"
+    and FolderPath !contains @"\$Recycle.Bin\"
+    and FolderPath !contains @"\AppData\Local\Temp\"
+| join kind=inner (
+    DeviceProcessEvents
+    | where TimeGenerated > ago(1d)
+    | where FileName =~ "htspnew.exe"
+    | project DeviceId, InitiatingProcessFileName = FileName, ProcessCreationTime = TimeGenerated
+) on DeviceId
+| where TimeGenerated between (ProcessCreationTime .. ProcessCreationTime + 30m)
+| summarize EncryptedFileCount = dcount(FileName), SampleFiles = make_set(FileName, 10), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by DeviceId, InitiatingProcessFileName
+| where EncryptedFileCount > 10
+| sort by EncryptedFileCount desc
