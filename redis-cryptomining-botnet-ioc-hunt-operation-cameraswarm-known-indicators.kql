@@ -1,0 +1,7 @@
+let IocIPs = dynamic(["188.245.99.156","194.48.248.105"]);
+let IocDomains = dynamic(["pool.moneroocean.stream","xmr.pool.minergate.com","socket.ayakliborsa.net","ayakliborsa.net"]);
+DeviceNetworkEvents
+| where TimeGenerated > ago(30d)
+| where RemoteIP in (IocIPs) or RemoteUrl has_any (IocDomains)
+| project TimeGenerated, DeviceId, DeviceName, ActionType, RemoteIP, RemoteUrl, RemotePort, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessSHA256
+| sort by TimeGenerated desc
