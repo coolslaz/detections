@@ -1,0 +1,20 @@
+// Detects a process deleting its own executable/script file within seconds of launch
+// Matches GHAPPIER-style implant behaviour: unlink of own file and manifests before any network activity
+let timeWindow = 15s;
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where FolderPath has_any (".vscode", "VSCODE")
+| where (FileName has_any ("parser.js", "loader.js"))
+    or (FileName has_any ("node.exe", "node") and not(FolderPath has_any ("Program Files\\nodejs", "Program Files (x86)\\nodejs", "AppData\\Roaming\\npm", "AppData\\Local\\Programs", "AppData\\Local\\Volta")))
+| project ProcessStartTime = TimeGenerated, DeviceId, InitiatingProcessId = ProcessId, ProcessFolderPath = FolderPath, ProcessFileName = FileName, AccountName
+| join kind=inner (
+    DeviceFileEvents
+    | where TimeGenerated > ago(1d)
+    | where ActionType == "FileDeleted"
+    | project DeleteTime = TimeGenerated, DeviceId, DeletingProcessId = InitiatingProcessId, DeletedFolderPath = FolderPath, DeletedFileName = FileName
+) on DeviceId
+| where DeletingProcessId == InitiatingProcessId
+| where DeletedFolderPath == ProcessFolderPath and DeletedFileName == ProcessFileName
+| where datetime_diff('second', DeleteTime, ProcessStartTime) <= 15
+| project DeviceId, AccountName, ProcessStartTime, DeleteTime, ProcessFolderPath, ProcessFileName, InitiatingProcessId
+| sort by DeleteTime desc
