@@ -1,0 +1,9 @@
+let pkg_regex = '(?i)(?:^|[\\s"''])(indexed-btree|ordered-kv-index|btree-leaderboard|priority-slot-queue|btree-range-store|btree-core|btree-time-index|btree-lru-cache|neighbor-key-map|sliding-score-window|mutex-forge)(?:@[\\w.-]+)?(?=[\\s"'']|$)';
+DeviceProcessEvents
+| where TimeGenerated > ago(30d)
+| where FileName in~ ("npm", "npm.cmd", "npm-cli.js")
+| where ProcessCommandLine has_any ("install", "ci", "add")
+| where not(ProcessCommandLine has_any ("uninstall", "remove"))
+| where ProcessCommandLine matches regex pkg_regex
+| extend MatchedPackage = extract(pkg_regex, 1, ProcessCommandLine)
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, MatchedPackage, InitiatingProcessFileName, InitiatingProcessCommandLine, FolderPath
