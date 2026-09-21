@@ -1,0 +1,31 @@
+let flatroof_roofdeck_hashes = dynamic(["02df07a173ab03b82a4fb6a08973fff8b1467f28","c491d477dbe0ae04e9aed9dbe237144c03f73ec4","5728b11d30586bbfc1d8bd12df1c722a06e767a2"]);
+// Note: the KelpDAO/TraderTraitor mkcert TLS certificate SHA-256 (4b2d3e8ccce8920a6d01e7d02b84236545a20e5f754b3eec253f8b416b731daa) has no matching column in DeviceFileCertificateInfo (SHA1-only schema) and is not queryable here; hunt for it in TLS/JA3 certificate telemetry instead.
+let cert_sha1 = dynamic(["4ad92bf92ee614b05c340ce17bef7b6ef5a25e82"]);
+let c2_ips = dynamic(["176.97.114.232","45.11.59.140","85.137.56.245","85.137.56.10"]);
+let c2_domains = dynamic(["technicais.sytes.net","storage.hubpage.cloud","grenight.com","registry.hashicorp-aws.com","registry.hashicorp-aws.io","registry.hashicorp-terraform.io","185-66-91-112.cprapid.com","213-111-146-132.cprapid.com","anesthesiaschool.com","www.anesthesiaschool.com","app.heyhay.online","heyhay.online","www.heyhay.online","update.heyhay.online","dela.servehttp.com","galaxy-royal.online","game.galaxy-royal.online","mx01.galaxy-royal.online","ns4.galaxy-royal.online","mactroubleshoots.pro","www.mactroubleshoots.pro","tinklify.com","www.tinklify.com","vaimage.com","wss.sytes.net","www.freehealth.lat"]);
+let malware_filenames = dynamic(["SystemUpdate","iSync","loginwindow"]);
+// Filename-only matches are noisy (loginwindow is a legitimate macOS system process; SystemUpdate/iSync are generic names).
+// Require the specific malicious sub-path from the report alongside the filename to avoid flagging legitimate binaries.
+let malware_paths = dynamic(["com.apple.iTunesCloud/SystemUpdate","com.apple.internal.ck/iSync","com.apple.appleaccountd/loginwindow"]);
+let proc_hits = DeviceProcessEvents
+| where SHA1 in (flatroof_roofdeck_hashes)
+    or (FileName in~ (malware_filenames) and FolderPath has_any (malware_paths))
+| extend MatchType = iff(SHA1 in (flatroof_roofdeck_hashes), "ProcessHash", "FilenamePathCombo")
+| project TimeGenerated, DeviceId, DeviceName, FileName, SHA1, FolderPath, ProcessCommandLine, ReportId, MatchType;
+let file_hits = DeviceFileEvents
+| where SHA1 in (flatroof_roofdeck_hashes)
+    or (FileName in~ (malware_filenames) and FolderPath has_any (malware_paths))
+| extend MatchType = iff(SHA1 in (flatroof_roofdeck_hashes), "FileHash", "FilenamePathCombo")
+| project TimeGenerated, DeviceId, DeviceName, FileName, SHA1, FolderPath, ReportId, MatchType;
+// Exact domain match (not substring) to avoid unrelated domains that happen to share a suffix.
+let net_hits = DeviceNetworkEvents
+| where RemoteIP in (c2_ips)
+    or RemoteUrl in~ (c2_domains)
+    or (isnotempty(RemoteUrl) and array_length(set_intersect(pack_array(tostring(split(RemoteUrl, "/")[2])), c2_domains)) > 0)
+| extend MatchType = iff(RemoteIP in (c2_ips), "NetworkC2_IP", "NetworkC2_Domain")
+| project TimeGenerated, DeviceId, DeviceName, RemoteIP, RemoteUrl, RemotePort, InitiatingProcessFileName, ReportId, MatchType;
+let cert_hits = DeviceFileCertificateInfo
+| where SHA1 in (cert_sha1)
+| project TimeGenerated, DeviceId, DeviceName, SHA1, SignerHash = "", ReportId, MatchType = "CertificateHash";
+union proc_hits, file_hits, net_hits, cert_hits
+| sort by TimeGenerated desc
