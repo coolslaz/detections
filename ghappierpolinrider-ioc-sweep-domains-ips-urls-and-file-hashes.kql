@@ -1,0 +1,22 @@
+let lookback = 90d;
+let domains = dynamic(["primevector-app924560.vercel.app","brightlaunch-ext75642.vercel.app"]);
+let ips = dynamic(["193.26.115.131","193.247.144.38","166.88.73.46","166.88.134.62"]);
+let urls = dynamic(["https://primevector-app924560.vercel.app/api/key?mem=ghappier","https://primevector-app924560.vercel.app/api/key?mem=g0115","http://brightlaunch-ext75642.vercel.app/api/m","https://brightlaunch-ext75642.vercel.app/api/m","http://brightlaunch-ext75642.vercel.app/api/l","https://brightlaunch-ext75642.vercel.app/api/l","http://brightlaunch-ext75642.vercel.app/api/w","https://brightlaunch-ext75642.vercel.app/api/w","http://brightlaunch-ext75642.vercel.app/api/tokenl","https://brightlaunch-ext75642.vercel.app/api/tokenl","http://brightlaunch-ext75642.vercel.app/api/tokenl?st=","https://brightlaunch-ext75642.vercel.app/api/tokenl?st=","http://brightlaunch-ext75642.vercel.app/api/tokenw","https://brightlaunch-ext75642.vercel.app/api/tokenw","http://brightlaunch-ext75642.vercel.app/api/g","https://brightlaunch-ext75642.vercel.app/api/g","http://brightlaunch-ext75642.vercel.app/api/package","https://brightlaunch-ext75642.vercel.app/api/package","http://brightlaunch-ext75642.vercel.app/api/handle","https://brightlaunch-ext75642.vercel.app/api/handle"]);
+let hashes = dynamic(["a85c6955ad689aa89eaae8c8b30723935274f069aed044489cfd922b46bcf2f7","f2c8234c00b1f5b0b135534bf51207dc0239647890b73531996d60c90cf9e866"]);
+let net_hits = DeviceNetworkEvents
+    | where TimeGenerated > ago(lookback)
+    | where RemoteIP in (ips) or RemoteUrl has_any (domains) or RemoteUrl has_any (urls)
+    | extend MatchedIOC = iff(RemoteIP in (ips), RemoteIP, RemoteUrl), IOCType = iff(RemoteIP in (ips), "ip", "url_or_domain")
+    | project TimeGenerated, DeviceId, DeviceName, RemoteIP, RemoteUrl, RemotePort, InitiatingProcessFileName, InitiatingProcessCommandLine, MatchedIOC, IOCType;
+let file_hits = DeviceFileEvents
+    | where TimeGenerated > ago(lookback)
+    | where SHA256 in (hashes)
+    | extend MatchedIOC = SHA256, IOCType = "sha256_file"
+    | project TimeGenerated, DeviceId, DeviceName, FileName, FolderPath, SHA256, InitiatingProcessFileName, InitiatingProcessCommandLine, MatchedIOC, IOCType;
+let process_hits = DeviceProcessEvents
+    | where TimeGenerated > ago(lookback)
+    | where SHA256 in (hashes)
+    | extend MatchedIOC = SHA256, IOCType = "sha256_process"
+    | project TimeGenerated, DeviceId, DeviceName, FileName, ProcessCommandLine, SHA256, InitiatingProcessFileName, InitiatingProcessCommandLine, MatchedIOC, IOCType;
+union net_hits, file_hits, process_hits
+| sort by TimeGenerated desc
