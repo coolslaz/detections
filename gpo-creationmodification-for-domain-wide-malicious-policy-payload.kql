@@ -1,0 +1,11 @@
+// Detection logic uses SecurityEvent table, which uses ObjectName, Subject, and Attributes
+// Mapping ObjectClass, AttributeLDAPDisplayName, ObjectDN, and AttributeValue to available columns in SecurityEvent
+SecurityEvent
+| where EventID in (5136, 5137, 5141)
+| where ObjectType =~ "groupPolicyContainer" or ObjectName =~ "gPLink" or ObjectName has "CN=Policies,CN=System"
+| extend IsKnownMaliciousGPO = (ObjectName has "C897F2C7-C2AC-4E6F-BF48-58036FF29E79" or ObjectName has "PAYLOAD" or Attributes has "C897F2C7-C2AC-4E6F-BF48-58036FF29E79")
+| extend IsDomainRootLink = (ObjectName =~ "gPLink" and (ObjectName startswith "DC=" or ObjectName has "OU="))
+// Tightened: dropped the redundant EventID catch-all so only known-malicious or domain-root/OU-link changes trigger
+| where IsKnownMaliciousGPO or IsDomainRootLink
+| project TimeGenerated, EventID, Computer, SubjectAccount, SubjectUserName, ObjectName, ObjectType, Attributes, IsKnownMaliciousGPO, IsDomainRootLink
+| sort by TimeGenerated desc
