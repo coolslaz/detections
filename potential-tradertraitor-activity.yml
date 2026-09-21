@@ -1,0 +1,72 @@
+title: Potential TraderTraitor Activity
+description: Detects file, process, and network activity associated with the
+  TraderTraitor/KelpDAO malware campaign based on known hashes, filenames, paths,
+  and C2 infrastructure.
+status: experimental
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_hashes:
+        SHA1:
+            - '02df07a173ab03b82a4fb6a08973fff8b1467f28'
+            - 'c491d477dbe0ae04e9aed9dbe237144c03f73ec4'
+            - '5728b11d30586bbfc1d8bd12df1c722a06e767a2'
+    selection_path_combo:
+        FileName|endswith:
+            - 'SystemUpdate'
+            - 'iSync'
+            - 'loginwindow'
+        FolderPath|contains:
+            - 'com.apple.iTunesCloud/SystemUpdate'
+            - 'com.apple.internal.ck/iSync'
+            - 'com.apple.appleaccountd/loginwindow'
+    selection_network:
+        DestinationIp:
+            - '176.97.114.232'
+            - '45.11.59.140'
+            - '85.137.56.245'
+            - '85.137.56.10'
+        DestinationHostname:
+            - 'technicais.sytes.net'
+            - 'storage.hubpage.cloud'
+            - 'grenight.com'
+            - 'registry.hashicorp-aws.com'
+            - 'registry.hashicorp-aws.io'
+            - 'registry.hashicorp-terraform.io'
+            - '185-66-91-112.cprapid.com'
+            - '213-111-146-132.cprapid.com'
+            - 'anesthesiaschool.com'
+            - 'www.anesthesiaschool.com'
+            - 'app.heyhay.online'
+            - 'heyhay.online'
+            - 'www.heyhay.online'
+            - 'update.heyhay.online'
+            - 'dela.servehttp.com'
+            - 'galaxy-royal.online'
+            - 'game.galaxy-royal.online'
+            - 'mx01.galaxy-royal.online'
+            - 'ns4.galaxy-royal.online'
+            - 'mactroubleshoots.pro'
+            - 'www.mactroubleshoots.pro'
+            - 'tinklify.com'
+            - 'www.tinklify.com'
+            - 'vaimage.com'
+            - 'wss.sytes.net'
+            - 'www.freehealth.lat'
+    condition: selection_hashes or selection_path_combo or selection_network
+level: high
+author: Arnold Chan
+tags:
+  - attack.t1566.001
+falsepositives:
+  - Filename-only matches on SystemUpdate/iSync/loginwindow are now gated on the
+  - exact malicious sub-path from the report, eliminating the legitimate macOS
+  - loginwindow.app process as a false positive.
+  - Domain matching is now exact-host (not substring), reducing accidental matches
+  - against unrelated hosts sharing part of a domain string.
+  - Hash and certificate-thumbprint matches remain the highest-confidence signals
+  - and are not path-constrained.
+references:
+  - https://thehackernews.com/2026/09/jade-sleet-linked-to-indian-it-provider.html
+  - https://www.sentinelone.com/labs/dont-call-us-well-call-your-apis-tradertraitor-backdoors-resurface-on-victim-with-no-crypto-ties/
