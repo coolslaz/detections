@@ -1,0 +1,23 @@
+title: Suspicious cmd.exe token.cmd Creation and Execution
+description: Detects creation of a token.cmd file in AppData followed by its execution via
+  cmd.exe within a 5-minute window.
+status: experimental
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_file:
+        EventID: 11
+        TargetFilename|endswith: '\\AppData\\Roaming\\token.cmd'
+    selection_proc:
+        Image|endswith: '\\cmd.exe'
+        CommandLine|contains: 'token.cmd'
+    condition: selection_file and selection_proc
+author: Arnold Chan
+tags:
+  - attack.t1059.003
+falsepositives:
+  - 'Legitimate automated maintenance scripts or installers that utilize ''token.cmd''
+    for temporary configuration or token retrieval tasks.'
+  - 'User-created batch scripts for customized environment setups that happen to
+    match the file naming and size constraints.'
