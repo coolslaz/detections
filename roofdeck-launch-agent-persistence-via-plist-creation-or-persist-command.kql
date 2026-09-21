@@ -1,0 +1,51 @@
+// Detects ROOFDECK backdoor persistence establishment via macOS Launch Agents
+// Tightened for false positives: generic 'any com.*.plist created' and 'any launchctl load'
+// fire on virtually every legitimate macOS app install/login, so this version requires the
+// implant's actual distinguishing artifacts: fake Apple-service drop paths
+// (com.apple.iTunesCloud / com.apple.internal.ck / com.apple.appleaccountd), the hardcoded
+// --type=renderer flag used by the masquerading binaries (SystemUpdate/iSync/loginwindow),
+// and/or the implant's literal 'persist add|remove|check' CLI syntax.
+let lookback = 14d;
+let MasqueradeDirs = dynamic(["com.apple.iTunesCloud", "com.apple.internal.ck", "com.apple.appleaccountd"]);
+let KnownVendorPrefixes = dynamic(["com.google.", "com.microsoft.", "com.adobe.", "com.docker.", "com.zoom.", "com.slack.", "com.dropbox.", "com.jetbrains.", "com.mozilla.", "com.citrix.", "com.vmware.", "com.cisco.", "com.1password.", "com.github.", "com.postmanlabs."]);
+// Stage 1: implant process launched from a fake Apple bundle-ID path with the hardcoded renderer flag
+let rendererMasquerade = DeviceProcessEvents
+| where TimeGenerated > ago(lookback)
+| where ProcessCommandLine has "--type=renderer"
+| where FileName in~ ("SystemUpdate", "iSync", "loginwindow")
+| where FolderPath has_any (MasqueradeDirs)
+| project TimeGenerated, DeviceId, DeviceName, FileName, FolderPath, ProcessCommandLine;
+// Stage 2: LaunchAgents plist write, excluding common legitimate vendor bundle-ID prefixes
+let plistCreation = DeviceFileEvents
+| where TimeGenerated > ago(lookback)
+| where FolderPath has "/Library/LaunchAgents/"
+| where FileName endswith ".plist"
+| where FileName =~ "loginwindow.plist" or not(FileName has_any (KnownVendorPrefixes))
+| project TimeGenerated, DeviceId, DeviceName, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine;
+// Corroborated persistence: plist write within 10 minutes of a masquerading renderer-flagged
+// process on the same device -- ties the plist write to actual malicious activity instead of
+// alerting on the plist write alone
+let corroboratedPersistence = plistCreation
+| join kind=inner (rendererMasquerade) on DeviceId
+| where abs(datetime_diff('minute', TimeGenerated, TimeGenerated1)) <= 10
+| extend MatchType = "LaunchAgent plist + masquerading renderer process"
+| project TimeGenerated, DeviceId, DeviceName, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine=strcat(InitiatingProcessCommandLine, " | corroborating process: ", FolderPath1), MatchType;
+// Stage 3: launchctl explicitly loading one of the flagged malicious paths/files
+let launchctlLoad = DeviceProcessEvents
+| where TimeGenerated > ago(lookback)
+| where FileName =~ "launchctl"
+| where ProcessCommandLine has "load"
+| where ProcessCommandLine has "loginwindow.plist" or ProcessCommandLine has_any (MasqueradeDirs)
+| extend MatchType = "launchctl load of masquerading agent"
+| project TimeGenerated, DeviceId, DeviceName, FileName, FolderPath=ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, MatchType;
+// Stage 4: the implant's literal persist CLI syntax, scoped to the known masquerading binaries
+let persistCommand = DeviceProcessEvents
+| where TimeGenerated > ago(lookback)
+| where FileName in~ ("SystemUpdate", "iSync", "loginwindow")
+| where ProcessCommandLine matches regex @"(?i)\bpersist\s+(add|remove|check)\b"
+| extend MatchType = "ROOFDECK persist command"
+| project TimeGenerated, DeviceId, DeviceName, FileName, FolderPath=ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, MatchType;
+corroboratedPersistence
+| union launchctlLoad
+| union persistCommand
+| sort by TimeGenerated desc
