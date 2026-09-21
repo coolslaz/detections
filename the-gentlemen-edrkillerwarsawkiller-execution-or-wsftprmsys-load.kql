@@ -1,0 +1,15 @@
+let ProcEvents = DeviceProcessEvents
+| where FileName in~ ("EDRKiller.exe", "WarsawKiller.exe")
+   or ProcessCommandLine has_any ("EDRKiller.exe", "WarsawKiller.exe", "wsftprm.sys")
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, SHA256;
+let FileEvents = DeviceFileEvents
+| where ActionType == "FileCreated"
+| where FileName in~ ("EDRKiller.exe", "WarsawKiller.exe", "wsftprm.sys")
+| project TimeGenerated, DeviceName, AccountName = InitiatingProcessAccountName, FileName, ProcessCommandLine = InitiatingProcessCommandLine, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, SHA256;
+let DriverEvents = DeviceEvents
+| where ActionType in ("ServiceInstalled", "DriverLoad")
+| where (AdditionalFields has "wsftprm.sys" or FileName =~ "wsftprm.sys")
+   and (InitiatingProcessFileName in~ ("EDRKiller.exe", "WarsawKiller.exe") or InitiatingProcessCommandLine has_any ("EDRKiller", "WarsawKiller"))
+| project TimeGenerated, DeviceName, AccountName = InitiatingProcessAccountName, FileName, ProcessCommandLine = InitiatingProcessCommandLine, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, SHA256;
+union ProcEvents, FileEvents, DriverEvents
+| sort by TimeGenerated desc
