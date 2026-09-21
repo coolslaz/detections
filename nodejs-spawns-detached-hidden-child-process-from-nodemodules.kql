@@ -1,0 +1,9 @@
+DeviceProcessEvents
+| where FileName in~ ("node.exe", "node")
+| where InitiatingProcessFileName in~ ("node.exe", "node")
+| where InitiatingProcessFolderPath has "node_modules"
+| where ProcessCommandLine has_all ("detached", "stdio", "windowsHide")
+| where ProcessCommandLine contains "ignore"
+| where not(InitiatingProcessFolderPath has_any ("pm2", "forever", "nodemon", "electron", "playwright", "puppeteer", "npm", "yarn", "pnpm"))
+| where not(InitiatingProcessCommandLine has_any ("update-notifier", "webpack-dev-server", "npm-cli.js", "yarn.js"))
+| project TimeGenerated, DeviceId, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, AccountName
