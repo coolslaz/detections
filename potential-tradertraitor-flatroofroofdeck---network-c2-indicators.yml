@@ -1,0 +1,57 @@
+title: Potential TraderTraitor FLATROOF/ROOFDECK - Network C2 Indicators
+id: 8f1e2c3d-4a5b-4c6d-9e7f-1a2b3c4d5e6f
+status: experimental
+description: Detects network connections to known FLATROOF and ROOFDECK C2 infrastructure
+  used by Jade Sleet/TraderTraitor (UNC4899, Lazarus) in campaigns targeting IT
+  services and DevOps engineers.
+author: Arnold Chan
+references:
+  - https://thehackernews.com/2026/09/jade-sleet-linked-to-indian-it-provider.html
+  - https://www.sentinelone.com/labs/dont-call-us-well-call-your-apis-tradertraitor-backdoors-resurface-on-victim-with-no-crypto-ties/
+date: '2026-09-21'
+modified: '2026-09-21'
+tags:
+  - attack.command_and_control
+  - attack.t1071
+logsource:
+  category: network_connection
+  product: macos
+detection:
+  selection_ip:
+    DestinationIp:
+      - 176.97.114.232
+      - 45.11.59.140
+      - 85.137.56.245
+      - 85.137.56.10
+  selection_domain:
+    DestinationHostname:
+      - technicais.sytes.net
+      - storage.hubpage.cloud
+      - grenight.com
+      - registry.hashicorp-aws.com
+      - registry.hashicorp-aws.io
+      - registry.hashicorp-terraform.io
+      - 185-66-91-112.cprapid.com
+      - 213-111-146-132.cprapid.com
+      - anesthesiaschool.com
+      - www.anesthesiaschool.com
+      - app.heyhay.online
+      - heyhay.online
+      - www.heyhay.online
+      - update.heyhay.online
+      - dela.servehttp.com
+      - galaxy-royal.online
+      - game.galaxy-royal.online
+      - mx01.galaxy-royal.online
+      - ns4.galaxy-royal.online
+      - mactroubleshoots.pro
+      - www.mactroubleshoots.pro
+      - tinklify.com
+      - www.tinklify.com
+      - vaimage.com
+      - wss.sytes.net
+      - www.freehealth.lat
+  condition: selection_ip or selection_domain
+falsepositives:
+  - Unlikely - these are known malicious C2 infrastructure indicators
+level: high
