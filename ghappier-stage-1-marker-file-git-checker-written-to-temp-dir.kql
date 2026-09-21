@@ -1,0 +1,7 @@
+DeviceFileEvents
+| where TimeGenerated > ago(14d)
+| where FileName =~ ".git-checker"
+| where FolderPath has_any ("Temp", "tmp", "TMPDIR", "AppData\\Local\\Temp")
+| where ActionType == "FileCreated"
+| project TimeGenerated, DeviceId, DeviceName, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName, ActionType
+| order by TimeGenerated desc
