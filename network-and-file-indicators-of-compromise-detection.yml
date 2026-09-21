@@ -1,0 +1,30 @@
+title: Network and File Indicators of Compromise Detection
+status: experimental
+logsource:
+    category: network_connection
+    product: windows
+detection:
+    selection_net_ip:
+        DestinationIp: "65.109.70.162"
+    selection_net_domain_exact:
+        DestinationHostname: "borjumaniya.store"
+    selection_net_domain_sub:
+        DestinationHostname|endswith: ".borjumaniya.store"
+    selection_file_hash:
+        Hashes|contains:
+            - "97bd65e98cdc4e93d49edd4ea905d43a61244df0fd3323e6649330de3b1be091"
+            - "e2b31ac7ee077b26332444a83a68ab75be641113e7d86979d844a0f3478f01f9"
+            - "e74088419de2e5b47b1889f2ba1369cb4b436405ce03cf07da452791681f9923"
+            - "096ec37870eb401793592c9b53b5b52fc7a70b113bc2d9cd3f53231142d6c584"
+            - "138c41085f5f07adbdeff4df97a6a80252571e28"
+    condition: selection_net_ip or selection_net_domain_exact or selection_net_domain_sub or selection_file_hash
+description: This rule monitors network, file, and process telemetry for matches against a
+  predefined list of malicious IP addresses, domain names, and file hashes. It
+  flags suspicious network connections to known C2 infrastructure and the presence
+  or execution of known malicious files based on SHA256 and SHA1 indicators.
+author: Arnold Chan
+tags:
+  - attack.t1583
+falsepositives:
+  - Hash-based matches are exact SHA256/SHA1 equality and effectively zero-FP.
+  - "Network match now requires exact host equality or true subdomain of borjumaniya.store (parsed from the URL), not a loose substring — eliminating incidental matches against unrelated domains that happen to contain the string."
