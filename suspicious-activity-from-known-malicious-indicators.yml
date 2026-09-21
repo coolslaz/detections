@@ -1,0 +1,60 @@
+title: Suspicious Activity from Known Malicious Indicators
+status: experimental
+logsource:
+    category: endpoint
+    # description: Cross-source detection covering network, file, and process events.
+detection:
+    selection_ips:
+        DestinationIp:
+            - '193.26.115.131'
+            - '193.247.144.38'
+            - '166.88.73.46'
+            - '166.88.134.62'
+    selection_domains:
+        RemoteUrl|contains:
+            - 'primevector-app924560.vercel.app'
+            - 'brightlaunch-ext75642.vercel.app'
+    selection_urls:
+        RemoteUrl|contains:
+            - 'https://primevector-app924560.vercel.app/api/key?mem=ghappier'
+            - 'https://primevector-app924560.vercel.app/api/key?mem=g0115'
+            - 'http://brightlaunch-ext75642.vercel.app/api/m'
+            - 'https://brightlaunch-ext75642.vercel.app/api/m'
+            - 'http://brightlaunch-ext75642.vercel.app/api/l'
+            - 'https://brightlaunch-ext75642.vercel.app/api/l'
+            - 'http://brightlaunch-ext75642.vercel.app/api/w'
+            - 'https://brightlaunch-ext75642.vercel.app/api/w'
+            - 'http://brightlaunch-ext75642.vercel.app/api/tokenl'
+            - 'https://brightlaunch-ext75642.vercel.app/api/tokenl'
+            - 'http://brightlaunch-ext75642.vercel.app/api/tokenl?st='
+            - 'https://brightlaunch-ext75642.vercel.app/api/tokenl?st='
+            - 'http://brightlaunch-ext75642.vercel.app/api/tokenw'
+            - 'https://brightlaunch-ext75642.vercel.app/api/tokenw'
+            - 'http://brightlaunch-ext75642.vercel.app/api/g'
+            - 'https://brightlaunch-ext75642.vercel.app/api/g'
+            - 'http://brightlaunch-ext75642.vercel.app/api/package'
+            - 'https://brightlaunch-ext75642.vercel.app/api/package'
+            - 'http://brightlaunch-ext75642.vercel.app/api/handle'
+            - 'https://brightlaunch-ext75642.vercel.app/api/handle'
+    selection_hashes:
+        SHA256:
+            - 'a85c6955ad689aa89eaae8c8b30723935274f069aed044489cfd922b46bcf2f7'
+            - 'f2c8234c00b1f5b0b135534bf51207dc0239647890b73531996d60c90cf9e866'
+    condition: 1 of selection_*
+level: high
+description: This rule monitors for network connections to known malicious domains and IP
+  addresses, as well as the presence or execution of files with specific SHA256
+  hashes known to be associated with threat activity. The indicators focus on
+  Vercel-hosted domains and specific file hashes linked to recent campaign
+  activity.
+author: Arnold Chan
+tags:
+  - attack.kql
+falsepositives:
+  - Security research activities
+  - Legitimate use of the Vercel hosting platform for enterprise applications
+  - False positive indicators within threat intelligence feeds if IOCs are recycled
+  - or have been re-assigned to benign infrastructure
+references:
+  - https://www.cloudsek.com/blog/ghappier-malware-loader-npm-supply-chain-attack
+  - https://cdn.cloudsek.com/cloudsek-blog-pdfs/ghappier-9o83ocu.pdf
