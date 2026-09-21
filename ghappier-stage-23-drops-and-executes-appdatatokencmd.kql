@@ -1,0 +1,15 @@
+DeviceFileEvents
+| where TimeGenerated > ago(14d)
+| where FolderPath endswith @"\AppData\Roaming\token.cmd"
+| where ActionType == "FileCreated"
+| where FileSize between (3800 .. 4300)
+| project FileWriteTime = TimeGenerated, DeviceId, FolderPath, FileName, SHA256, FileSize
+| join kind=inner (
+    DeviceProcessEvents
+    | where TimeGenerated > ago(14d)
+    | where FileName =~ "cmd.exe"
+    | where ProcessCommandLine has "token.cmd"
+    | project ProcessStartTime = TimeGenerated, DeviceId, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
+) on DeviceId
+| where ProcessStartTime between (FileWriteTime .. FileWriteTime + 5m)
+| project FileWriteTime, ProcessStartTime, DeviceId, FolderPath, FileName, SHA256, FileSize, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
