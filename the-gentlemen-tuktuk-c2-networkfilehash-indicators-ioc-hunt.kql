@@ -1,0 +1,19 @@
+let c2_ip = "65.109.70.162";
+let c2_domain = "borjumaniya.store";
+let sha256_iocs = dynamic(["97bd65e98cdc4e93d49edd4ea905d43a61244df0fd3323e6649330de3b1be091","e2b31ac7ee077b26332444a83a68ab75be641113e7d86979d844a0f3478f01f9","e74088419de2e5b47b1889f2ba1369cb4b436405ce03cf07da452791681f9923","096ec37870eb401793592c9b53b5b52fc7a70b113bc2d9cd3f53231142d6c584"]);
+let sha1_iocs = dynamic(["138c41085f5f07adbdeff4df97a6a80252571e28"]);
+let NetworkEvents = DeviceNetworkEvents
+| where TimeGenerated > ago(30d)
+| extend UrlHost = tostring(parse_url(RemoteUrl).Host)
+| where RemoteIP == c2_ip or UrlHost =~ c2_domain or UrlHost endswith strcat(".", c2_domain)
+| project TimeGenerated, DeviceId, DeviceName, ActionType, RemoteIP, RemoteUrl, RemotePort, InitiatingProcessFileName, InitiatingProcessCommandLine, MatchType = "NetworkIOC", MatchedIndicator = iff(RemoteIP == c2_ip, c2_ip, c2_domain);
+let FileEvents = DeviceFileEvents
+| where TimeGenerated > ago(30d)
+| where SHA256 in (sha256_iocs) or SHA1 in (sha1_iocs)
+| project TimeGenerated, DeviceId, DeviceName, ActionType, RemoteIP = "", RemoteUrl = FileName, RemotePort = 0, InitiatingProcessFileName, InitiatingProcessCommandLine = "", MatchType = "FileHashIOC", MatchedIndicator = coalesce(SHA256, SHA1);
+let ProcessEvents = DeviceProcessEvents
+| where TimeGenerated > ago(30d)
+| where SHA256 in (sha256_iocs) or SHA1 in (sha1_iocs)
+| project TimeGenerated, DeviceId, DeviceName, ActionType, RemoteIP = "", RemoteUrl = FileName, RemotePort = 0, InitiatingProcessFileName, InitiatingProcessCommandLine = ProcessCommandLine, MatchType = "ProcessHashIOC", MatchedIndicator = coalesce(SHA256, SHA1);
+union NetworkEvents, FileEvents, ProcessEvents
+| sort by TimeGenerated desc
