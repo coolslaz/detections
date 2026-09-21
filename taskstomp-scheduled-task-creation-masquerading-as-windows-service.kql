@@ -1,0 +1,12 @@
+let TaskNames = dynamic(["Local Credential Manager","Network Audio Service","Windows Display Manager","Device Credential Handler","Network Session Agent","System Audio Controller","Host Session Broker","System Registry Handler"]);
+DeviceProcessEvents
+| where FileName in~ ("schtasks.exe")
+| where InitiatingProcessFileName in~ ("wscript.exe", "cscript.exe")
+| where ProcessCommandLine has "/Create" and ProcessCommandLine has "/F"
+| extend TaskName = extract(@'(?i)/TN\s+"([^"]+)"', 1, ProcessCommandLine)
+| extend XmlPath = extract(@'(?i)/XML\s+"([^"]+)"', 1, ProcessCommandLine)
+| where TaskName in~ (TaskNames)
+| where XmlPath matches regex @'(?i)\\AppData\\Local\\WinDefendSvc\\task[0-9]?\.xml$'
+| summarize TaskCount = dcount(TaskName), Tasks = make_set(TaskName, 10), XmlPaths = make_set(XmlPath, 10), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by DeviceId, DeviceName, InitiatingProcessId, InitiatingProcessCommandLine, AccountName, bin(TimeGenerated, 5m)
+| where TaskCount >= 2
+| project FirstSeen, LastSeen, DeviceId, DeviceName, AccountName, InitiatingProcessCommandLine, TaskCount, Tasks, XmlPaths
