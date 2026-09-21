@@ -1,0 +1,35 @@
+title: Suspicious PowerShell Execution with Node.js Download
+id: 93475f71-29e5-4f36-8e5f-502a901e1494
+status: experimental
+description: Detects suspicious PowerShell commands involving node.js, hidden window styles,
+  and file downloads or transfers.
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_image:
+        Image|endswith: '\powershell.exe'
+    selection_regex:
+        CommandLine|re|i: '-w(indowstyle)?\s+(hidden|1|0x01)'
+    selection_nodejs:
+        CommandLine|contains: 'nodejs.org'
+    selection_files:
+        CommandLine|contains:
+            - '.msi'
+            - 'node.exe'
+    selection_methods:
+        CommandLine|contains:
+            - 'Invoke-WebRequest'
+            - 'iwr'
+            - 'DownloadFile'
+            - 'Net.WebClient'
+            - 'Start-BitsTransfer'
+            - 'curl.exe'
+    condition: selection_image and selection_regex and selection_nodejs and selection_files and selection_methods
+level: high
+author: Arnold Chan
+tags:
+  - attack.execution
+falsepositives:
+  - 'Legitimate automated maintenance scripts or software deployment tools that use PowerShell to update Node.js environments.'
+  - 'Internal development tools or automation scripts that use PowerShell to manage infrastructure dependencies.'
