@@ -1,0 +1,49 @@
+title: Suspicious Node.js Execution via Detached Process
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_process:
+        Image|endswith:
+            - '\node.exe'
+            - '\node'
+    selection_init:
+        ParentImage|endswith:
+            - '\node.exe'
+            - '\node'
+    selection_path:
+        ParentImage|contains: 'node_modules'
+    selection_cmdline:
+        CommandLine|contains|all:
+            - 'detached'
+            - 'stdio'
+            - 'windowsHide'
+            - 'ignore'
+    filter_parent_proc:
+        ParentImage|contains:
+            - 'pm2'
+            - 'forever'
+            - 'nodemon'
+            - 'electron'
+            - 'playwright'
+            - 'puppeteer'
+            - 'npm'
+            - 'yarn'
+            - 'pnpm'
+    filter_parent_cmdline:
+        ParentCommandLine|contains:
+            - 'update-notifier'
+            - 'webpack-dev-server'
+            - 'npm-cli.js'
+            - 'yarn.js'
+    condition: selection_process and selection_init and selection_path and selection_cmdline and not (filter_parent_proc or filter_parent_cmdline)
+level: medium
+tags:
+    - attack.execution
+    - attack.t1059
+author: Arnold Chan
+falsepositives:
+    - 'Legitimate custom application build tools or internal deployment scripts that manage background processes.'
+    - 'Complex local development environments that utilize custom process managers not listed in the exclusion filter.'
+    - 'Global monitoring or logging agents built on Node.js that spawn tasks in a detached state.'
+description: 'This rule detects potentially malicious child processes spawned by Node.js. It specifically monitors for scenarios where a Node.js process executes a detached child process using standard library options (''detached'', ''stdio'', ''windowsHide'', ''ignore''), which is a common technique used by malware to run background tasks while remaining hidden from the parent process terminal. The rule excludes common benign development, build, and process management tools to reduce false positives.'
