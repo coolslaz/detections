@@ -1,0 +1,38 @@
+rule c2_ioc_detection {
+  meta:
+    description = "Detects Network, File, or Process events associated with known C2 IOCs"
+    severity = "High"
+    author = "Arnold Chan"
+    tags = "kql"
+    reference = "https://oasis-security.io/blog/The-Gentlemen-Ransomware-Hacker-Groups-TukTuk-Framework"
+    false_positive1 = "Hash-based matches are exact SHA256/SHA1 equality and effectively zero-FP."
+    false_positive2 = "Network match now requires exact host equality or true subdomain of borjumaniya.store (parsed from the URL), not a loose substring — eliminating incidental matches against unrelated domains that happen to contain the string."
+events:
+    $net.metadata.event_type = "NETWORK_CONNECTION"
+    (
+      $net.target.ip = "65.109.70.162" or
+      strings.extract_domain($net.target.url) = "borjumaniya.store" or
+      re.regex(strings.extract_domain($net.target.url), /.*\.borjumaniya\.store$/)
+    )
+
+    ($file.metadata.event_type = "FILE_CREATION" or $file.metadata.event_type = "FILE_MODIFICATION")
+    (
+      $file.target.file.sha256 = "97bd65e98cdc4e93d49edd4ea905d43a61244df0fd3323e6649330de3b1be091" or
+      $file.target.file.sha256 = "e2b31ac7ee077b26332444a83a68ab75be641113e7d86979d844a0f3478f01f9" or
+      $file.target.file.sha256 = "e74088419de2e5b47b1889f2ba1369cb4b436405ce03cf07da452791681f9923" or
+      $file.target.file.sha256 = "096ec37870eb401793592c9b53b5b52fc7a70b113bc2d9cd3f53231142d6c584" or
+      $file.target.file.sha1 = "138c41085f5f07adbdeff4df97a6a80252571e28"
+    )
+
+    $proc.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      $proc.target.process.file.sha256 = "97bd65e98cdc4e93d49edd4ea905d43a61244df0fd3323e6649330de3b1be091" or
+      $proc.target.process.file.sha256 = "e2b31ac7ee077b26332444a83a68ab75be641113e7d86979d844a0f3478f01f9" or
+      $proc.target.process.file.sha256 = "e74088419de2e5b47b1889f2ba1369cb4b436405ce03cf07da452791681f9923" or
+      $proc.target.process.file.sha256 = "096ec37870eb401793592c9b53b5b52fc7a70b113bc2d9cd3f53231142d6c584" or
+      $proc.target.process.file.sha1 = "138c41085f5f07adbdeff4df97a6a80252571e28"
+    )
+
+  condition:
+    $net or $file or $proc
+}
