@@ -1,0 +1,38 @@
+let TaskStompHashes = dynamic([
+ "5251098838fab2f3192307cac99ad2d3a71b55ba1f256412d43a9dfb3b93ac58",
+ "7a9e7b4c2f75f7de03838f5c9589148cdbefb76200ea3cf2d6f1a2288c302493",
+ "ff12c194128d0733434ce1580691bfde5896f14ba9f360c0f6c3a622eed24312",
+ "e46111264ebd91e80bbad85141d254930354faa0f15d3bbfaf4826adf5a53c8d",
+ "335d19f4e757e0c36c9ef1cb4638e151aac041b7814e3eb8bda6f78ff7011f32",
+ "103b4d4a666bc0a89c10c9df55f54f4be5fa111e8429c37ae14fa8f16cb50fe8",
+ "02ba7c982b68ec8f5a1cb47c6f3969f3f2f38ea9b4ebb8833d1b8b0ba2ab1407",
+ "8f448080cec5cba2f0ba6a960bc3425a2d99a6767464f581d13476985eaa4a2e",
+ "41231e7f5db49055dbe4246462e60077a67b1845696df3947eb1121fe392947f",
+ "bd200756b4e996a6e7cc63036aa760f9585f252c55a60cab12f29e389b96e0ef"
+]);
+let TaskStompDomains = dynamic(["irantenders.com", "corecloudfileshare.xyz", "attachmentsharingdrive.xyz"]);
+let TaskStompUrls = dynamic([
+ "https://www.irantenders.com/tender/tot-delete-6e137de.php",
+ "https://corecloudfileshare.xyz/",
+ "https://attachmentsharingdrive.xyz/"
+]);
+let FileHashHits = DeviceFileEvents
+| where SHA256 in (TaskStompHashes)
+| extend IndicatorType = "hash", IndicatorValue = SHA256, AccountName = InitiatingProcessAccountName
+| project TimeGenerated, IndicatorType, IndicatorValue, DeviceId, DeviceName, AccountName;
+let ProcessHashHits = DeviceProcessEvents
+| where SHA256 in (TaskStompHashes) or InitiatingProcessSHA256 in (TaskStompHashes)
+| extend IndicatorType = "hash", IndicatorValue = iff(SHA256 in (TaskStompHashes), SHA256, InitiatingProcessSHA256), AccountName = InitiatingProcessAccountName
+| project TimeGenerated, IndicatorType, IndicatorValue, DeviceId, DeviceName, AccountName;
+let DomainHits = DeviceNetworkEvents
+| extend RemoteHost = tostring(parse_url(RemoteUrl).Host)
+| where isnotempty(RemoteHost)
+| where RemoteHost in (TaskStompDomains) or RemoteHost endswith "irantenders.com" or RemoteHost endswith "corecloudfileshare.xyz" or RemoteHost endswith "attachmentsharingdrive.xyz"
+| extend IndicatorType = "domain", IndicatorValue = RemoteHost, AccountName = InitiatingProcessAccountName
+| project TimeGenerated, IndicatorType, IndicatorValue, DeviceId, DeviceName, AccountName;
+let UrlHits = DeviceNetworkEvents
+| where RemoteUrl in (TaskStompUrls)
+| extend IndicatorType = "url", IndicatorValue = RemoteUrl, AccountName = InitiatingProcessAccountName
+| project TimeGenerated, IndicatorType, IndicatorValue, DeviceId, DeviceName, AccountName;
+union FileHashHits, ProcessHashHits, DomainHits, UrlHits
+| sort by TimeGenerated desc
