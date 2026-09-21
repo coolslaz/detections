@@ -1,0 +1,7 @@
+DeviceProcessEvents
+| where FileName =~ "powershell.exe"
+| where ProcessCommandLine matches regex @"(?i)-w(indowstyle)?\s+(hidden|1|0x01)"
+| where ProcessCommandLine has "nodejs.org"
+| where ProcessCommandLine has_any (".msi", "node.exe")
+| where ProcessCommandLine has_any ("Invoke-WebRequest", "iwr", "DownloadFile", "Net.WebClient", "Start-BitsTransfer", "curl.exe")
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName
