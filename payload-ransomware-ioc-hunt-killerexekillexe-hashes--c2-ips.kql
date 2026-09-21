@@ -1,0 +1,16 @@
+// NOTE: Defender advanced hunting deprecated the MD5 column, so the two known MD5s
+// (0108656a3e1ade6ca4f21b084f5e1208 = killer.exe, bea5e267f24d7da59f6821bffdbff293 = kill.exe)
+// cannot be hash-matched here -- falling back to filename matching for those two tools.
+let PayloadFileNames = dynamic(["killer.exe", "kill.exe"]);
+let PayloadIPs = dynamic(["37.19.210.12", "146.70.117.239", "149.102.229.154", "104.164.55.46", "104.28.162.228", "104.28.163.162", "64.190.76.14", "192.42.116.50", "192.42.116.12", "192.42.116.56", "192.42.116.97", "192.42.116.52"]);
+// Shared/anycast IPs (Cloudflare range) -- too noisy to alert on standard web ports; only flag on non-standard ports
+let SharedInfraIPs = dynamic(["104.28.162.228", "104.28.163.162"]);
+let TrustedPaths = dynamic(["\\Windows\\System32", "\\Windows\\SysWOW64", "\\Program Files"]);
+union DeviceFileEvents, DeviceProcessEvents, DeviceNetworkEvents
+| where (FileName in~ (PayloadFileNames) and not(FolderPath has_any (TrustedPaths)))
+   or (InitiatingProcessFileName in~ (PayloadFileNames) and not(InitiatingProcessFolderPath has_any (TrustedPaths)))
+   or (RemoteIP in (PayloadIPs) and not(RemoteIP in (SharedInfraIPs) and RemotePort in (80, 443)))
+| extend IOCType = case(RemoteIP in (PayloadIPs), "RemoteIP", FileName in~ (PayloadFileNames), "FileName", "InitiatingProcessFileName"),
+         IOCValue = case(RemoteIP in (PayloadIPs), RemoteIP, FileName in~ (PayloadFileNames), FileName, InitiatingProcessFileName)
+| project TimeGenerated, DeviceName, IOCType, IOCValue, FileName, FolderPath, RemoteIP, RemoteUrl, RemotePort, SHA256, InitiatingProcessAccountName
+| sort by TimeGenerated desc
