@@ -1,0 +1,41 @@
+title: Suspicious Self-Deletion of Executable or Script
+description: Detects a process that deletes its own executable or script file within a short
+  time window after launch, which is a technique used by some implants.
+status: experimental
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_process:
+        FolderPath|contains:
+            - '.vscode'
+            - 'VSCODE'
+        FileName|contains:
+            - 'parser.js'
+            - 'loader.js'
+            - 'node.exe'
+            - 'node'
+    filter_node_path:
+        FolderPath|contains:
+            - 'Program Files\nodejs'
+            - 'Program Files (x86)\nodejs'
+            - 'AppData\Roaming\npm'
+            - 'AppData\Local\Programs'
+            - 'AppData\Local\Volta'
+    selection_file_delete:
+        EventID: 23
+        TargetFilename|endswith:
+            - 'parser.js'
+            - 'loader.js'
+            - 'node.exe'
+            - 'node'
+    condition: selection_process and selection_file_delete and not filter_node_path
+level: high
+tags:
+    - attack.defense_evasion
+    - attack.t1070.004
+author: Arnold Chan
+falsepositives:
+  - 'Legitimate software installers or self-extracting archives that clean up temporary files post-execution.'
+  - 'Automated build or deployment scripts that utilize transient loaders for installation or configuration tasks.'
+  - 'Updates performed by software management tools that move or delete temporary binaries after successful verification.'
