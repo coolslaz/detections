@@ -1,0 +1,23 @@
+title: Suspicious .git-checker File Creation
+description: Detects creation of .git-checker files in temporary directories, a pattern
+  associated with potential malicious activity.
+status: experimental
+logsource:
+    category: file_event
+    product: windows
+detection:
+    selection:
+        FileName: '.git-checker'
+        FolderPath|contains:
+            - 'Temp'
+            - 'tmp'
+            - 'TMPDIR'
+            - 'AppData\Local\Temp'
+    condition: selection
+level: medium
+tags:
+    - attack.execution
+author: Arnold Chan
+falsepositives:
+  - 'Legitimate software build processes or CI/CD pipelines that use temporary directories for validation scripts.'
+  - 'Administrative scripts that might use naming conventions similar to ''.git-checker'' for local status tracking.'
