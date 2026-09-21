@@ -1,0 +1,35 @@
+let ChainScriptHashes = dynamic(
+[
+ "20a9e297220fe4cb9f939eaa82582c6e9a8f6dd4424635206dec08fa1986b8fa",
+ "6e07d2de3618bb92265248653361ff39c63c0cfba2f4aa2538b3128fa9ce3a50",
+ "bad0600a850436154f8d7b6f7a191dc45bd136897780cd032b336cb4b358d241",
+ "496c202abf53984164f5f319a72b02c8e06016d0f35681353ef07db8e6d1b31f",
+ "9fa80577b8b3cb9c3062e5e1986cc9fe0c26eed023f7d430dfa5c60169c15c45",
+ "7969ccaf1db750bc3b02d51626d6916ecbd0c0cf2f7de3c7bc0be240f5f2978d"
+]);
+let ChainScriptIPs = dynamic(["176.65.144.127","176.65.144.40"]);
+let ChainScriptDomains = dynamic(["api-configuard.com","shift-api-control.com","bedotiq.net","kerosand.net","moweros.net","giperon.net"]);
+let ChainScriptExecChain = dynamic(["node.exe","wscript.exe","msiexec.exe","powershell.exe","cmd.exe"]);
+let ProcessHits = DeviceProcessEvents
+| where SHA256 in~ (ChainScriptHashes) or InitiatingProcessSHA256 in~ (ChainScriptHashes)
+ or FileName in~ ("ComponentTask33-4d14e6ac.msi","UpdateDigital-0c3c5204.msi","HostShared-1a5b7e17.msi","OrchidViolet66-5595bc08.msi","ProfileQuickHost.exe","SearchTrustedRuntimeSvc.exe")
+| project TimeGenerated, DeviceName, DeviceId, MatchType = "ProcessEvent", Confidence = "High", FileName, SHA256, ProcessCommandLine, AccountName, RemoteIP = "", RemoteUrl = "", InitiatingProcessFileName;
+let FileHits = DeviceFileEvents
+| where SHA256 in~ (ChainScriptHashes)
+ or FileName in~ ("ComponentTask33-4d14e6ac.msi","UpdateDigital-0c3c5204.msi","HostShared-1a5b7e17.msi","OrchidViolet66-5595bc08.msi","ProfileQuickHost.exe","SearchTrustedRuntimeSvc.exe")
+| project TimeGenerated, DeviceName, DeviceId, MatchType = "FileEvent", Confidence = "High", FileName, SHA256, ProcessCommandLine = strcat(FolderPath, " (", ActionType, ")"), AccountName = "", RemoteIP = "", RemoteUrl = "", InitiatingProcessFileName = "";
+let NetworkEventsParsed = DeviceNetworkEvents
+| extend ParsedHost = tostring(parse_url(RemoteUrl).Host)
+| extend ParsedHost = iff(isempty(ParsedHost), RemoteUrl, ParsedHost);
+let DomainHits = NetworkEventsParsed
+| where ParsedHost in~ (ChainScriptDomains)
+| project TimeGenerated, DeviceName, DeviceId, MatchType = "NetworkEvent-DomainExact", Confidence = "High", FileName = "", SHA256 = "", ProcessCommandLine = "", AccountName = "", RemoteIP, RemoteUrl, InitiatingProcessFileName;
+let IPHits = NetworkEventsParsed
+| where RemoteIP in (ChainScriptIPs)
+ and InitiatingProcessFileName in~ (ChainScriptExecChain)
+| project TimeGenerated, DeviceName, DeviceId, MatchType = "NetworkEvent-IPWithProcessContext", Confidence = "Medium", FileName = "", SHA256 = "", ProcessCommandLine = "", AccountName = "", RemoteIP, RemoteUrl, InitiatingProcessFileName;
+ProcessHits
+| union FileHits
+| union DomainHits
+| union IPHits
+| sort by TimeGenerated desc
