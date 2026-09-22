@@ -1,0 +1,13 @@
+// Detects bursts of anonymous comment submissions to wp-comments-post.php from the same source
+// within a short 10-minute window, using a single or near-single user agent, consistent with an
+// attacker script probing the first-time-commenter moderation-hold setting to get a crafted
+// comment published without administrator approval (Comment2Shell / CVE-2026-93485 style abuse).
+W3CIISLog
+| where TimeGenerated > ago(1h)
+| where csMethod =~ "POST"
+| where csUriStem has "wp-comments-post.php"
+| where not(csUserAgent has_any ("pingdom", "uptimerobot", "statuscake", "site24x7", "newrelic", "datadog", "googlebot", "bingbot", "ahrefsbot", "semrushbot"))
+| summarize SubmissionCount = count(), DistinctUserAgents = dcount(csUserAgent), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by cIP, sSiteName, bin(TimeGenerated, 10m)
+| where SubmissionCount >= 8
+| where DistinctUserAgents <= 2
+| project cIP, sSiteName, SubmissionCount, DistinctUserAgents, FirstSeen, LastSeen
