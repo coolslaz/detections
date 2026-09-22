@@ -1,0 +1,27 @@
+// Detects the zero-click execution step: a logged-in administrator session requests a page that can render user-generated comments (carrying the planted Comment2Shell payload) and, within seconds, that same session issues a sensitive/high-impact wp-admin request -- too fast to be a human click, consistent with an autofocus/onfocus handler firing automatically and immediately using the admin's session.
+let PageViews = W3CIISLog
+| where TimeGenerated > ago(1d)
+| where isnotempty(csUserName)
+| where csMethod == "GET"
+| where csUriStem !contains "/wp-admin/"
+// Restrict to URIs that plausibly render comments: single posts/pages, not the homepage or static assets
+| where csUriStem matches regex @"(?i)(/\?p=\d+|/\d{4}/\d{2}/|/[a-z0-9\-]+/?$)"
+| where csUriStem !endswith ".css" and csUriStem !endswith ".js" and csUriStem !endswith ".png" and csUriStem !endswith ".jpg" and csUriStem !endswith ".jpeg" and csUriStem !endswith ".gif" and csUriStem !endswith ".ico" and csUriStem !endswith ".woff" and csUriStem !endswith ".woff2" and csUriStem !endswith ".svg"
+| where csUriStem != "/" and csUriStem !endswith "/index.php"
+| project ViewTime = TimeGenerated, csUserName, cIP, ViewedUri = csUriStem;
+let AdminActions = W3CIISLog
+| where TimeGenerated > ago(1d)
+| where isnotempty(csUserName)
+| where csUriStem contains "/wp-admin/"
+// Exclude routine navigation/dashboard landing and heartbeat/ajax polling
+| where csUriStem !endswith "wp-admin/index.php"
+| where csUriStem !contains "admin-ajax.php"
+// Focus on sensitive/high-impact endpoints: plugin/theme install or edit, user creation, options update
+| where csUriStem has_any ("plugin-install.php", "plugin-editor.php", "plugins.php", "theme-install.php", "theme-editor.php", "themes.php", "user-new.php", "options.php", "options-general.php", "update.php")
+| project ActionTime = TimeGenerated, csUserName, cIP, ActionUri = csUriStem, ActionQuery = csUriQuery;
+PageViews
+| join kind=inner (AdminActions) on csUserName, cIP
+| extend SecondsBetween = datetime_diff("Second", ActionTime, ViewTime)
+| where SecondsBetween >= 0 and SecondsBetween <= 5
+| project ViewTime, ActionTime, SecondsBetween, csUserName, cIP, ViewedUri, ActionUri, ActionQuery
+| sort by SecondsBetween asc
