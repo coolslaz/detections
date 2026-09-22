@@ -1,0 +1,5 @@
+DeviceProcessEvents
+| where FileName =~ "mshta.exe"
+| where InitiatingProcessFileName =~ "explorer.exe"
+| where ProcessCommandLine matches regex @"(?i)mshta\.exe.*(https?://\S+\.hta|javascript:|vbscript:)"
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName
