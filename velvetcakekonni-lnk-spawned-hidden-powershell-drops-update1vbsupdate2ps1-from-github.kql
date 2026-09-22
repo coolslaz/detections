@@ -1,0 +1,9 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(30d)
+| where FileName in~ ("powershell.exe", "powershell_ise.exe", "wscript.exe", "cscript.exe")
+| where InitiatingProcessFileName =~ "explorer.exe"
+| where ProcessCommandLine has_any ("-windowstyle hidden", "-w hidden", "-WindowStyle Hidden")
+| where ProcessCommandLine has_any ("update1.vbs", "update2.ps1", "raw.githubusercontent.com/omskiwdcvoiuyfd0998")
+| where ProcessCommandLine has "AppData"
+| project TimeGenerated, DeviceId, DeviceName, AccountName, InitiatingProcessFileName, InitiatingProcessFolderPath, FileName, ProcessCommandLine
+| sort by TimeGenerated desc
