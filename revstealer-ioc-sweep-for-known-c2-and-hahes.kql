@@ -1,0 +1,41 @@
+let RevStealerHashes = dynamic([
+    "d2e4f2c7872529a88302eb707659a9419b49dd4acfa8aa1c76decc7d246e99c2",
+    "d3783f793bb4b879b53dc96b2a88cbbe078e1fbfc1191a710f93b5db1c7d7a2d",
+    "4a60ee51f0f31f9256be4797ef6dd965fec8b5bc54dfe3a1acf7d88373101dc7",
+    "3721d73c2200b71e826166a306db1de3a376f804ea48bb8d2454451964d77268",
+    "5210c9c9645bda6bc6259dff1ecc8defd30799ea18eec6c481acc96f8b2923af",
+    "52b242d68bbfd506d9ce8a940806f4de3434b9481c494a4f423abb11b6401758",
+    "551a7a0c63e6d716fbe41c45923d623ea8d86e34fd4212fbe3e758a98cde0970",
+    "e21d6c433cf0168b24b1a0a46f56ca23799378fd21ada2b17240934e9887c058",
+    "cfe7907297311f86013e17ccb3dd91c0bad93665f6b205b41fb8e16ef44f5f76",
+    "93c6249b9adcf857c5b1d4359cfe0eef7883a45304bb064c3caba2fae1e3971b",
+    "2153787ee222e6406d34a1e94ac2a20a2303bbc358231d1b0c0415fe106103e3",
+    "6e1e9dbf5e08777d28a75b8a672faa64afcc498f3f9b242946cbdb3e40c4e35a",
+    "0e2182474ed4f5d86d2f2d1940b8bd0dd0f83943406aeb5d92ffe6b9e2a3845c"
+]);
+let RevStealerDomain = "meta7.archscreen68.one";
+let RevStealerIPs = dynamic([]); // no distinct malicious IP published for this campaign - populate if resolved
+union isfuzzy=true
+(
+    DeviceFileEvents
+    | where TimeGenerated > ago(30d)
+    | where SHA256 in~ (RevStealerHashes)
+    | extend IndicatorType = "sha256", MatchedIndicator = SHA256, Detail = FolderPath
+    | project TimeGenerated, DeviceId, DeviceName, IndicatorType, MatchedIndicator, Detail, ActionType
+),
+(
+    DeviceProcessEvents
+    | where TimeGenerated > ago(30d)
+    | where SHA256 in~ (RevStealerHashes)
+    | extend IndicatorType = "sha256", MatchedIndicator = SHA256, Detail = ProcessCommandLine
+    | project TimeGenerated, DeviceId, DeviceName, IndicatorType, MatchedIndicator, Detail, ActionType
+),
+(
+    DeviceNetworkEvents
+    | where TimeGenerated > ago(30d)
+    | extend UrlHost = tostring(parse_url(RemoteUrl).Host), UrlPath = tostring(parse_url(RemoteUrl).Path)
+    | where UrlHost =~ RevStealerDomain or RemoteIP in (RevStealerIPs)
+    | extend IndicatorType = iff(RemoteIP in (RevStealerIPs), "ip", "domain"), MatchedIndicator = iff(RemoteIP in (RevStealerIPs), RemoteIP, UrlHost), Detail = strcat(InitiatingProcessFileName, " -> ", UrlPath)
+    | project TimeGenerated, DeviceId, DeviceName, IndicatorType, MatchedIndicator, Detail, ActionType
+)
+| sort by TimeGenerated desc
