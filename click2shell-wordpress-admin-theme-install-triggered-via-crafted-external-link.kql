@@ -1,0 +1,28 @@
+// Detects the Click2Shell pattern: a logged-in WordPress administrator's session issuing a
+// theme-install action where the request was driven by a link crafted outside the normal
+// wp-admin theme browsing workflow (external/cross-origin referer present), followed by new
+// theme files appearing on disk shortly after.
+let themeInstallRequests =
+    W3CIISLog
+    | where TimeGenerated > ago(7d)
+    | where csUriStem has_any ("theme-install.php", "themes.php", "update.php")
+    | where csUriQuery has "install-theme" or csUriQuery has "action=install-theme"
+    | where isnotempty(csUserName)
+    // crafted-link indicator: referer is present but points off-site / not to the site's own
+    // wp-admin theme browsing pages (a genuine referer-stripped browser request is no longer
+    // treated as suspicious on its own)
+    | where isnotempty(csReferer)
+    | where not(csReferer has "wp-admin/theme-install.php") and not(csReferer has "wp-admin/themes.php")
+    | where not(csReferer has "wp-admin/")
+    | project TimeGenerated, cIP, csUserName, csUriStem, csUriQuery, csReferer;
+themeInstallRequests
+| join kind=inner (
+    W3CIISLog
+    | where TimeGenerated > ago(7d)
+    | where csUriStem has "wp-content/themes/"
+    | where csUriStem endswith ".php"
+    | project ThemeFileTime = TimeGenerated, ThemeFilePath = csUriStem, ThemeFileClientIP = cIP
+) on $left.cIP == $right.ThemeFileClientIP
+| where ThemeFileTime between (TimeGenerated .. (TimeGenerated + 2m))
+| project TimeGenerated, csUserName, csUriStem, csUriQuery, csReferer, ThemeFilePath, ThemeFileTime, cIP
+| sort by TimeGenerated desc
