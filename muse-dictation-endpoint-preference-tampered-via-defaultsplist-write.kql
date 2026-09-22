@@ -1,0 +1,19 @@
+// Detects local modification of Meta Muse's undocumented preference key
+// 'endo_voyager_dictation_endpoint' used to redirect dictation traffic to
+// an attacker-controlled endpoint (macOS EDR telemetry)
+// Narrowed to the exact undocumented key so routine Muse preference changes
+// (unrelated defaults write/PlistBuddy activity against com.meta.muse) don't fire.
+let ProcessEvents = DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where ProcessCommandLine has "endo_voyager_dictation_endpoint"
+| project TimeGenerated, DeviceName, AccountName, InitiatingProcessFileName, FileName, ProcessCommandLine, InitiatingProcessCommandLine, FolderPath = "", ActionType = "";
+// Narrowed to the exact preference file and modification only — excludes
+// FileCreated (normal first-install/first-run) and other unrelated plists
+// under the bundle's container that merely share the "com.meta.muse" substring.
+let FileEvents = DeviceFileEvents
+| where TimeGenerated > ago(1d)
+| where FileName =~ "com.meta.muse.plist"
+| where ActionType == "FileModified"
+| project TimeGenerated, DeviceName, AccountName = InitiatingProcessAccountName, InitiatingProcessFileName = "", FileName, ProcessCommandLine = "", InitiatingProcessCommandLine = "", FolderPath, ActionType;
+ProcessEvents
+| union FileEvents
