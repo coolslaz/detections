@@ -1,0 +1,27 @@
+title: SideCopy/ReverseRAT Known IOC Hunt - Malicious URLs (Sigma)
+id: 7f2a4e3c-6b1d-4a8f-9c3e-2d5b7a1f9e6c
+status: experimental
+description: Detects HTTP(S) requests to known SideCopy/ReverseRAT payload-delivery URLs
+  identified in Operation SideCopy spear-phishing campaigns targeting Indian
+  academia.
+author: Arnold Chan
+references:
+  - https://thehackernews.com/2026/09/sidecopy-broadens-india-targeting-to.html
+  - https://www.trellix.com/blogs/research/sidecopy-threat-intel-mshta-execution-rat-deployment/
+date: '2026-09-22'
+modified: '2026-09-22'
+tags:
+  - attack.t1071.001
+  - attack.t1105
+logsource:
+  category: proxy
+detection:
+  selection:
+    url:
+      - 'https://docsportal.in/public/reps/com/161.php'
+      - 'https://docsportal.in/public/reps/com/com.hta'
+      - 'http://docsportal.in/public/reps/com/com.hta'
+  condition: selection
+falsepositives:
+  - Unknown
+level: critical
