@@ -1,0 +1,8 @@
+// ReverseRAT operates reflectively inside mshta.exe; its Shell/Execute/Run and addSys&reg/addSys&start
+// operator commands surface as mshta.exe spawning a shell or registry-persistence child process.
+DeviceProcessEvents
+| where InitiatingProcessFileName =~ "mshta.exe"
+| where FileName in~ ("cmd.exe", "powershell.exe", "reg.exe")
+| where (FileName =~ "reg.exe" and ProcessCommandLine has "add" and ProcessCommandLine has_any ("Run", "CurrentVersion\\Run"))
+    or (FileName in~ ("cmd.exe", "powershell.exe") and ProcessCommandLine has_any ("systeminfo", "whoami", "hostname", "ipconfig", "tasklist", "wmic", "Get-Clipboard", "clip.exe", "CopyFromScreen", "System.Drawing.Bitmap", "Login Data", "logins.json", "User Data\\Default"))
+| project TimeGenerated, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, AccountName
