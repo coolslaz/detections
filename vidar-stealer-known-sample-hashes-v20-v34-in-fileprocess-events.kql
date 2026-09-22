@@ -1,0 +1,12 @@
+let VidarSHA256 = dynamic(["1628bb03db87f67661349e169d73ee14ed490bdbf22abfbda08ccc9ebe237974","625a381981fc2d4c25c981d98b1d66bb2cf5da2dde2f590add0673a857d5b074","2d43d592630ad1e012da63ef7279f95dd4a8e94964e12ca2f996051875574fa6","979048a749d8f28d877c7068b1b336ecd1e349869dfb1d7c68118f90e4099bc4"]);
+let VidarMD5 = dynamic(["9c3ae73aff8475ba1bedb303fcd07df8"]);
+union (
+DeviceFileEvents
+| where SHA256 in~ (VidarSHA256) or MD5 in~ (VidarMD5)
+| project TimeGenerated, DeviceName, FileName, FolderPath, SHA256, MD5, InitiatingProcessAccountName
+), (
+DeviceProcessEvents
+| where SHA256 in~ (VidarSHA256) or MD5 in~ (VidarMD5)
+| project TimeGenerated, DeviceName, FileName, FolderPath, SHA256, MD5, AccountName
+)
+| sort by TimeGenerated desc
