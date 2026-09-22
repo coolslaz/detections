@@ -1,0 +1,16 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where FileName =~ "powershell.exe"
+| where ProcessCommandLine has_all ("-WindowStyle", "Hidden", "-NoProfile", "-NonInteractive", "-EncodedCommand")
+| where InitiatingProcessFileName =~ "electron.exe" or InitiatingProcessFileName has "electron"
+| where InitiatingProcessSignatureStatus != "Valid" or isempty(InitiatingProcessSignatureStatus)
+| project TimeGenerated, DeviceId, InitiatingProcessId, InitiatingProcessFileName, InitiatingProcessSignatureStatus, ProcessCommandLine
+| join kind=inner (
+    DeviceProcessEvents
+    | where TimeGenerated > ago(1d)
+    | where FileName =~ "powershell.exe"
+    | where ProcessCommandLine has_all ("Add-MpPreference", "-ExclusionPath", "AppData")
+    | project TimeGenerated1=TimeGenerated, DeviceId, InitiatingProcessId, ProcessCommandLine1=ProcessCommandLine
+) on DeviceId, InitiatingProcessId
+| where datetime_diff('minute', TimeGenerated1, TimeGenerated) between (0 .. 10)
+| project TimeGenerated, TimeGenerated1, DeviceId, InitiatingProcessId, InitiatingProcessFileName, InitiatingProcessSignatureStatus, ProcessCommandLine, ProcessCommandLine1
