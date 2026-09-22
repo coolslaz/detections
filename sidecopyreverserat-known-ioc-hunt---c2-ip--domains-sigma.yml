@@ -1,0 +1,38 @@
+title: SideCopy/ReverseRAT Known IOC Hunt - C2 IP & Domains (Sigma)
+id: 7d1b6f3a-9e2c-4a3f-8b6a-2f0c1d4e5a90
+status: experimental
+description: Detects network connections to known SideCopy/ReverseRAT command-and-control
+  infrastructure, including a static C2 IP address and two C2/hosting domains
+  (matched exactly and as proper subdomains to avoid substring false positives).
+author: Arnold Chan
+references:
+  - https://thehackernews.com/2026/09/sidecopy-broadens-india-targeting-to.html
+  - https://www.trellix.com/blogs/research/sidecopy-threat-intel-mshta-execution-rat-deployment/
+date: '2026-09-22'
+modified: '2026-09-22'
+tags:
+  - attack.t1071.001
+  - attack.t1583.001
+logsource:
+  category: network_connection
+  product: windows
+detection:
+  selection_ip:
+    DestinationIp: 45.61.157.22
+  selection_domain_exact:
+    DestinationHostname:
+      - docsportal.in
+      - dns.educationportals.biz
+  selection_domain_sub:
+    DestinationHostname|endswith:
+      - '.docsportal.in'
+      - '.dns.educationportals.biz'
+  condition: selection_ip or selection_domain_exact or selection_domain_sub
+falsepositives:
+  - Unknown
+level: critical
+fields:
+  - DestinationIp
+  - DestinationHostname
+  - Image
+  - User
