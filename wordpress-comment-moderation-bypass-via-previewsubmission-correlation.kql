@@ -1,0 +1,20 @@
+// Detects attempts to bypass WordPress comment moderation by reusing an approved-commenter cookie or hitting the unapproved-comment preview endpoint with a moderation-hash within a short window of a comment submission - the render step that lets a stored XSS payload reach a visitor/admin without approval.
+W3CIISLog
+| where TimeGenerated > ago(1h)
+| where csUriStem has "wp-comments-post.php" or csUriQuery has "unapproved="
+| extend IsUnapprovedPreview = csUriQuery has "unapproved=" and csUriQuery has "moderation-hash="
+| extend HasApprovedCommenterCookie = csCookie has "comment_author_"
+| extend IsCommentSubmission = csUriStem has "wp-comments-post.php"
+| where IsUnapprovedPreview or HasApprovedCommenterCookie or IsCommentSubmission
+| summarize
+    SubmissionCount = countif(IsCommentSubmission),
+    UnapprovedPreviewHits = countif(IsUnapprovedPreview),
+    ApprovedCookieHits = countif(HasApprovedCommenterCookie),
+    LatestSubmissionTime = max(iff(IsCommentSubmission, TimeGenerated, datetime(null))),
+    EarliestPreviewTime = min(iff(IsUnapprovedPreview, TimeGenerated, datetime(null))),
+    SampleQueries = make_set(csUriQuery, 10),
+    SampleCookies = make_set(csCookie, 10)
+    by cIP, bin(TimeGenerated, 5m)
+| extend PreviewToSubmissionMinutes = abs(datetime_diff('minute', LatestSubmissionTime, EarliestPreviewTime))
+| where (SubmissionCount >= 1 and UnapprovedPreviewHits >= 1 and isnotnull(PreviewToSubmissionMinutes) and PreviewToSubmissionMinutes <= 2) or SubmissionCount >= 6
+| sort by SubmissionCount desc
