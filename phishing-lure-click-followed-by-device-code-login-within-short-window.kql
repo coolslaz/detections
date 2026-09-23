@@ -1,0 +1,26 @@
+// Detects the EvilTokens sequence: a recipient actually CLICKS a phishing-lure URL delivered by
+// email (not merely receives it), and within a short window the SAME user/device opens a
+// browser to the Microsoft device-code authorization page, with the lure domain present in the
+// referrer chain of the device-code navigation. A standalone visit to microsoft.com/devicelogin
+// (e.g. Azure CLI, GitHub CLI, kubectl, AWS CLI, Xbox/smart-TV device sign-in) never matches
+// this rule on its own because it requires the prior verified lure click as an anchor.
+let phishing_emails = EmailEvents
+| where AttachmentCount > 0 or isnotempty(UrlCount)
+| where Subject has_any ("Password Expiration", "Action Required", "RFP", "Invoice", "Proposal", "Verify your identity")
+| project EmailTimestamp = TimeGenerated, NetworkMessageId, RecipientEmailAddress, Subject;
+let phishing_clicks = UrlClickEvents
+| where ActionType in ("ClickAllowed", "ClickAllowedAfterUserVerification")
+| join kind=inner phishing_emails on NetworkMessageId
+| extend LureDomain = tolower(extract(@"https?://([^/]+)", 1, Url))
+| where isnotempty(LureDomain)
+| project ClickTimestamp = Timestamp, AccountUpn, NetworkMessageId, Url, LureDomain, EmailTimestamp, Subject, RecipientEmailAddress;
+let device_code_opens = DeviceEvents
+| where ActionType == "BrowserLaunchedToOpenUrl"
+| where RemoteUrl has_any ("devicelogin", "microsoft.com/devicelogin") or AdditionalFields has "devicelogin"
+| project DeviceTimestamp = TimeGenerated, DeviceId, DeviceName, RemoteUrl, AccountName, InitiatingProcessAccountUpn, AdditionalFields, InitiatingProcessCommandLine;
+phishing_clicks
+| join kind=inner (device_code_opens) on $left.AccountUpn == $right.InitiatingProcessAccountUpn
+| where DeviceTimestamp between (ClickTimestamp .. ClickTimestamp + 15m)
+| where AdditionalFields has LureDomain or InitiatingProcessCommandLine has LureDomain
+| project EmailTimestamp, RecipientEmailAddress, Subject, NetworkMessageId, ClickTimestamp, Url, LureDomain, DeviceTimestamp, DeviceId, DeviceName, RemoteUrl, AccountName
+| sort by DeviceTimestamp asc
