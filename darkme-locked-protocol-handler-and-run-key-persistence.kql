@@ -1,0 +1,14 @@
+DeviceRegistryEvents
+| where ActionType in ("RegistryValueSet", "RegistryKeyCreated")
+| where InitiatingProcessFileName =~ "rundll32.exe"
+| where (RegistryKey endswith @"\Software\Classes\Locked\shell\open\command"
+    and RegistryValueData matches regex @"(?i)rundll32\.exe[^,]*\.dll\s*,\s*\w+\s+/sta\s+\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}")
+ or (RegistryKey endswith @"\Software\Microsoft\Windows\CurrentVersion\Run"
+    and RegistryValueName =~ "Locked"
+    and RegistryValueData has "explorer.exe"
+    and RegistryValueData has "Locked://")
+| summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated),
+    RegistryKeys = make_set(RegistryKey, 10),
+    RegistryValues = make_set(RegistryValueData, 10)
+    by DeviceId, InitiatingProcessFileName, InitiatingProcessCommandLine
+| where array_length(RegistryKeys) > 0
