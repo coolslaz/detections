@@ -1,0 +1,45 @@
+// Detects lateral-movement connections (SMB/RDP/WinRM) from a device within a short window
+// after it contacted commercial LLM APIs used as ClosedQuorum's C2 channel, consistent with a
+// plurality-vote 'move' decision triggering lateral movement without operator input.
+// False-positive reduction: tight post-C2 window, exclusion of known remote-admin tools/accounts
+// and normal admin maintenance hours, and a same-host baseline rarity requirement on the
+// lateral-movement technique (process) actually used.
+let llmProviders = dynamic(["api.deepseek.com","api.mistral.ai","openrouter.ai"]);
+let lateralPorts = dynamic([445, 3389, 5985, 5986]);
+let knownAdminTools = dynamic(["anydesk.exe","teamviewer.exe","mstsc.exe","screenconnect.exe","bomgar.exe","logmein.exe"]);
+let knownAdminAccounts = dynamic([]);
+let adminWindowStartHour = 8;
+let adminWindowEndHour = 18;
+let baselineLookback = 14d;
+let rarityThreshold = 2;
+let llmHits =
+    DeviceNetworkEvents
+    | where TimeGenerated > ago(1d)
+    | where RemoteUrl has_any (llmProviders) or RemoteIPType == "Public" and RemoteUrl has_any (llmProviders)
+    | where InitiatingProcessFileName !in~ ("chrome.exe","msedge.exe","firefox.exe","brave.exe")
+    | project DeviceId, LLMTime = TimeGenerated, LLMUrl = RemoteUrl, InitiatingProcessFileName, InitiatingProcessId;
+let moveEvents =
+    DeviceNetworkEvents
+    | where TimeGenerated > ago(1d)
+    | where RemotePort in (lateralPorts)
+    | where RemoteIPType == "Private"
+    | where MoveProcess = InitiatingProcessFileName
+    | project DeviceId, MoveTime = TimeGenerated, RemoteIP, RemotePort, MoveProcess = InitiatingProcessFileName, InitiatingProcessAccountName;
+let baselineCounts =
+    DeviceNetworkEvents
+    | where TimeGenerated between (ago(baselineLookback) .. ago(1d))
+    | where RemotePort in (lateralPorts)
+    | where RemoteIPType == "Private"
+    | summarize BaselineCount = count() by DeviceId, MoveProcess = InitiatingProcessFileName;
+llmHits
+| join kind=inner (moveEvents) on DeviceId
+| where MoveTime between (LLMTime .. (LLMTime + 5m))
+| where not(MoveProcess has_any (knownAdminTools))
+| where isempty(knownAdminAccounts) or InitiatingProcessAccountName !in~ (knownAdminAccounts)
+| extend MoveHour = hourofday(MoveTime)
+| where not(MoveHour between (adminWindowStartHour .. adminWindowEndHour))
+| join kind=leftouter (baselineCounts) on DeviceId, MoveProcess
+| extend BaselineCount = coalesce(BaselineCount, 0)
+| where BaselineCount <= rarityThreshold
+| project DeviceId, LLMTime, LLMUrl, InitiatingProcessFileName, MoveTime, RemoteIP, RemotePort, MoveProcess, InitiatingProcessAccountName, BaselineCount
+| sort by DeviceId, LLMTime asc
