@@ -1,0 +1,30 @@
+// Detects installation of the two known-malicious Graphalgo Terraform provider identifiers
+// (registry.terraform.io/gocommunity-io/dockerd and the kreuzwenker/docker typosquat of the
+// legitimate kreuzwerker/docker provider) followed within 1 hour by a detached 'go run .'
+// process execution from within the .terraform directory, consistent with this campaign's
+// documented second-stage payload launch technique. Known malicious archive hashes are
+// surfaced as optional correlation columns only.
+let maliciousProviderIds = dynamic(["registry.terraform.io/gocommunity-io/dockerd", "registry.terraform.io/kreuzwenker/docker"]);
+let maliciousHashes = dynamic(["5f892a5424e88a21a3eb3d7f82ebf04d8ac31cdb19ada25153be4165df977d0f", "ab01686d87565250fc4989faddb877d793667b07ec217a61cbd798f5695d62f5"]);
+let terraformInstalls = DeviceProcessEvents
+| where TimeGenerated > ago(7d)
+| where FileName =~ "terraform.exe" or FileName =~ "terraform"
+| where ProcessCommandLine has_any ("init", "providers", "install") or ProcessCommandLine has "terraform init"
+| where FolderPath has_any (maliciousProviderIds) or ProcessCommandLine has_any (maliciousProviderIds)
+| project InstallTime = TimeGenerated, DeviceId, InstallAccount = AccountName, FolderPath, MaliciousProviderRef = FolderPath;
+let goRunExecs = DeviceProcessEvents
+| where TimeGenerated > ago(7d)
+| where FileName =~ "go" or FileName =~ "go.exe"
+| where ProcessCommandLine has "run" and ProcessCommandLine has "."
+| where FolderPath has @".terraform\\providers" or FolderPath has ".terraform/providers" or FolderPath has ".terraform"
+| project ExecTime = TimeGenerated, DeviceId, ExecAccount = AccountName, ExecFolderPath = FolderPath, ExecCommandLine = ProcessCommandLine;
+let knownMaliciousArchives = DeviceFileEvents
+| where TimeGenerated > ago(7d)
+| where SHA256 in (maliciousHashes)
+| project HashTime = TimeGenerated, DeviceId, MatchedSHA256 = SHA256, MatchedFileName = FileName;
+terraformInstalls
+| join kind=inner (goRunExecs) on DeviceId
+| where ExecTime between (InstallTime .. (InstallTime + 1h))
+| join kind=leftouter (knownMaliciousArchives) on DeviceId
+| project InstallTime, ExecTime, DeviceId, InstallAccount, ExecAccount, FolderPath, MaliciousProviderRef, ExecFolderPath, ExecCommandLine, MatchedSHA256, MatchedFileName, HashTime
+| sort by ExecTime desc
