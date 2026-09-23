@@ -1,0 +1,25 @@
+// Detects sckit supply-chain worm writing BASH_ENV pointing to a malicious publish bridge script
+// into GITHUB_ENV, enabling credential harvesting in every subsequent CI step.
+// Covers both the npm (sckit-publish-bridge.sh) and PyPI (_pypi_bridge.sh) vectors.
+DeviceProcessEvents
+| where TimeGenerated > ago(7d)
+| where FileName in~ ("node", "node.exe", "bash", "sh", "python", "python3")
+    or InitiatingProcessFileName in~ ("node", "node.exe", "bash", "sh", "python", "python3")
+| where ProcessCommandLine has "BASH_ENV"
+    and ProcessCommandLine has "GITHUB_ENV"
+    and (
+        ProcessCommandLine has "sckit-publish-bridge.sh"
+        or ProcessCommandLine has "_pypi_bridge.sh"
+    )
+| project
+    TimeGenerated,
+    DeviceName,
+    AccountName,
+    FileName,
+    ProcessCommandLine,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    FolderPath,
+    ProcessId
+| extend AlertDetail = strcat("BASH_ENV injection into GITHUB_ENV detected. Process: ", FileName, " | CmdLine: ", ProcessCommandLine)
+| order by TimeGenerated desc
