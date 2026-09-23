@@ -1,0 +1,12 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(14d)
+| where FileName =~ "rundll32.exe"
+| where ProcessCommandLine has "comsvcs.dll" and ProcessCommandLine has "MiniDump"
+| where ProcessCommandLine matches regex @"(?i)MiniDump\s+\d+\s+\S+\.\w+"
+// exclude common legitimate parent processes that may invoke this pattern for forensics/backup/EDR agent orchestration
+| where InitiatingProcessFileName !in~ ("CSFalconService.exe", "SentinelAgent.exe", "SentinelServiceHost.exe", "velociraptor.exe", "veeamagent.exe", "BackupExecAgent.exe")
+| project TimeGenerated, DeviceName, AccountName, InitiatingProcessFileName, ProcessCommandLine, InitiatingProcessAccountName
+// lsassy.py automates rundll32 comsvcs.dll MiniDump against lsass.exe to dump credentials
+// Behavioral correlation: same account triggering this on multiple distinct devices within the same 1-hour bucket
+| summarize Devices = make_set(DeviceName, 25), Commands = make_set(ProcessCommandLine, 25), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), DeviceCount = dcount(DeviceName) by AccountName, bin(TimeGenerated, 1h)
+| where DeviceCount >= 2
