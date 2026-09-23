@@ -1,0 +1,32 @@
+// Detects Microsoft Graph API enumeration of directory objects/roles occurring shortly after an OAuth device code authentication that carried an elevated risk signal, consistent with EvilTokens post-compromise reconnaissance
+// Tightened to require multi-endpoint enumeration and exclude known legitimate provisioning/sync service principals
+let known_legit_app_ids = dynamic([
+ "1b730954-1685-4b74-9bfd-dac224a7b894", // Azure AD Connect
+ "8b3ce77e-0392-4b9e-9296-0f5b6dc03633", // Azure AD Provisioning Agent
+ "cb1056e2-e479-49de-ae31-7812af012ed8" // Microsoft Azure AD Sync
+]);
+let device_code_signins = SigninLogs
+| where TimeGenerated > ago(1d)
+| where AuthenticationProcessingDetails has "deviceCode" or ResourceDisplayName has "Device" or AuthenticationRequirement has "deviceCode"
+| where ResultType == 0
+| where RiskLevelDuringSignIn !in ("none", "") or RiskLevelAggregated !in ("none", "") or RiskState =~ "atRisk" or RiskState =~ "confirmedCompromised"
+| project SignInTimestamp = TimeGenerated, AccountObjectId = UserPrincipalName, AccountUpn = UserPrincipalName, IPAddress, EntraIdDeviceId = DeviceDetail.deviceId, RiskLevelDuringSignIn, RiskLevelAggregated, RiskState;
+let graph_recon = CloudAppEvents
+| where TimeGenerated > ago(1d)
+| where Application == "Microsoft Graph"
+| where ActionType in ("Add user.", "List users.", "List groups.", "List directoryRoles.", "List roleAssignments.", "List servicePrincipals.", "Get user.", "Get directoryRole.")
+ or RawEventData has_any ("/users", "/groups", "/directoryRoles", "/roleManagement", "/servicePrincipals", "/organization")
+| where ActionType has "POST" or RawEventData has "POST"
+| extend ParsedEvent = parse_json(RawEventData)
+| extend AppId = tostring(ParsedEvent.ApplicationId)
+| where isnotempty(AccountObjectId)
+| where isempty(AppId) or AppId !in (known_legit_app_ids)
+| extend RequestEndpoint = extract(@"(/users|/groups|/directoryRoles|/roleManagement|/servicePrincipals|/organization)", 1, RawEventData)
+| project GraphTimestamp = TimeGenerated, AccountObjectId, ActionType, ObjectId, IPAddress, AppId, RequestEndpoint;
+device_code_signins
+| join kind=inner (graph_recon) on AccountObjectId
+| where GraphTimestamp between (SignInTimestamp .. (SignInTimestamp + 30m))
+| summarize DistinctEndpoints = make_set(coalesce(RequestEndpoint, ActionType), 20), EndpointCount = dcount(coalesce(RequestEndpoint, ActionType)), CallCount = count(), IPAddresses = make_set(IPAddress, 10), AppIds = make_set(AppId, 10), RiskLevelDuringSignIn = any(RiskLevelDuringSignIn), RiskLevelAggregated = any(RiskLevelAggregated), FirstSignIn = min(SignInTimestamp), LastGraphCall = max(GraphTimestamp)
+ by AccountObjectId, AccountUpn
+| where EndpointCount >= 3
+| sort by LastGraphCall desc
