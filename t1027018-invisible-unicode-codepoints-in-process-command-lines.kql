@@ -1,0 +1,39 @@
+// MITRE ATT&CK T1027.018 - Obfuscated Files or Information: Invisible Unicode
+// Detects zero-width / non-printing / bidi-override Unicode codepoints embedded in process command lines.
+// Classic use case: obfuscating malicious script/command content (e.g. PowerShell, cmd, wscript) to evade string-based
+// detections and to visually disguise commands from analysts.
+// Emerging use case: adversaries hide AI prompt-injection payloads inside documents/emails using the same invisible
+// codepoints so that when the content is later ingested/processed by an AI copilot or agent process, the hidden
+// instructions are parsed and acted upon while remaining invisible to a human reviewer.
+// Codepoint ranges covered: zero-width space/non-joiner/joiner (U+200B-U+200D), word joiner (U+2060), BOM (U+FEFF),
+// bidirectional override/embedding (U+202D/U+202E), variation selectors (U+FE00-U+FE0F), Private Use Area (U+E000-U+F8FF),
+// and Unicode tag characters (U+E0000-U+E007F) used in some prompt-injection PoCs.
+let InvisibleUnicodeRegex = @"[\u200B-\u200D\u2060\uFEFF\u202D\u202E\uFE00-\uFE0F]|[\x{E0000}-\x{E007F}]";
+let PUARegex = @"[\uE000-\uF8FF]";
+let ScriptHosts = dynamic(["powershell.exe","pwsh.exe","cmd.exe","wscript.exe","cscript.exe","mshta.exe","certutil.exe","rundll32.exe","regsvr32.exe","wmic.exe"]);
+// Tunable: extend/trim this allowlist of parent processes and command-line patterns known to legitimately touch BOM-only
+// content (e.g. text editors normalizing file encoding, backup/archival tools reading UTF-8 BOM files).
+let KnownBenignParents = dynamic(["explorer.exe"]);
+let KnownBenignCmdPatterns = dynamic(["Get-Content -Encoding UTF8", "chcp 65001"]);
+let minHighConfidenceHits = 2;              // tunable: high-confidence codepoint hits required from a non-script-host process
+let minHighConfidenceHitsScriptHost = 1;    // tunable: lower bar when the process itself is a known scripting/LOLBin host
+let minPUAHitsScriptHost = 5;               // tunable: PUA-only volume required before alerting, script hosts only
+DeviceProcessEvents
+| where isnotempty(ProcessCommandLine)
+| where not(InitiatingProcessFileName in~ (KnownBenignParents))
+| where not(ProcessCommandLine has_any (KnownBenignCmdPatterns))
+| extend IsScriptHost = FileName in~ (ScriptHosts) or InitiatingProcessFileName in~ (ScriptHosts)
+| extend HighConfidenceHits = array_length(extract_all(InvisibleUnicodeRegex, ProcessCommandLine))
+| extend PUAHits = array_length(extract_all(PUARegex, ProcessCommandLine))
+| where (IsScriptHost and HighConfidenceHits >= minHighConfidenceHitsScriptHost)
+     or (HighConfidenceHits >= minHighConfidenceHits)
+     or (IsScriptHost and PUAHits >= minPUAHitsScriptHost)
+| summarize
+    HighConfidenceHitCount = sum(HighConfidenceHits),
+    PUAHitCount = sum(PUAHits),
+    SampleCommandLine = any(ProcessCommandLine),
+    SampleProcess = any(FileName),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated)
+  by DeviceId, AccountName, InitiatingProcessFileName, FileName, IsScriptHost
+| sort by HighConfidenceHitCount desc, PUAHitCount desc
