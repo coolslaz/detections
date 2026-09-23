@@ -1,0 +1,35 @@
+// Detects the EvilTokens device-code phishing sequence: a browser process repeatedly polling an attacker-controlled /state endpoint (checkStatus() polling loop) on a non-Microsoft, previously-unseen/low-reputation host, in close time proximity to a device-code OAuth authentication against Microsoft identity endpoints.
+let knownSaaSAllowlist = dynamic(["microsoft.com","microsoftonline.com","live.com","office.com","office365.com","windows.net","azureedge.net","msftauth.net","msauth.net","google.com","gstatic.com","cloudflare.com","github.com","githubusercontent.com","amazonaws.com","akamai.net","akamaized.net","salesforce.com","okta.com","zoom.us","slack.com","dropboxusercontent.com","onedrive.com"]);
+let lookback = 30d;
+let pollingHosts = 
+    DeviceNetworkEvents
+    | where TimeGenerated > ago(1d)
+    | where RemoteUrl has "/state"
+    | where InitiatingProcessFileName in~ ("chrome.exe","msedge.exe","firefox.exe","iexplore.exe","brave.exe")
+    | extend PolledHost = tostring(parse_url(RemoteUrl).Host)
+    | where isnotempty(PolledHost)
+    | where not(PolledHost has_any (knownSaaSAllowlist))
+    | summarize PollCount = count(), PollTimes = make_list(TimeGenerated, 50) by DeviceId, DeviceName, RemoteUrl, PolledHost, InitiatingProcessAccountName, PollWindowStart = bin(TimeGenerated, 5m)
+    | where PollCount >= 6 // consistent with 3-5s interval polling over a 5-minute window
+    | extend IntervalsSec = iff(array_length(PollTimes) > 1, datetime_diff('second', todatetime(PollTimes[array_length(PollTimes)-1]), todatetime(PollTimes[0])) / (array_length(PollTimes)-1), 0)
+    | where IntervalsSec between (2 .. 6) // matches the observed 3-5 second checkStatus() setInterval
+    | project DeviceId, DeviceName, InitiatingProcessAccountName, RemoteUrl, PolledHost, PollCount, IntervalsSec, PollWindowStart;
+let priorSeenHosts = 
+    DeviceNetworkEvents
+    | where TimeGenerated between (ago(lookback) .. ago(1d))
+    | extend PolledHost = tostring(parse_url(RemoteUrl).Host)
+    | where isnotempty(PolledHost)
+    | summarize PriorDeviceCount = dcount(DeviceId) by PolledHost;
+let freshPollingHosts = 
+    pollingHosts
+    | join kind=leftouter (priorSeenHosts) on PolledHost
+    | extend PriorDeviceCount = coalesce(PriorDeviceCount, 0)
+    | where PriorDeviceCount <= 1 // host is unseen or seen on at most one other device across the org in the prior 30 days -- low reputation / not an established SaaS domain
+    | project-away PolledHost1;
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where InitiatingProcessFileName in~ ("chrome.exe","msedge.exe","firefox.exe","iexplore.exe","brave.exe")
+| where ProcessCommandLine has "microsoft.com/devicelogin" or ProcessCommandLine has "login.microsoftonline.com/common/oauth2/deviceauth"
+| join kind=inner (freshPollingHosts) on DeviceId
+| where (TimeGenerated - PollWindowStart) between (-15m .. 15m)
+| project TimeGenerated, DeviceId, DeviceName, InitiatingProcessAccountName, ProcessCommandLine, RemoteUrl, PolledHost, PriorDeviceCount, PollCount, IntervalsSec
