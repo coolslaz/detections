@@ -1,0 +1,43 @@
+// T1682 - Query Public AI Services (Reconnaissance)
+// High-volume single-identity querying of public AI SaaS apps
+// Detects an account whose volume of requests to public generative-AI applications spikes well above its own
+// historical baseline, with at least one corroborating anomaly signal (multiple source IPs/countries or off-hours
+// activity) - reduces false positives from staff who are simply everyday heavy users of sanctioned AI tools.
+let AIApps = dynamic(["ChatGPT","OpenAI","Microsoft Copilot","Copilot","Google Gemini","Gemini","Anthropic Claude","Claude","Perplexity AI","Perplexity"]);
+let lookback = 14d;               // historical window used to compute each account's baseline
+let bucket = 1d;                  // granularity for both baseline and current-window aggregation
+let spikeMultiplier = 5;          // current volume must exceed this multiple of the account's own baseline
+let minBaselineFloor = 3.0;       // floor applied to tiny/zero baselines to avoid trivial-spike false positives
+let highVolumeCap = 50.0;         // accounts already averaging above this many requests/day are treated as expected heavy users and excluded
+let offHoursStartHour = 21;       // start of off-hours window (local/tenant time as recorded in TimeGenerated)
+let offHoursEndHour = 6;          // end of off-hours window
+let Baseline = CloudAppEvents
+    | where TimeGenerated between (ago(lookback + bucket) .. ago(bucket))
+    | where Application has_any (AIApps)
+    | where isnotempty(AccountObjectId)
+    | summarize DailyCount = count() by AccountObjectId, bin(TimeGenerated, bucket)
+    | summarize BaselineAvg = avg(DailyCount) by AccountObjectId;
+CloudAppEvents
+| where TimeGenerated > ago(bucket)
+| where Application has_any (AIApps)
+| where isnotempty(AccountObjectId)
+| extend HourOfDay = hourofday(TimeGenerated)
+| summarize
+    RequestCount = count(),
+    DistinctIPs = dcount(IPAddress),
+    DistinctCountries = dcount(CountryCode),
+    IPList = make_set(IPAddress, 20),
+    CountryList = make_set(CountryCode, 10),
+    AppList = make_set(Application, 10),
+    OffHoursCount = countif(HourOfDay >= offHoursStartHour or HourOfDay < offHoursEndHour),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated)
+    by AccountObjectId, AccountDisplayName
+| join kind=leftouter (Baseline) on AccountObjectId
+| extend BaselineAvg = coalesce(BaselineAvg, 0.0)
+| extend EffectiveBaseline = iff(BaselineAvg < minBaselineFloor, minBaselineFloor, BaselineAvg)
+| where BaselineAvg < highVolumeCap
+| where RequestCount > spikeMultiplier * EffectiveBaseline
+| where DistinctIPs > 1 or DistinctCountries > 1 or OffHoursCount > 0
+| project AccountObjectId, AccountDisplayName, RequestCount, BaselineAvg, DistinctIPs, DistinctCountries, OffHoursCount, IPList, CountryList, AppList, FirstSeen, LastSeen
+| sort by RequestCount desc
