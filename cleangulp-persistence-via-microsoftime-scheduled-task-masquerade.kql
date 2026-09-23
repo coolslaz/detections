@@ -1,0 +1,8 @@
+DeviceProcessEvents
+| where TimeGenerated > ago(14d)
+| where (FileName =~ "schtasks.exe" and ProcessCommandLine has "MicrosoftIME" and ProcessCommandLine has_any ("/create", "/Create") and ProcessCommandLine has_any (@"\Users\", @"\AppData\", @"\ProgramData\", @"\Temp\", @"\Public\") and not(ProcessCommandLine has_any (@"\Windows\System32\IME\", @"\Windows\SysWOW64\IME\", @"\Program Files\")))
+ or (FolderPath has @"\Microsoft\IME\MicrosoftIME.exe" and FolderPath has_any (@"\Users\", @"\AppData\", @"\ProgramData\", @"\Temp\", @"\Public\") and not(FolderPath has_any (@"\Windows\System32\IME\", @"\Windows\SysWOW64\IME\", @"\Program Files\")))
+ or (InitiatingProcessFolderPath has @"\Microsoft\IME\MicrosoftIME.exe" and InitiatingProcessFolderPath has_any (@"\Users\", @"\AppData\", @"\ProgramData\", @"\Temp\", @"\Public\") and not(InitiatingProcessFolderPath has_any (@"\Windows\System32\IME\", @"\Windows\SysWOW64\IME\", @"\Program Files\")))
+| extend PersistenceIndicator = iff(FileName =~ "schtasks.exe", "ScheduledTaskCreation", "ProcessExecution")
+| project TimeGenerated, DeviceName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessFolderPath, PersistenceIndicator
+| sort by TimeGenerated asc
