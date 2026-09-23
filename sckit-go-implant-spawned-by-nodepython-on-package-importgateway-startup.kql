@@ -1,0 +1,37 @@
+// Detects the sckit Go implant being spawned as a detached child process by node or python
+// as a result of importing the trojanized @memtensor/memos-cloud-openclaw-plugin or MemoryOS packages.
+// The implant is launched with 'stage0 --config64' arguments by lib/sckit.js (launchStageZero)
+// or memos/_stage0.py (trigger()) immediately on package import or gateway startup.
+DeviceProcessEvents
+| where TimeGenerated > ago(7d)
+| where
+    // Spawned binary is named sckit or sckit.exe (the Go implant)
+    (FileName =~ "sckit" or FileName =~ "sckit.exe")
+    and ProcessCommandLine has_all ("stage0", "--config64")
+| extend ParentIsPackageRuntime = (
+    InitiatingProcessFileName has_any ("node", "node.exe", "python", "python3", "python.exe", "python3.exe")
+)
+| extend DroppedFromPackagePath = (
+    FolderPath has_any (@"\sckit\", "/sckit/", @"node_modules\@memtensor", "node_modules/@memtensor", @"site-packages\memos", "site-packages/memos", @"site-packages\MemoryOS", "site-packages/MemoryOS")
+    or InitiatingProcessCommandLine has_any ("memos-cloud-openclaw-plugin", "@memtensor", "MemoryOS", "_stage0")
+)
+// Tightened: require BOTH a package-runtime parent AND a package-scoped path/cmdline
+// match (was OR) to cut noise from unrelated binaries incidentally named sckit or
+// generic "memos"/".sckit" substrings elsewhere on disk.
+| where ParentIsPackageRuntime and DroppedFromPackagePath
+// Exclude sandboxed malware-analysis / test harnesses (an authorized-research false
+// positive noted below) so intentional detonation in an isolated lab doesn't page on-call.
+| where not (FolderPath has_any ("\\test\\", "/test/", "\\sandbox\\", "/sandbox/", "\\quarantine\\", "/quarantine/", "malware-analysis", "malware_analysis"))
+| project
+    TimeGenerated,
+    DeviceId,
+    DeviceName,
+    FileName,
+    FolderPath,
+    ProcessCommandLine,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    InitiatingProcessId,
+    ProcessId,
+    AccountName,
+    AccountDomain
