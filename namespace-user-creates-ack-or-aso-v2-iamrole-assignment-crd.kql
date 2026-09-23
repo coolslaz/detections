@@ -1,0 +1,22 @@
+// Detects a namespace-scoped Kubernetes identity creating an IAM/role-assignment custom resource
+// for AWS Controllers for Kubernetes (ACK) or Azure Service Operator v2 (ASO v2) -
+// the same confused-deputy pattern as GCP Config Connector, since these operators also
+// authenticate to the cloud provider using a single shared high-privilege identity.
+NCCKubernetesAPIAuditLogs
+| where Verb in ("create", "update", "patch")
+| extend ObjectApiGroup = tostring(ObjectRef.apiGroup)
+| extend ObjectResource = tostring(ObjectRef.resource)
+| extend ObjectName = tostring(ObjectRef.name)
+| extend ObjectNamespace = tostring(ObjectRef.namespace)
+| extend RequestUser = tostring(User.username)
+| where ResponseStatusCode between (200 .. 299)
+// ACK IAM CRDs live under the iam.services.k8s.aws API group (IAMRole, PolicyAttachment)
+// ASO v2 role-assignment CRDs live under authorization.azure.com (RoleAssignment)
+| where (ObjectApiGroup == "iam.services.k8s.aws" and ObjectResource in ("iamroles", "policyattachments"))
+ or (ObjectApiGroup == "authorization.azure.com" and ObjectResource == "roleassignments")
+// Exclude the operator's own controller/service-account identity performing routine reconciliation,
+// and the operators' own install namespaces, rather than only the kube-system special case
+| where RequestUser !has "system:serviceaccount:" and RequestUser !endswith "-controller" and RequestUser !endswith "-operator"
+| where ObjectNamespace !in ("kube-system", "ack-system", "azureserviceoperator-system", "capz-system")
+| project TimeGenerated, RequestUser, ObjectApiGroup, ObjectResource, ObjectName, ObjectNamespace, Verb
+| sort by TimeGenerated desc
