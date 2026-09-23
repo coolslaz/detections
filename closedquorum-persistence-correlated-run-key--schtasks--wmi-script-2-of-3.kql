@@ -1,0 +1,39 @@
+// Detects the ClosedQuorum 'persist' capability chain by requiring correlation of at least
+// TWO of the three persistence techniques (Run key write, schtasks.exe task creation,
+// WMI-triggered wmi.ps1 execution) on the same device within a tight window, restricted to
+// artifacts created from unusual/user-writable locations or launched by unsigned/rare binaries.
+// Legitimate installer/updater activity under Program Files or signed System32 binaries is excluded.
+let lookback = 1d;
+let corrWindow = 30m;
+let unusualPath = @"(\\AppData\\|\\Temp\\|\\ProgramData\\|\\Users\\Public\\)";
+let legitPath = @"(\\Program Files\\|\\Program Files \(x86\)\|\\Windows\\System32\\)";
+let runKeyPersist = DeviceRegistryEvents
+| where TimeGenerated > ago(lookback)
+| where ActionType == "RegistryValueSet"
+| where RegistryKey has_any ("CurrentVersion\\Run") and RegistryKey has "CurrentUser"
+| where RegistryValueName =~ "WindowsUpdate"
+| where RegistryValueData matches regex unusualPath
+| where not(RegistryValueData matches regex legitPath)
+| project DeviceId, Timestamp = TimeGenerated, Technique = "RunKey", Detail = RegistryValueData, InitiatingProcessFileName, InitiatingProcessSHA256;
+let schtasksPersist = DeviceProcessEvents
+| where TimeGenerated > ago(lookback)
+| where FileName =~ "schtasks.exe"
+| where ProcessCommandLine has "/create"
+| where ProcessCommandLine matches regex unusualPath
+| where not(ProcessCommandLine matches regex legitPath)
+| where InitiatingProcessSignatureStatus != "Signed" or isempty(InitiatingProcessSignatureStatus)
+| project DeviceId, Timestamp = TimeGenerated, Technique = "Schtasks", Detail = ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessSHA256;
+let wmiScriptExec = DeviceProcessEvents
+| where TimeGenerated > ago(lookback)
+| where FileName =~ "powershell.exe"
+| where ProcessCommandLine has "wmi.ps1"
+| where ProcessCommandLine matches regex unusualPath
+| where not(ProcessCommandLine matches regex legitPath)
+| where InitiatingProcessSignatureStatus != "Signed" or isempty(InitiatingProcessSignatureStatus)
+| project DeviceId, Timestamp = TimeGenerated, Technique = "WMIScript", Detail = ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessSHA256;
+union runKeyPersist, schtasksPersist, wmiScriptExec
+| summarize Techniques = make_set(Technique), TechniqueCount = dcount(Technique), Details = make_list(Detail, 10), FirstSeen = min(Timestamp), LastSeen = max(Timestamp), Binaries = make_set(InitiatingProcessFileName, 10) by DeviceId, bin(Timestamp, corrWindow)
+| where TechniqueCount >= 2
+| where datetime_diff('minute', LastSeen, FirstSeen) <= 30
+| project DeviceId, FirstSeen, LastSeen, Techniques, TechniqueCount, Binaries, Details
+| sort by FirstSeen asc
