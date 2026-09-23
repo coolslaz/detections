@@ -1,0 +1,17 @@
+// Detects the psexec_ntdsgrab-style lateral movement pattern: an SMB/PsExec service install
+// (or Meterpreter-spawned) that lands on a device and is followed shortly after by
+// Volume-Shadow-Copy based NTDS.dit/SYSTEM hive extraction activity on the same host.
+let lookback = 15m;
+let psexecEvents = DeviceProcessEvents
+| where FileName =~ "PSEXESVC.exe"
+ or (FileName =~ "sc.exe" and ProcessCommandLine has_any ("create", "start") and ProcessCommandLine has "PSEXESVC")
+| project DeviceId, DeviceName, PsExecTime = TimeGenerated, PsExecCmd = ProcessCommandLine, PsExecFile = FileName, AccountName;
+let ntdsGrabEvents = DeviceProcessEvents
+| where ProcessCommandLine has_any ("vssadmin", "ntdsutil", "esentutl") 
+ and ProcessCommandLine has_any ("ntds.dit", "\\NTDS\\", "\\config\\SYSTEM")
+| project DeviceId, NtdsTime = TimeGenerated, NtdsCmd = ProcessCommandLine, NtdsFile = FileName;
+psexecEvents
+| join kind=inner (ntdsGrabEvents) on DeviceId
+| where NtdsTime between (PsExecTime .. (PsExecTime + lookback))
+| project DeviceName, AccountName, PsExecTime, PsExecFile, PsExecCmd, NtdsTime, NtdsFile, NtdsCmd
+| sort by PsExecTime desc
