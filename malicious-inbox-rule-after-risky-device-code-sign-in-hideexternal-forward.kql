@@ -1,0 +1,28 @@
+// Detects inbox rules that BOTH hide/delete evidence AND forward externally, created shortly after a device-code authentication that also carried an elevated risk signal
+let riskyDeviceCodeSignins = SigninLogs
+| where TimeGenerated > ago(2d)
+| where AuthenticationDetails has "deviceCode"
+| where RiskLevelDuringSignIn in ("high", "medium") or RiskState =~ "atRisk" or RiskState =~ "confirmedCompromised"
+| project SignInTimestamp = TimeGenerated, AccountObjectId = UserId, AccountUpn = UserPrincipalName;
+CloudAppEvents
+| where TimeGenerated > ago(2d)
+| where ActionType in ("New-InboxRule", "Set-InboxRule")
+| extend Parameters = parse_json(tostring(parse_json(RawEventData).Parameters))
+| mv-expand Parameters
+| extend ParamName = tostring(Parameters.Name), ParamValue = tostring(Parameters.Value)
+| summarize RuleParams = make_bag(pack(ParamName, ParamValue)) by TimeGenerated, ActionType, AccountObjectId = tostring(parse_json(RawEventData).ObjectId), AccountDisplayName, ReportId
+| extend RuleParamsString = tostring(RuleParams)
+// require a hiding/deletion action
+| where RuleParamsString has_any ("DeleteMessage", "MoveToFolder", "MarkAsRead", "StopProcessingRules")
+// require an external forward/redirect/bcc target
+| where RuleParamsString has_any ("ForwardTo", "RedirectTo", "BlindCopyTo")
+| join kind=inner (riskyDeviceCodeSignins) on AccountObjectId
+| extend AccountDomain = tolower(tostring(split(AccountUpn, "@")[1]))
+| extend ForwardTarget = extract(@'"(?:ForwardTo|RedirectTo|BlindCopyTo)"\s*:\s*"([^"]*@[^"\\]+)"', 1, RuleParamsString)
+| extend ForwardDomain = tolower(tostring(split(ForwardTarget, "@")[1]))
+// exclude purely internal forwarding/organizational rules (same-domain target)
+| where isnotempty(ForwardTarget) and ForwardDomain != AccountDomain
+// shortened correlation window: rule created within 4 hours after the risky device-code sign-in
+| where TimeGenerated > SignInTimestamp and TimeGenerated < (SignInTimestamp + 4h)
+| project TimeGenerated, SignInTimestamp, AccountObjectId, AccountUpn, AccountDisplayName, ActionType, ForwardTarget, RuleParamsString, ReportId
+| sort by TimeGenerated desc
