@@ -1,0 +1,24 @@
+// Detects automated post-compromise mailbox reconnaissance following an anomalous OAuth device code sign-in that also carries additional risk signal
+// Behavior: attacker tooling programmatically searches/accesses many mail items shortly after token issuance (EvilTokens 'Keyword Alerts' / 'Office Email Validator' style scanning)
+// Tightened: excludes known compliance/migration/backup service accounts, requires an additional risk signal on the device-code sign-in (not device-code alone), raises the access count threshold, and shrinks the correlation window to reduce noise from routine Outlook indexing/search and eDiscovery tooling
+let ServiceAccountUpns = dynamic(["complianceservice@", "ediscovery@", "backupsvc@", "migration@", "svc-mailbox@"]);
+let DeviceCodeSignIns = SigninLogs
+| where TimeGenerated > ago(14d)
+| where AuthenticationDetails has "deviceCode" or AuthenticationRequirement has "deviceCode"
+| where RiskLevelAggregated in (1, 2) or RiskDetail =~ "atRisk" or RiskDetail =~ "confirmedCompromised"
+| where not(UserPrincipalName has_any (ServiceAccountUpns))
+| project SignInTime = TimeGenerated, AccountObjectId = UserId, AccountUpn = UserPrincipalName, IPAddress, RiskLevel = RiskLevelAggregated, RiskState = RiskDetail;
+let SuspiciousMailAccess = CloudAppEvents
+| where TimeGenerated > ago(14d)
+| where ActionType in ("MailItemsAccessed", "Search", "SearchQueryInitiated")
+| where Application == "Microsoft Exchange Online" or Application == "Office 365"
+| extend AccountObjectId = tostring(RawEventData.UserId), AccountUpn = AccountDisplayName
+| where not(AccountUpn has_any (ServiceAccountUpns))
+| project AccessTime = TimeGenerated, AccountObjectId, AccountUpn, ActionType, IPAddress;
+DeviceCodeSignIns
+| join kind=inner (SuspiciousMailAccess) on AccountObjectId
+| where AccessTime between (SignInTime .. (SignInTime + 30m))
+| summarize AccessCount = count(), DistinctActions = dcount(ActionType), FirstAccess = min(AccessTime), LastAccess = max(AccessTime) by AccountObjectId, AccountUpn, SignInTime, IPAddress, RiskLevel, RiskState
+| where AccessCount >= 30
+| project AccountUpn, AccountObjectId, SignInTime, FirstAccess, LastAccess, AccessCount, DistinctActions, IPAddress, RiskLevel, RiskState
+| sort by AccessCount desc
