@@ -1,0 +1,44 @@
+// MITRE ATT&CK T1683 - Generate Content (Resource Development, PRE)
+// Detects downstream DELIVERY of likely AI-paraphrased mass-produced lure content impersonating a brand/executive,
+// not the generation act itself (which occurs off-network and is not observable here).
+// Detection rationale: AI-assisted paraphrasing produces bursts of near-identical-but-not-identical subject lines
+// from a newly-seen, unauthenticated sending domain in a short window - distinct from both a single hand-crafted
+// BEC lure and from legitimate bulk/newsletter mail (which typically sends byte-identical subjects from an
+// authenticated, long-standing domain).
+//
+// False-positive tightening vs the first draft:
+//  - Requires authentication failure (SPF/DKIM/DMARC) OR a sender domain first-seen inside the lookback window -
+//    a real corroborating signal, not clustering alone.
+//  - Excludes known/allow-listed bulk-mail (ESP) sending domains.
+//  - Only considers mail that reached the inbox (already-quarantined/blocked mail is not re-alerted).
+//  - Requires MULTIPLE distinct near-duplicate subject variants (not one identical subject) to distinguish
+//    AI-paraphrased bursts from a single legitimate mass mailing.
+let lookback = 14d;                       // baseline window used to establish sender-domain first-seen
+let clusterWindow = 6h;                   // rolling window to group a "campaign" burst
+let minRecipients = 5;                    // tunable: min distinct recipients per cluster
+let minSubjectVariants = 3;               // tunable: min distinct near-duplicate subject variants per cluster
+let espAllowList = dynamic(["sendgrid.net","mailchimp.com","salesforce.com","constantcontact.com","hubspotemail.net"]); // tunable allow-list of legitimate bulk senders
+let DomainFirstSeen = EmailEvents
+    | where TimeGenerated > ago(lookback)
+    | summarize FirstSeen = min(TimeGenerated) by SenderFromDomain;
+EmailEvents
+| where TimeGenerated > ago(clusterWindow)
+| where DeliveryAction != "Blocked" and DeliveryLocation has "Inbox"
+| where SenderFromDomain !in (espAllowList)
+| where ThreatTypes has "Phish" or DetectionMethods has_any ("Impersonation domain","Impersonation user","Impersonation brand","Spoof")
+| extend NormalizedSubject = trim(@"\s+", tolower(replace_regex(Subject, @"[0-9]+", "#")))
+| join kind=inner (DomainFirstSeen) on SenderFromDomain
+| extend IsNewDomain = FirstSeen > ago(lookback - clusterWindow)
+| extend AuthFail = AuthenticationDetails has_any ("Fail", "SoftFail", "None")
+| where IsNewDomain or AuthFail
+| summarize
+    DistinctRecipients = dcount(RecipientEmailAddress),
+    DistinctSubjectVariants = dcount(Subject),
+    RecipientList = make_set(RecipientEmailAddress, 20),
+    SubjectSamples = make_set(Subject, 10),
+    SenderList = make_set(SenderFromAddress, 10),
+    FirstDelivered = min(TimeGenerated),
+    LastDelivered = max(TimeGenerated)
+    by SenderFromDomain, NormalizedSubject
+| where DistinctRecipients >= minRecipients and DistinctSubjectVariants >= minSubjectVariants
+| sort by DistinctRecipients desc
