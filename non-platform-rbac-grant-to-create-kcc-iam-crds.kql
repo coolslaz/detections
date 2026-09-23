@@ -1,0 +1,23 @@
+// Detects Kubernetes RBAC Role/ClusterRole create or update events (captured via GKE/Kubernetes Cloud Audit Logs) that grant the 'create' verb on Config Connector IAM custom resources (iampolicymembers, iampolicies, iampartialpolicies) to a subject outside the approved platform-team identities.
+// Data source: GCP Cloud Audit Logs (Kubernetes RBAC audit trail) ingested into GCPAuditLogs.
+let approved_platform_identities = dynamic(["platform-team", "sa-kcc-admin", "gke-platform-sa"]);
+GCPAuditLogs
+| where MethodName has_any (
+    "io.k8s.authorization.rbac.v1.roles.create",
+    "io.k8s.authorization.rbac.v1.roles.update",
+    "io.k8s.authorization.rbac.v1.clusterroles.create",
+    "io.k8s.authorization.rbac.v1.clusterroles.update"
+)
+| extend AuthenticationEmail = tostring(AuthenticationInfo.principalEmail)
+| extend ReqObj = todynamic(tostring(Request))
+| mv-expand Rule = ReqObj.rules
+| extend RuleResources = tostring(Rule.resources)
+| extend RuleVerbs = tostring(Rule.verbs)
+| extend RuleApiGroups = tostring(Rule.apiGroups)
+| where RuleResources has_any ("iampolicymembers", "iampolicies", "iampartialpolicies")
+| where RuleVerbs has "create"
+// Require the rule's apiGroups actually cover KCC's IAM CRDs (or a wildcard), so a Role granting
+// 'create' on similarly-named resources in an unrelated apiGroup doesn't also match
+| where RuleApiGroups has "iam.cnrm.cloud.google.com" or RuleApiGroups has "*"
+| where not(AuthenticationEmail has_any (approved_platform_identities))
+| project TimeGenerated, MethodName, AuthenticationEmail, RuleResources, RuleVerbs, RuleApiGroups, GCPResourceName
