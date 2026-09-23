@@ -1,0 +1,11 @@
+// CLEANGULP AES-encrypted HTTP beacon registration to hardcoded typosquat C2
+// Flags connections to thecovnresation.com / thecovnresation.net (exact or subdomain)
+// and specifically the /beacon/pre-register path when URL visibility is available
+DeviceNetworkEvents
+| where TimeGenerated > ago(30d)
+| where RemotePort == 80 or isempty(RemotePort)
+| extend RemoteHost = tolower(tostring(RemoteUrl))
+| where RemoteHost matches regex @"(^|\.)thecovnresation\.(com|net)($|[/:])"
+| extend BeaconPathMatch = RemoteHost has "/beacon/pre-register"
+| project TimeGenerated, DeviceName, RemoteIP, RemoteUrl, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, BeaconPathMatch
+| sort by TimeGenerated asc
