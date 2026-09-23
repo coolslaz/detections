@@ -1,0 +1,17 @@
+// Detects a single non-browser process contacting ALL FOUR distinct commercial LLM provider APIs (DeepSeek, Qwen/OpenRouter, Mistral, Gemini) within a tight 5-minute window, with at least one connection per provider, consistent with ClosedQuorum's queryLLM/interModelDiscussion plurality-vote C2 pattern. Browsers are excluded to filter out AI-aggregator websites (e.g. poe.com, you.com) that legitimately fan out to multiple LLM backends from a single page load.
+DeviceNetworkEvents
+| where TimeGenerated > ago(1d)
+| where RemoteUrl has_any ("api.deepseek.com", "openrouter.ai", "api.mistral.ai", "generativelanguage.googleapis.com")
+| extend Provider = case(
+    RemoteUrl has "api.deepseek.com", "deepseek",
+    RemoteUrl has "openrouter.ai", "qwen",
+    RemoteUrl has "api.mistral.ai", "mistral",
+    RemoteUrl has "generativelanguage.googleapis.com", "gemini",
+    "unknown")
+| summarize Providers = make_set(Provider, 8), ProviderCount = dcount(Provider), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), ConnectionCount = count()
+    by DeviceId, DeviceName, InitiatingProcessId, InitiatingProcessFileName, InitiatingProcessCommandLine, bin(TimeGenerated, 5m)
+| where ProviderCount >= 4
+| where InitiatingProcessFileName !in~ ("chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe", "iexplore.exe", "safari.exe")
+| where ConnectionCount >= ProviderCount
+| project FirstSeen, LastSeen, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, Providers, ProviderCount, ConnectionCount
+| sort by ProviderCount desc
