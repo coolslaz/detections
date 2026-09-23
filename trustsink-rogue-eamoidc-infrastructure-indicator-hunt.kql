@@ -1,0 +1,35 @@
+// TrustSink rogue External Authentication Method (EAM) / rogue OIDC provider indicator hunt
+// Tunable indicator lists - add new domains/URLs as they are discovered
+let indicator_domains = dynamic(["trident-sip-filter.ngrok-free.dev"]);
+let indicator_urls = dynamic(["https://trident-sip-filter.ngrok-free.dev/eam/.well-known/openid-configuration"]);
+let all_indicators = array_concat(indicator_domains, indicator_urls);
+let audit_hits = AuditLogs
+| where TimeGenerated > ago(30d)
+| where Category == "Policy"
+| mv-expand TargetResource = TargetResources
+| mv-expand Modified = TargetResource.modifiedProperties
+| extend PropertyName = tostring(Modified.displayName), NewValue = tostring(Modified.newValue)
+| where NewValue has_any (all_indicators)
+| extend MatchedIndicator = NewValue
+| project TimeGenerated, SourceTable = "AuditLogs", MatchedIndicator, MatchedField = PropertyName, Details = NewValue, Actor = tostring(InitiatedBy.user.userPrincipalName), CorrelationId = tostring(CorrelationId);
+let signin_hits = SigninLogs
+| where TimeGenerated > ago(30d)
+| extend AuthDetailsStr = tostring(AuthenticationDetails)
+| extend ResourceIdentityStr = tostring(ResourceIdentity)
+| where AuthDetailsStr has_any (all_indicators) or ResourceIdentityStr has_any (all_indicators)
+| extend MatchedIndicator = case(AuthDetailsStr has_any (all_indicators), AuthDetailsStr, ResourceIdentityStr)
+| project TimeGenerated, SourceTable = "SigninLogs", MatchedIndicator, MatchedField = "AuthenticationDetails/ResourceIdentity", Details = AuthDetailsStr, Actor = UserPrincipalName, CorrelationId = tostring(CorrelationId);
+let dns_hits = DnsEvents
+| where TimeGenerated > ago(30d)
+| where Name has_any (indicator_domains)
+| extend MatchedIndicator = Name
+| project TimeGenerated, SourceTable = "DnsEvents", MatchedIndicator, MatchedField = "Name", Details = strcat("Query type: ", SubType), Actor = tostring(ClientIP), CorrelationId = "";
+let netevt_hits = DeviceNetworkEvents
+| where TimeGenerated > ago(30d)
+| where RemotePort in (80, 443)
+| where RemoteUrl has_any (all_indicators)
+| extend MatchedIndicator = RemoteUrl
+| project TimeGenerated, SourceTable = "DeviceNetworkEvents", MatchedIndicator, MatchedField = "RemoteUrl", Details = strcat(DeviceName, " -> ", RemoteUrl, ":", tostring(RemotePort)), Actor = InitiatingProcessAccountName, CorrelationId = tostring(ReportId);
+union audit_hits, signin_hits, dns_hits, netevt_hits
+| summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), EventCount = count(), Details = any(Details) by SourceTable, MatchedIndicator, MatchedField, Actor, CorrelationId
+| sort by LastSeen desc;
