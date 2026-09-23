@@ -1,0 +1,20 @@
+// Detects a namespace-scoped, non-automation Kubernetes user submitting an IAMPolicyMember/
+// IAMPartialPolicy/IAMPolicy custom resource (via kubectl apply, reconciled by Config Connector/KCC)
+// that requests a high-privilege role bound to an Organization-scoped resourceRef. Method-name suffix
+// matching (rather than a bare substring on generic verbs) and excluding KCC's own service-account
+// reconciliation traffic and known-approved platform identities reduce noise from unrelated API calls.
+let approved_platform_identities = dynamic(["platform-team", "sa-kcc-admin", "gke-platform-sa"]);
+GCPAuditLogs
+| where TimeGenerated > ago(24h)
+| extend MethodNameStr = tostring(MethodName)
+| where MethodNameStr endswith ".create" or MethodNameStr endswith ".update" or MethodNameStr endswith ".patch"
+| where MethodNameStr has_any ("iampolicymembers.iam.cnrm.cloud.google.com", "iampartialpolicies.iam.cnrm.cloud.google.com", "iampolicies.iam.cnrm.cloud.google.com")
+| extend RequestBody = tostring(Request)
+| where RequestBody has_any ("roles/owner", "roles/resourcemanager.organizationAdmin")
+| where RequestBody has "Organization"
+| extend PrincipalEmailStr = tostring(PrincipalEmail)
+| where PrincipalEmailStr !has "gserviceaccount.com"
+| where not(PrincipalEmailStr has_any (approved_platform_identities))
+| extend ResourceNameStr = tostring(GCPResourceName)
+| project TimeGenerated, PrincipalEmailStr, MethodNameStr, ResourceNameStr, RequestBody
+| sort by TimeGenerated desc
