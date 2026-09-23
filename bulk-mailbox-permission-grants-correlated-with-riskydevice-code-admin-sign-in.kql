@@ -1,0 +1,24 @@
+// Detects the observable proxy for EvilTokens 'Grant & Add' abuse: an admin-token session using Exchange mailbox-permission grant operations to pivot from one compromised admin mailbox into access over many mailboxes in rapid succession.
+// Tightened to exclude routine bulk-admin operations (onboarding/offboarding, migrations, helpdesk, service accounts) by raising thresholds and requiring correlation with a risky or device-code-flagged sign-in by the same admin account shortly before the grant burst.
+let LookbackWindow = 1d;
+let BurstWindowMinutes = 15;
+let MinDistinctMailboxes = 15;
+let RiskySignIns = EntraIdSignInEvents
+| where Timestamp > ago(LookbackWindow)
+| where RiskLevelAggregated in ("medium", "high") or AuthenticationRequirement == "deviceCode"
+| project SignInAccount = AccountObjectId, SignInTime = Timestamp, RiskLevelAggregated, AuthenticationRequirement;
+CloudAppEvents
+| where TimeGenerated > ago(LookbackWindow)
+| where Application == "Microsoft Exchange Online" or Application == "Office 365"
+| where ActionType in ("Add-MailboxPermission", "Add-RecipientPermission", "Set-MailboxFolderPermission")
+| extend Actor = tostring(AccountObjectId)
+| extend ActorUPN = tostring(AccountDisplayName)
+| where not(ActorUPN has_any ("svc", "service", "noreply", "automation", "migration"))
+| extend GrantedOn = tostring(ObjectId)
+| summarize DistinctMailboxesGranted = dcount(GrantedOn), MailboxList = make_set(GrantedOn, 50), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by Actor, ActorUPN
+| where DistinctMailboxesGranted >= MinDistinctMailboxes
+| where datetime_diff('minute', LastSeen, FirstSeen) <= BurstWindowMinutes
+| join kind=inner (RiskySignIns) on $left.Actor == $right.SignInAccount
+| where SignInTime between ((FirstSeen - 12h) .. LastSeen)
+| project Actor, ActorUPN, DistinctMailboxesGranted, MailboxList, FirstSeen, LastSeen, SignInTime, RiskLevelAggregated, AuthenticationRequirement
+| sort by LastSeen desc
