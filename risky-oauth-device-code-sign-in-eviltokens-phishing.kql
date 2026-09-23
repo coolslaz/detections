@@ -1,0 +1,28 @@
+// Detects successful OAuth device code flow sign-ins that carry an additional risk signal,
+// narrowing out routine legitimate device-code usage (CLI tools, smart TVs, IoT) while still
+// catching the flow EvilTokens phishing pages abuse to have victims authorize an attacker code
+let lookback = 14d;
+let DeviceCodeSignIns = EntraIdSignInEvents
+| where Timestamp > ago(1d)
+| where AuthenticationProcessingDetails has "deviceCode" or EndpointCall has "devicecode"
+| where ErrorCode == 0;
+// Baseline of each account's typical countries and client apps over the prior lookback window
+let AccountBaselineCountries = EntraIdSignInEvents
+| where Timestamp between (ago(lookback) .. ago(1d))
+| where ErrorCode == 0
+| summarize KnownCountries = make_set(Country, 100) by AccountObjectId;
+let AccountBaselineApps = EntraIdSignInEvents
+| where Timestamp between (ago(lookback) .. ago(1d))
+| where ErrorCode == 0
+| summarize KnownApps = make_set(strcat(ClientAppUsed, "|", Application), 100) by AccountObjectId;
+DeviceCodeSignIns
+| join kind=leftouter (AccountBaselineCountries) on AccountObjectId
+| join kind=leftouter (AccountBaselineApps) on AccountObjectId
+| extend AppCombo = strcat(ClientAppUsed, "|", Application)
+| extend IsAtypicalCountry = isnotempty(Country) and not(KnownCountries has Country)
+| extend IsRareAppCombo = isnotempty(AppCombo) and not(KnownApps has AppCombo)
+| extend IsUnmanagedOrNoncompliant = (IsManaged == false or IsCompliant == false or isempty(DeviceName))
+| extend IsElevatedRisk = (RiskLevelDuringSignIn in ("medium", "high")) or (RiskLevelAggregated in ("medium", "high"))
+| where IsElevatedRisk or IsAtypicalCountry or IsRareAppCombo or IsUnmanagedOrNoncompliant
+| project Timestamp, AccountUpn, AccountObjectId, ApplicationId, Application, ClientAppUsed, IPAddress, DeviceName, IsManaged, IsCompliant, Country, City, RiskLevelDuringSignIn, RiskLevelAggregated, IsElevatedRisk, IsAtypicalCountry, IsRareAppCombo, IsUnmanagedOrNoncompliant, AuthenticationProcessingDetails, EndpointCall, ErrorCode
+| sort by Timestamp desc
