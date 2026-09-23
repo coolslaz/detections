@@ -1,0 +1,20 @@
+// Detects the EvilTokens evasion pattern: a device first hits the attacker-associated
+// fake verification/CAPTCHA challenge page used to shield the capture page from automated
+// scanners, then the SAME browser process (continuity proxy for same tab/session) navigates
+// to the genuine Microsoft device code authorization endpoint shortly after - the redirect
+// chain the AntiBot Redirector and AI Mode obfuscation features are built to protect.
+// Generic Cloudflare Turnstile usage is excluded since it is widespread on legitimate sites;
+// only the attacker's fake identity-verification challenge wording is matched.
+let captcha_events = DeviceNetworkEvents
+| where TimeGenerated > ago(1d)
+| where RemoteUrl has_any ("verify-your-identity", "verify your identity")
+| project DeviceId, InitiatingProcessId, InitiatingProcessFileName, CaptchaTime = TimeGenerated, CaptchaUrl = RemoteUrl;
+let devicelogin_events = DeviceNetworkEvents
+| where TimeGenerated > ago(1d)
+| where RemoteUrl has_any ("microsoft.com/devicelogin", "login.microsoftonline.com/common/oauth2/deviceauth", "login.microsoftonline.com/common/oauth2/v2.0/devicecode")
+| project DeviceId, InitiatingProcessId, InitiatingProcessFileName, DeviceLoginTime = TimeGenerated, DeviceLoginUrl = RemoteUrl;
+captcha_events
+| join kind=inner (devicelogin_events) on DeviceId, InitiatingProcessId, InitiatingProcessFileName
+| where DeviceLoginTime between (CaptchaTime .. (CaptchaTime + 10m))
+| project DeviceId, InitiatingProcessFileName, InitiatingProcessId, CaptchaTime, CaptchaUrl, DeviceLoginTime, DeviceLoginUrl
+| sort by DeviceLoginTime desc
