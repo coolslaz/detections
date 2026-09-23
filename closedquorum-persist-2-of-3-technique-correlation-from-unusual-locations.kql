@@ -1,0 +1,44 @@
+// Detects the ClosedQuorum implant's 'persist' module by requiring correlation of at
+// least two of the three redundant persistence techniques (HKCU Run key named
+// WindowsUpdate, schtasks.exe scheduled task creation, WMI wmi.ps1 drop/execution) on
+// the same host within a tight window. Restricted to artifacts written from unusual
+// user-writable locations (AppData, Temp, ProgramData) or by unsigned/rare binaries,
+// and excludes common legitimate installer/updater paths (Program Files, Windows\System32)
+// and signed binaries in standard install directories to reduce noise.
+let lookback = 1h;
+let unusualPath = @"(\AppData\|\Temp\|\ProgramData\|\Users\Public\)";
+let legitInstallPath = @"(\Program Files\|\Program Files \(x86\)\|\Windows\System32\|\Windows\SysWOW64\)";
+let regRun = DeviceRegistryEvents
+| where TimeGenerated > ago(lookback)
+| where RegistryKey has @"Software\Microsoft\Windows\CurrentVersion\Run"
+| where RegistryValueName =~ "WindowsUpdate"
+| where ActionType in ("RegistryValueSet", "RegistryKeyCreated")
+| where isnotempty(InitiatingProcessFolderPath)
+| where InitiatingProcessFolderPath matches regex unusualPath
+ or not(InitiatingProcessFolderPath matches regex legitInstallPath)
+| project TimeGenerated, DeviceId, InitiatingProcessId, Technique = "RegRun", Detail = strcat(RegistryKey, "|", RegistryValueName), ProcPath = InitiatingProcessFolderPath;
+let schTask = DeviceProcessEvents
+| where TimeGenerated > ago(lookback)
+| where FileName =~ "schtasks.exe"
+| where ProcessCommandLine has_any ("/create", "/Create")
+| where ProcessCommandLine matches regex unusualPath
+ or (InitiatingProcessSignatureStatus != "Signed" and not(InitiatingProcessFolderPath matches regex legitInstallPath))
+| project TimeGenerated, DeviceId, InitiatingProcessId, Technique = "SchTask", Detail = ProcessCommandLine, ProcPath = InitiatingProcessFolderPath;
+let wmiScript = DeviceFileEvents
+| where TimeGenerated > ago(lookback)
+| where FolderPath has @"Windows\Temp" and FileName =~ "wmi.ps1"
+| where not(FolderPath matches regex legitInstallPath)
+| project TimeGenerated, DeviceId, InitiatingProcessId = "", Technique = "WmiScript", Detail = FolderPath, ProcPath = "";
+let psExec = DeviceProcessEvents
+| where TimeGenerated > ago(lookback)
+| where FileName =~ "powershell.exe"
+| where ProcessCommandLine has "wmi.ps1"
+| where InitiatingProcessSignatureStatus != "Signed" or ProcessCommandLine matches regex unusualPath
+| project TimeGenerated, DeviceId, InitiatingProcessId, Technique = "WmiExec", Detail = ProcessCommandLine, ProcPath = InitiatingProcessFolderPath;
+union regRun, schTask, wmiScript, psExec
+| summarize TechniqueCount = dcount(Technique), Techniques = make_set(Technique, 5), Details = make_set(Detail, 10), Paths = make_set(ProcPath, 5), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated)
+ by DeviceId, bin(TimeGenerated, 10m)
+| where TechniqueCount >= 2
+| where datetime_diff('second', LastSeen, FirstSeen) < 600
+| project DeviceId, FirstSeen, LastSeen, TechniqueCount, Techniques, Details, Paths
+| sort by LastSeen desc
