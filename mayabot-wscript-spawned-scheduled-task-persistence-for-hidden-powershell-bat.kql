@@ -1,0 +1,19 @@
+let ScheduledTaskCreation = DeviceProcessEvents
+| where FileName =~ "schtasks.exe"
+| where ProcessCommandLine has "/Create" and ProcessCommandLine has "/SC" and ProcessCommandLine has "DAILY"
+| where ProcessCommandLine has_any ("MyTasks", "FirewallUpdate")
+| where ProcessCommandLine has_any ("update.bat", "backup.bat", "firewall-update.bat")
+| where ProcessCommandLine has "AppData\\Local"
+| where InitiatingProcessFileName in~ ("wscript.exe", "cscript.exe", "cmd.exe")
+| project DeviceId, AccountName, TaskTime = TimeGenerated, TaskCmd = ProcessCommandLine, TaskParent = InitiatingProcessFileName;
+let HiddenPowerShellExec = DeviceProcessEvents
+| where FileName =~ "cmd.exe"
+| where ProcessCommandLine has "PowerShell.exe" and ProcessCommandLine has "-WindowStyle Hidden"
+| where ProcessCommandLine has_any ("update.bat", "backup.bat", "firewall-update.bat")
+| where ProcessCommandLine has "AppData\\Local"
+| project DeviceId, ExecTime = TimeGenerated, ExecCmd = ProcessCommandLine, ExecParent = InitiatingProcessFileName;
+ScheduledTaskCreation
+| join kind=inner HiddenPowerShellExec on DeviceId
+| where abs(datetime_diff('minute', ExecTime, TaskTime)) <= 60
+| project DeviceId, AccountName, TaskTime, TaskCmd, TaskParent, ExecTime, ExecCmd, ExecParent
+| sort by TaskTime asc
