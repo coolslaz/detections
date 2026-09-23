@@ -1,0 +1,53 @@
+// Detects sckit worm propagation: sckit spawning npm/PyPI publish commands,
+// injecting the runtime-update.yml GitHub Actions workflow template, or
+// dropping the bootstrap.cjs postinstall stub into victim packages.
+// Note: InitiatingProcessFileName matching 'sckit' covers the direct spawn path;
+// the workflow/file signals fire independently of parent-process visibility.
+let ScktPublishSpawn = DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where (
+    (FileName =~ "npm" and ProcessCommandLine has "publish")
+    or (FileName =~ "twine" and ProcessCommandLine has "upload")
+    or (FileName =~ "node" and ProcessCommandLine has_all ("collectStageZero", "ci-release"))
+  )
+| where InitiatingProcessFileName =~ "sckit"
+    or InitiatingProcessCommandLine has_all ("stage0", "--config64")
+| extend DetectionType = "sckit spawned package publish command"
+| project TimeGenerated, DeviceId, DeviceName, DetectionType,
+    FileName, ProcessCommandLine,
+    InitiatingProcessFileName, InitiatingProcessCommandLine,
+    AccountName, FolderPath = "", SHA256 = SHA256;
+let WorkflowInjection = DeviceFileEvents
+| where TimeGenerated > ago(1d)
+// Tightened: require an actual creation (not any touch) AND sckit process lineage.
+// "runtime-update.yml" alone is a plausible name a legitimate team could pick for its
+// own CI automation, so without the lineage check this branch alerted on any workflow
+// file with that name regardless of who wrote it.
+| where ActionType == "FileCreated"
+| where FileName =~ "runtime-update.yml"
+    and FolderPath contains ".github/workflows"
+| where InitiatingProcessFileName =~ "sckit"
+    or InitiatingProcessFileName =~ "sckit.exe"
+    or InitiatingProcessCommandLine has_all ("stage0", "--config64")
+| extend DetectionType = "sckit injected runtime-update.yml GitHub Actions workflow"
+| project TimeGenerated, DeviceId, DeviceName, DetectionType,
+    FileName, ProcessCommandLine = InitiatingProcessCommandLine,
+    InitiatingProcessFileName, InitiatingProcessCommandLine,
+    AccountName = RequestAccountName, FolderPath, SHA256;
+let BootstrapDrop = DeviceFileEvents
+| where TimeGenerated > ago(1d)
+| where ActionType == "FileCreated"
+| where FileName =~ "bootstrap.cjs"
+| where InitiatingProcessFileName =~ "sckit"
+    or InitiatingProcessFileName =~ "sckit.exe"
+    or InitiatingProcessCommandLine has_all ("stage0", "--config64")
+// Exclude sandboxed malware-analysis / test harnesses (authorized-research false
+// positive) so intentional detonation in an isolated lab doesn't page on-call.
+| where not (FolderPath has_any ("\\test\\", "/test/", "\\sandbox\\", "/sandbox/", "\\quarantine\\", "/quarantine/", "malware-analysis", "malware_analysis"))
+| extend DetectionType = "sckit dropped bootstrap.cjs postinstall propagation stub"
+| project TimeGenerated, DeviceId, DeviceName, DetectionType,
+    FileName, ProcessCommandLine = InitiatingProcessCommandLine,
+    InitiatingProcessFileName, InitiatingProcessCommandLine,
+    AccountName = RequestAccountName, FolderPath, SHA256;
+union ScktPublishSpawn, WorkflowInjection, BootstrapDrop
+| sort by TimeGenerated desc
