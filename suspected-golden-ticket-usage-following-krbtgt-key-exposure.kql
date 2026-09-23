@@ -1,0 +1,13 @@
+// Microsoft Defender for Identity raises dedicated alerts when Kerberos TGTs show golden-ticket anomalies
+// (nonexistent account referenced, ticket lifetime/encryption anomalies indicating a forged TGT minted from krbtgt).
+// Tuned to reduce false positives: matches only Golden-Ticket-specific alert names (drops the generic "Ticket
+// anomaly" phrase, which also fires for unrelated Kerberos ticket issues) and drops Informational/Low severity
+// alerts, which are typically benign anomalies rather than confirmed forged tickets.
+SecurityAlert
+| where TimeGenerated > ago(14d)
+| where ProviderName in ("Azure Advanced Threat Protection", "Microsoft Defender for Identity")
+| where AlertName has_any ("Golden Ticket", "Suspected Golden Ticket")
+| where AlertSeverity in ("High", "Medium")
+| extend Entities = parse_json(Entities)
+| project TimeGenerated, AlertName, AlertSeverity, Description, Entities, CompromisedEntity, VendorOriginalId
+| sort by TimeGenerated desc
