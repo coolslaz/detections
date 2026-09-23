@@ -1,0 +1,44 @@
+// Stage 1: Kubernetes-scoped IAMPolicyMember (or IAMPartialPolicy/IAMPolicy) creation.
+// Config Connector (KCC) custom resources are recorded as GKE control-plane audit events
+// that flow into GCPAuditLogs. The create verb against the iam.cnrm.cloud.google.com
+// API group is the KCC "deputy" request that a namespace-scoped user is not supposed to
+// be able to escalate through.
+let lookback = 1d;
+let corrWindow = 30m;
+let k8sCreate = GCPAuditLogs
+| where TimeGenerated > ago(lookback)
+| where ServiceName has "k8s.io" or GCPResourceName has "iampolicymembers.iam.cnrm.cloud.google.com" or GCPResourceName has "iampartialpolicies.iam.cnrm.cloud.google.com" or GCPResourceName has "iampolicies.iam.cnrm.cloud.google.com"
+| where MethodName has "create"
+| where GCPResourceName has_any ("iampolicymembers.iam.cnrm.cloud.google.com", "iampartialpolicies.iam.cnrm.cloud.google.com", "iampolicies.iam.cnrm.cloud.google.com")
+| extend K8sPrincipal = tostring(AuthenticationInfo.principalEmail)
+| extend K8sCallerIp = tostring(RequestMetadata.callerIp)
+| project K8sTime = TimeGenerated, K8sPrincipal, K8sCallerIp, K8sResourceName = GCPResourceName, K8sMethodName = MethodName;
+// Stage 2: Google Cloud Audit Log SetIamPolicy call that grants a high-privilege role
+// (roles/owner or roles/resourcemanager.organizationAdmin) at organization or folder scope.
+// This is the KCC reconciliation loop actually applying the binding using its own
+// org-level service account, so the granted member should match the k8s-side principal
+// (either directly, or as the KCC service account acting on that principal's behalf).
+let orgGrant = GCPAuditLogs
+| where TimeGenerated > ago(lookback)
+| where MethodName has "SetIamPolicy"
+| where GCPResourceName has "organizations/" or GCPResourceName has "folders/"
+| extend GrantCallerPrincipal = tostring(AuthenticationInfo.principalEmail)
+// Require the grant to be executed by KCC's own shared service account (the confused deputy),
+// not merely any principal whose email happens to match the downstream user later.
+| where GrantCallerPrincipal has_any ("cnrm-system", "config-connector", "kcc") and GrantCallerPrincipal has "gserviceaccount.com"
+| extend BindingDeltas = ServiceData.policyDelta.bindingDeltas
+| mv-expand BindingDelta = todynamic(BindingDeltas)
+| extend GrantedRole = tostring(BindingDelta.role)
+| extend GrantedMember = tostring(BindingDelta.member)
+// Exact member match (post-prefix) instead of a loose substring 'has' comparison
+| extend GrantedMemberEmail = tostring(split(GrantedMember, ":")[1])
+| where GrantedRole in ("roles/owner", "roles/resourcemanager.organizationAdmin")
+| project GrantTime = TimeGenerated, GrantCallerPrincipal, GrantedMemberEmail, GrantedRole, GrantResourceName = GCPResourceName;
+// Stage 3: Correlate the namespace-scoped IAMPolicyMember creation with the org/folder-scope
+// SetIamPolicy grant executed by KCC's own service account within the correlation window,
+// requiring the granted member to exactly match the namespace user (not a loose substring).
+k8sCreate
+| join kind=inner (orgGrant) on $left.K8sPrincipal == $right.GrantedMemberEmail
+| where GrantTime between (K8sTime .. (K8sTime + corrWindow))
+| project K8sTime, K8sPrincipal, K8sCallerIp, K8sResourceName, GrantTime, GrantedRole, GrantedMemberEmail, GrantResourceName, GrantCallerPrincipal
+| sort by K8sTime desc
