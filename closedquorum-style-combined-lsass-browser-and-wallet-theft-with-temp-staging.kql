@@ -1,0 +1,34 @@
+// Detects the ClosedQuorum 'steal' action: a single process accessing LSASS memory,
+// touching browser credential stores / crypto wallet files, and staging output under a temp directory,
+// all correlated by the same DeviceId + InitiatingProcessId within a tight time window
+let timeWindow = 15m;
+let excludedProcessNames = dynamic(["MsMpEng.exe","MsSense.exe","SenseIR.exe","dllhost.exe","wermgr.exe","csrss.exe","svchost.exe","taskmgr.exe","procexp.exe","procexp64.exe","procdump.exe","procdump64.exe","lsass.exe","wininit.exe","services.exe"]);
+let lsassAccess = DeviceEvents
+| where ActionType == "ProcessAccess"
+| extend AdditionalFields = parse_json(AdditionalFields)
+| where AdditionalFields.TargetProcessFileName =~ "lsass.exe"
+| where tostring(AdditionalFields.GrantedAccess) in~ ("0x1010", "0x1410", "0x1fffff", "0x143a")
+| where InitiatingProcessFileName !in~ (excludedProcessNames)
+| where not(InitiatingProcessFolderPath has_any (@"\Windows\System32", @"\Program Files\", @"\Program Files (x86)\"))
+| where InitiatingProcessFolderPath has_any (@"\AppData\", @"\Temp\", @"\ProgramData\")
+| project DeviceId, InitiatingProcessId, InitiatingProcessSHA256, InitiatingProcessFileName, LsassTime = TimeGenerated;
+let credStoreAccess = DeviceFileEvents
+| where ActionType in ("FileAccessed", "FileModified", "FileRead")
+| where FileName has_any ("Login Data", "Cookies", "Web Data", "wallet.dat") or FolderPath has_any (@"leveldb", @"Exodus", @"Electrum")
+| where FolderPath has @"\Users\" and FolderPath has @"\AppData\Local\"
+| where InitiatingProcessFileName !in~ (excludedProcessNames)
+| project DeviceId, InitiatingProcessId, InitiatingProcessSHA256, InitiatingProcessFileName, CredTime = TimeGenerated, CredFile = FileName;
+let tempStaging = DeviceFileEvents
+| where ActionType in ("FileCreated", "FileModified")
+| where FolderPath has_any (@"\Windows\Temp\", @"\AppData\Local\Temp\", @"\ProgramData\Temp\")
+| where InitiatingProcessFileName !in~ (excludedProcessNames)
+| project DeviceId, InitiatingProcessId, InitiatingProcessSHA256, InitiatingProcessFileName, TempTime = TimeGenerated, TempFile = FileName;
+lsassAccess
+| join kind=inner (credStoreAccess) on DeviceId, InitiatingProcessId
+| where abs(datetime_diff("second", CredTime, LsassTime)) <= 900
+| join kind=leftouter (tempStaging) on DeviceId, InitiatingProcessId
+| extend TempCorrelated = isnotnull(TempTime) and abs(datetime_diff("second", TempTime, LsassTime)) <= 900
+| extend SignalCount = 2 + iff(TempCorrelated, 1, 0)
+| where SignalCount >= 2
+| project DeviceId, InitiatingProcessId, InitiatingProcessFileName, InitiatingProcessSHA256, LsassTime, CredTime, CredFile, TempTime, TempFile, SignalCount
+| sort by LsassTime desc
