@@ -1,0 +1,22 @@
+// Detects the stage-3 handoff where Finalized.dll's Calculation/Calculate export hollows clspack.exe
+// Anchors on: Finalized.dll loaded/present under ComponentsFolder or System32, followed by
+// clspack.exe being created suspended from a non-standard path (AppData\Microsoft) by the loader chain,
+// rather than matching a single filename alone.
+let lookback = 5m;
+let finalizedLoads =
+    DeviceImageLoadEvents
+    | where FileName =~ "Finalized.dll"
+    | where FolderPath has "ComponentsFolder" or FolderPath has @"\System32\Finalized.dll"
+    | where InitiatingProcessFileName =~ "rundll32.exe"
+    | project DeviceId, LoadTime = TimeGenerated, LoaderProcessId = InitiatingProcessId, LoaderProcessName = InitiatingProcessFileName;
+let hollowedClspack =
+    DeviceProcessEvents
+    | where FileName =~ "clspack.exe"
+    | where FolderPath has @"\AppData\Microsoft\clspack.exe"
+    | where InitiatingProcessFileName =~ "rundll32.exe"
+    | project DeviceId, CreateTime = TimeGenerated, ParentProcessName = InitiatingProcessFileName, ParentProcessId = InitiatingProcessId, ProcessCommandLine, FolderPath;
+finalizedLoads
+| join kind=inner (hollowedClspack) on DeviceId, $left.LoaderProcessId == $right.ParentProcessId
+| where CreateTime between (LoadTime .. (LoadTime + lookback))
+| project DeviceId, LoadTime, LoaderProcessName, LoaderProcessId, CreateTime, ParentProcessName, ParentProcessId, ProcessCommandLine, FolderPath
+| sort by CreateTime asc
