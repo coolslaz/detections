@@ -1,0 +1,29 @@
+title: Detection of Obfuscated Invisible Unicode Codepoints in CommandLine
+id: 76f92a4a-1b5e-4c7a-9a99-b1d62e153f7c
+status: experimental
+description: Detects the presence of zero-width, non-printing, or bidirectional-override
+  Unicode characters in command lines, commonly used for obfuscation or prompt
+  injection.
+author: Arnold Chan
+date: 2026-09-23
+tags:
+  - attack.t1027.018
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_unicode:
+    CommandLine|re: '[\u200B-\u200D\u2060\uFEFF\u202D\u202E\uFE00-\uFE0F]|[\uE0000-\uE007F]'
+  selection_pua:
+    CommandLine|re: '[\uE000-\uF8FF]'
+  filter_benign:
+    ParentImage|endswith: '\explorer.exe'
+    CommandLine|contains:
+      - 'Get-Content -Encoding UTF8'
+      - 'chcp 65001'
+  condition: (selection_unicode or selection_pua) and not filter_benign
+level: medium
+falsepositives:
+  - 'A scripting host command line that legitimately embeds a small number of PUA/icon-font characters (e.g. a UI-automation script referencing icon glyphs) below the tuned volume threshold could still be missed by design; raise minPUAHitsScriptHost if this is noisy in the other direction.'
+  - 'Localization/RTL tooling that legitimately uses bidi override characters in command-line arguments (rare, but possible in some publishing/document-processing pipelines).'
+  - 'Copy-pasted multi-codepoint content from a web page or PDF into a single legitimate command (would still need 2+ hits from a non-script-host process to trigger).'
