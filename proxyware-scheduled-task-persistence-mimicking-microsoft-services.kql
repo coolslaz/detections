@@ -1,0 +1,5 @@
+DeviceProcessEvents
+| where (FileName =~ "schtasks.exe" and ProcessCommandLine has "/create") or (FileName =~ "powershell.exe" and ProcessCommandLine has_any ("Register-ScheduledTask", "New-ScheduledTask"))
+| where ProcessCommandLine matches regex @"(?i)(/tn|-taskname)\s*['\"]?(PlutonAgentScheduler|EnterpriseMgmtServicesScheduler|SecurityHealthServiceSyncUpdate|BackgroundTaskRegistrationMaintenanceTaskScheduler)"
+| where ProcessCommandLine matches regex @"(?i)\\(microsoft|pluton)\\"
+| project TimeGenerated, DeviceId, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
