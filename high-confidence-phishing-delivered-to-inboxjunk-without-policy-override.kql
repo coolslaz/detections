@@ -1,0 +1,16 @@
+EmailEvents
+| where TimeGenerated > ago(1d)
+| where isnotempty(ThreatTypes)
+| where ThreatTypes has "Phish"
+| where DeliveryLocation in ("Inbox/folder", "Junk folder")
+// Only high-confidence phishing verdicts - exclude bulk/newsletter/spam-level classifications
+| where ConfidenceLevel has "High"
+| where not(ThreatTypes has "Spam")
+| where isnull(BulkComplaintLevel) or BulkComplaintLevel < 4
+// Exclude messages delivered due to a recorded legitimate policy override (admin allow-list, safe sender exception, org/user-level allow policy)
+| where not(OrgLevelAction has "Allow")
+| where not(UserLevelAction has "Allow")
+| where not(EmailActionPolicy has_any ("Safe sender", "Allowed sender", "AllowList", "Allow list", "ETR bypass", "Transport rule"))
+| where not(DetectionMethods has_any ("Allowed sender", "Safe sender", "Admin allow"))
+| project TimeGenerated, NetworkMessageId, SenderFromAddress, RecipientEmailAddress, Subject, ThreatTypes, ConfidenceLevel, BulkComplaintLevel, DeliveryLocation, DeliveryAction, OrgLevelAction, UserLevelAction, EmailActionPolicy, DetectionMethods, UrlCount, AttachmentCount
+| sort by TimeGenerated desc
