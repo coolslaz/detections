@@ -1,0 +1,33 @@
+title: AI-Paraphrased Mass-Produced Lure Content Delivery
+status: experimental
+author: Arnold Chan
+description: Detects downstream delivery of likely AI-paraphrased mass-produced lure content
+  by identifying bursts of near-duplicate subject lines from newly-seen domains
+  with auth failures.
+logsource:
+    category: email
+    product: office_365
+detection:
+    selection_delivery:
+        DeliveryAction: 'Delivered'
+        DeliveryLocation: 'Inbox'
+    selection_threat:
+        ThreatTypes: 'Phish'
+    selection_impersonation:
+        DetectionMethods|contains:
+            - 'Impersonation domain'
+            - 'Impersonation user'
+            - 'Impersonation brand'
+            - 'Spoof'
+    selection_auth_fail:
+        AuthenticationDetails|contains:
+            - 'Fail'
+            - 'SoftFail'
+            - 'None'
+    condition: selection_delivery and (selection_threat or selection_impersonation) and selection_auth_fail
+tags:
+  - attack.t1566.002
+falsepositives:
+  - 'A legitimate but newly onboarded marketing/ESP domain not yet on the allow-list sending a personalized bulk campaign.'
+  - 'A compromised but long-standing legitimate partner domain (would not trigger the first-seen-domain signal, but could still trigger via auth failure if their own DKIM/SPF is misconfigured).'
+  - 'Templated transactional email (e.g. password resets, receipts) with per-recipient subject personalization from a domain with temporary auth misconfiguration.'
