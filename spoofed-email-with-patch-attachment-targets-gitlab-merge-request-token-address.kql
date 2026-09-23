@@ -1,0 +1,30 @@
+// Detects emails carrying a .patch attachment sent to a GitLab incoming-email
+// merge-request address embedding a glimt- token, the sequence that lets an
+// attacker push a malicious commit to a protected branch as the token owner
+// regardless of the sender's From address. Tightened to require Microsoft's
+// composite authentication verdict (CompAuth: fail) -- a stronger, lower-noise
+// spoofing signal than raw SPF/DKIM/DMARC results, which can fail individually
+// on benign forwarding paths -- and to exclude sender/recipient pairs already
+// seen corresponding with this token address in the prior 30 days, cutting
+// out recurring legitimate contributors.
+let lookback = 30d;
+let knownSenders = EmailEvents
+| where TimeGenerated between (ago(lookback) .. ago(1d))
+| where RecipientEmailAddress has "incoming.gitlab.com"
+| where RecipientEmailAddress has "glimt-"
+| where RecipientEmailAddress has "-merge-request"
+| summarize by SenderFromAddress, RecipientEmailAddress;
+EmailAttachmentInfo
+| where FileName endswith ".patch"
+| join kind=inner (
+    EmailEvents
+    | where TimeGenerated > ago(1d)
+    | where RecipientEmailAddress has "incoming.gitlab.com"
+    | where RecipientEmailAddress has "glimt-"
+    | where RecipientEmailAddress has "-merge-request"
+    | where AuthenticationDetails has "CompAuth: fail"
+) on NetworkMessageId
+| join kind=leftanti knownSenders on SenderFromAddress, RecipientEmailAddress
+| project TimeGenerated, SenderFromAddress, SenderDisplayName, RecipientEmailAddress, Subject, FileName, NetworkMessageId
+| extend TargetBranchHint = Subject
+| sort by TimeGenerated desc
