@@ -1,0 +1,22 @@
+// Detects the sequence of creating a Volume Shadow Copy followed by access/copy of ntds.dit or SYSTEM hive from the shadow copy path.
+// Tuned to reduce false positives: requires explicit ntds.dit/SYSTEM hive references (not generic VSS/copy activity), excludes known backup service processes (Windows Server Backup, VSS service), requires the same account across both steps, and narrows the correlation window to 10 minutes.
+let shadowCreation = DeviceProcessEvents
+| where FileName =~ "vssadmin.exe" or FileName =~ "vssadmin"
+| where ProcessCommandLine has "create" and ProcessCommandLine has "shadow"
+| where InitiatingProcessFileName !in~ ("wbengine.exe", "wbadmin.exe", "vssvc.exe")
+| project DeviceId, ShadowTime = TimeGenerated, ShadowCommandLine = ProcessCommandLine, ShadowAccount = AccountName;
+let ntdsAccess = DeviceProcessEvents
+| where ProcessCommandLine has_any ("ntds.dit", "\\Windows\\System32\\config\\SYSTEM")
+| where ProcessCommandLine has_any ("HarddiskVolumeShadowCopy", "reg save", "copy")
+| where InitiatingProcessFileName !in~ ("wbengine.exe", "wbadmin.exe", "vssvc.exe", "MsMpEng.exe")
+| project DeviceId, NtdsTime = TimeGenerated, NtdsCommandLine = ProcessCommandLine, NtdsFileName = FileName, NtdsAccount = AccountName;
+let ntdsFileAccess = DeviceFileEvents
+| where FolderPath has "HarddiskVolumeShadowCopy" and FolderPath has_any ("ntds.dit", "\\NTDS\\")
+   or (FolderPath has "HarddiskVolumeShadowCopy" and FolderPath has "\\config\\SYSTEM")
+| project DeviceId, NtdsTime = TimeGenerated, NtdsCommandLine = FolderPath, NtdsFileName = FileName, NtdsAccount = InitiatingProcessAccountName;
+shadowCreation
+| join kind=inner (union ntdsAccess, ntdsFileAccess) on DeviceId
+| where NtdsTime between (ShadowTime .. (ShadowTime + 10m))
+| where ShadowAccount =~ NtdsAccount
+| project DeviceId, ShadowTime, ShadowCommandLine, ShadowAccount, NtdsTime, NtdsCommandLine, NtdsFileName, NtdsAccount
+| sort by ShadowTime desc
