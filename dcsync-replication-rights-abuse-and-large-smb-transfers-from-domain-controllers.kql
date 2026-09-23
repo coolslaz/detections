@@ -1,0 +1,22 @@
+// Detect DCSync-style directory replication requests (Event 4662 with replication GUIDs) and unusually large SMB connection volume originating from domain controllers
+let ReplicationGuids = dynamic(["1131f6aa-9c07-11d1-f79f-00c04fc2dcd2","1131f6ad-9c07-11d1-f79f-00c04fc2dcd2","89e95b76-444d-4c62-991a-0facbeda640c"]);
+// Populate with known Azure AD Connect / Entra Connect directory-sync accounts to exclude expected DCSync-style replication
+let SyncAccountPrefixes = dynamic(["MSOL_","AAD_","ADSync","sync_"]);
+// Optionally populate with known domain controller hostnames to scope the SMB branch; left empty means no scoping is applied
+let DomainControllers = dynamic([]);
+let DCSyncEvents = SecurityEvent
+| where EventID == 4662
+| where Properties has_any ("1131f6aa-9c07-11d1-f79f-00c04fc2dcd2","1131f6ad-9c07-11d1-f79f-00c04fc2dcd2","89e95b76-444d-4c62-991a-0facbeda640c")
+| where SubjectUserName !endswith "$"
+| where not(SubjectUserName has_any (SyncAccountPrefixes))
+| project TimeGenerated, DetectionType = "DCSync replication rights usage", Computer, SubjectUserName, ObjectName = ObjectServer, Properties;
+let LargeSMBTransfers = DeviceNetworkEvents
+| where RemotePort == 445 or LocalPort == 445
+| where InitiatingProcessFileName in~ ("System", "lsass.exe", "svchost.exe")
+| where array_length(DomainControllers) == 0 or DeviceName in (DomainControllers)
+| summarize EventCount = count(), TimeGenerated = arg_max(TimeGenerated, *) by DeviceName, RemoteIP, bin(TimeGenerated, 15m)
+| where EventCount > 5000
+| project TimeGenerated, DetectionType = "Large SMB transfer volume from DC-adjacent host", Computer = DeviceName, RemoteIP, EventCount;
+DCSyncEvents
+| union LargeSMBTransfers
+| sort by TimeGenerated desc;
