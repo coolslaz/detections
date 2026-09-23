@@ -1,0 +1,22 @@
+// Detects the same non-browser process image on a host resolving/connecting to commercial LLM provider APIs used by ClosedQuorum for autonomous C2 decisioning
+// and then contacting the Discord CDN webhook channel used for exfiltration, within a short correlation window
+let llmProviders = dynamic(["api.deepseek.com", "openrouter.ai", "api.mistral.ai"]);
+let excludedProcesses = dynamic(["chrome.exe", "msedge.exe", "firefox.exe"]);
+let lookback = 1d;
+let correlationWindow = 15m;
+let llmConnections = DeviceNetworkEvents
+| where TimeGenerated > ago(lookback)
+| where RemoteUrl has_any (llmProviders)
+| where not(InitiatingProcessFileName in~ (excludedProcesses))
+| project LlmTime = TimeGenerated, DeviceId, LlmUrl = RemoteUrl, LlmProcess = InitiatingProcessFileName, LlmProcessPath = InitiatingProcessFolderPath, LlmProcessId = InitiatingProcessId;
+let discordConnections = DeviceNetworkEvents
+| where TimeGenerated > ago(lookback)
+| where RemoteUrl has "cdn.discordapp.com" or RemoteUrl has "discord.com/api/webhooks"
+| where not(InitiatingProcessFileName in~ (excludedProcesses))
+| project DiscordTime = TimeGenerated, DeviceId, DiscordUrl = RemoteUrl, DiscordProcess = InitiatingProcessFileName, DiscordProcessPath = InitiatingProcessFolderPath, DiscordProcessId = InitiatingProcessId;
+llmConnections
+| join kind=inner (discordConnections) on DeviceId
+| where DiscordProcess =~ LlmProcess and DiscordProcessId == LlmProcessId
+| where DiscordTime between (LlmTime .. (LlmTime + correlationWindow))
+| project DeviceId, LlmTime, LlmUrl, LlmProcess, LlmProcessPath, LlmProcessId, DiscordTime, DiscordUrl, DiscordProcess, DiscordProcessPath
+| sort by LlmTime asc
