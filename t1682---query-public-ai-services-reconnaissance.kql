@@ -1,0 +1,21 @@
+// T1682 - Query Public AI Services (Reconnaissance)
+// Detects a single account generating an anomalously high volume of requests to public generative-AI applications
+let AIApps = dynamic(["ChatGPT","OpenAI","Microsoft Copilot","Copilot","Google Gemini","Gemini","Anthropic Claude","Claude","Perplexity AI","Perplexity"]);
+let threshold = 100;
+let bucket = 1h;
+CloudAppEvents
+| where TimeGenerated > ago(1d)
+| where Application has_any (AIApps)
+| where isnotempty(AccountObjectId)
+| summarize
+    RequestCount = count(),
+    DistinctIPs = dcount(IPAddress),
+    IPList = make_set(IPAddress, 20),
+    CountryList = make_set(CountryCode, 10),
+    AppList = make_set(Application, 10),
+    DistinctActions = dcount(ActionType),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated)
+    by AccountObjectId, AccountDisplayName, bin(TimeGenerated, bucket)
+| where RequestCount > threshold
+| sort by RequestCount desc
