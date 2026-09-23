@@ -1,0 +1,49 @@
+// IOC hunt for ClosedQuorum (CLOSEDQUORUM) malware
+// Matches on file hashes, LLM-C2/exfil domains, and dropped artifact filenames
+// No IP address or URL indicators specific to ClosedQuorum are currently available from intel.
+// Network/DNS indicators below are legitimate multi-tenant services (DeepSeek, OpenRouter, Mistral, Discord CDN)
+// and should be combined with the hash or file-path hunt rather than alerted on alone.
+let closedquorum_hashes = dynamic([
+    '250d4fa37488af9b025333fa17705573d721467b203765bc360890b4f5a90cd7',
+    'c4dc171f2513fcaf9d5ecc815a94aee4063b213ab380f80bd3ac422dee5205a7',
+    'c13cea04f598e2b0c248d603a6e31bd13aabb64d8149c1b6a77b64e0b983a86f',
+    'f5f1f8c3e7b883793800ab6ccf21b3e60bd0730f300b4595fe74a33adc17a63c',
+    '5191cf625dfc209a347f137b50aea199e82040fd5ee9086fb3e2de73c133f3cb',
+    'eddbd0ecf7195d38fefae5b9d393abfa79e6f3f94bde19308ecef130a05a42e5'
+]);
+let closedquorum_domains = dynamic([
+    'api.deepseek.com',
+    'openrouter.ai',
+    'api.mistral.ai',
+    'cdn.discordapp.com'
+]);
+let closedquorum_filenames = dynamic([
+    'wmi.ps1',
+    'gohno-final.exe',
+    'earlyburb.exe'
+]);
+// Step 1: File hash hunt across process and file creation telemetry
+let file_hash_hits =
+    DeviceFileEvents
+    | where SHA256 in (closedquorum_hashes)
+    | project TimeGenerated, DeviceId, DeviceName, MatchType = "FileHash", MatchedValue = SHA256, Details = FileName;
+let process_hash_hits =
+    DeviceProcessEvents
+    | where SHA256 in (closedquorum_hashes)
+    | project TimeGenerated, DeviceId, DeviceName, MatchType = "FileHash", MatchedValue = SHA256, Details = ProcessCommandLine;
+// Step 2: Network/DNS hunt for LLM-C2 and exfil domains
+let network_domain_hits =
+    DeviceNetworkEvents
+    | where RemoteUrl has_any (closedquorum_domains)
+    | project TimeGenerated, DeviceId, DeviceName, MatchType = "NetworkDomain", MatchedValue = RemoteUrl, Details = strcat("InitiatingProcess:", InitiatingProcessFileName);
+let dns_query_hits =
+    DnsEvents
+    | where Name has_any (closedquorum_domains)
+    | project TimeGenerated, DeviceId = "", DeviceName = Computer, MatchType = "DNSQuery", MatchedValue = Name, Details = ClientIP;
+// Step 3: File-path/artifact-name hunt
+let filename_hits =
+    DeviceFileEvents
+    | where FileName in (closedquorum_filenames)
+    | project TimeGenerated, DeviceId, DeviceName, MatchType = "ArtifactFileName", MatchedValue = FileName, Details = FolderPath;
+union file_hash_hits, process_hash_hits, network_domain_hits, dns_query_hits, filename_hits
+| sort by TimeGenerated desc
