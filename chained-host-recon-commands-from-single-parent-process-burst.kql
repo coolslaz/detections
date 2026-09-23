@@ -1,0 +1,32 @@
+// Detects multiple distinct host recon indicators (systeminfo, whoami, ipconfig/network config,
+// AV/EDR enumeration, domain/user enumeration) executed by the same parent process within a short
+// window, consistent with ClosedQuorum-style automated recon collection prior to LLM C2 prompt
+// construction, while excluding common legitimate admin/RMM/inventory tooling.
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where FileName in~ ("cmd.exe", "powershell.exe", "pwsh.exe", "systeminfo.exe", "whoami.exe", "ipconfig.exe", "net.exe", "net1.exe", "nltest.exe", "wmic.exe", "reg.exe", "tasklist.exe", "sc.exe")
+// Exclude known legitimate admin/monitoring/RMM tools and inventory scripts by parent process path
+| where not(InitiatingProcessFolderPath has_any (
+    "\\ccm\\", "\\ccmsetup\\", "\\microsoft configuration manager\\",
+    "\\microsoft intune management extension\\", "\\ivanti\\", "\\kaseya\\",
+    "\\connectwise\\", "\\screenconnect\\", "\\ninjaone\\", "\\ninjarmm\\",
+    "\\solarwinds\\", "\\n-able\\", "\\atera\\", "\\datto\\", "\\pdq\\",
+    "\\tanium\\", "\\bigfix\\", "\\autotask\\"))
+| where not(InitiatingProcessFileName in~ ("ccmexec.exe", "tniwinagent.exe", "connectwisecontrol.exe", "screenconnect.windowsclient.exe", "itsmagent.exe", "pdqdeployrunner.exe"))
+| extend Indicator = case(
+    FileName =~ "systeminfo.exe" or ProcessCommandLine has "systeminfo", "systeminfo",
+    FileName =~ "whoami.exe" or ProcessCommandLine has "whoami", "whoami",
+    FileName =~ "ipconfig.exe" or ProcessCommandLine has_any ("ipconfig", "/all"), "network_config",
+    (FileName =~ "wmic.exe" and ProcessCommandLine has_any ("antivirusproduct", "/namespace:\\\\root\\securitycenter2")) or ProcessCommandLine has_any ("Get-MpComputerStatus", "SecurityCenter2"), "av_edr_enum",
+    (FileName in~ ("net.exe", "net1.exe", "nltest.exe") and ProcessCommandLine has_any ("user", "group", "domain", "/dclist")), "domain_user_enum",
+    ""
+)
+| where Indicator != ""
+| summarize DistinctIndicators = dcount(Indicator),
+            Indicators = make_set(Indicator, 10),
+            Commands = make_set(ProcessCommandLine, 10),
+            FirstSeen = min(TimeGenerated),
+            LastSeen = max(TimeGenerated)
+          by DeviceId, DeviceName, InitiatingProcessId, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName, bin(TimeGenerated, 10m)
+| where DistinctIndicators >= 3
+| project FirstSeen, LastSeen, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName, DistinctIndicators, Indicators, Commands
