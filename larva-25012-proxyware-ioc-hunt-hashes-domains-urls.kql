@@ -1,0 +1,18 @@
+let malicious_hashes = dynamic(["0066422310c880d5e722ba59ad315df1","10498a91dcb16561e32487a47b9832f7","1fdf8668882272280f1b53b4443a4906","286380d04f0d5a9f800a2b6cb23e080a","2e73e08b1e9a3edd3dfa024040b9467e"]);
+let malicious_domains = dynamic(["dhrciu5akloar.cloudfront.net","7jb7qi6vnr5pa22a4br4irz3tu0yqzbd.lambda-url.us-east-1.on.aws","d6nue5fz4t6y8.cloudfront.net","dci6j1p0q6khn.cloudfront.net","d36rb13t9es4g1.cloudfront.net","d3mz24vhl6xvgp.cloudfront.net"]);
+let malicious_urls = dynamic(["http://dhrciu5akloar.cloudfront.net/63563545600333.Ps1","http://7jb7qi6vnr5pa22a4br4irz3tu0yqzbd.lambda-url.us-east-1.on.aws/e","http://d6nue5fz4t6y8.cloudfront.net/9083743654554665.Ps1","http://dci6j1p0q6khn.cloudfront.net/784365567456345.Ps1","https://7jb7qi6vnr5pa22a4br4irz3tu0yqzbd.lambda-url.us-east-1.on.aws/e","https://d36rb13t9es4g1.cloudfront.net/192837455732.ps1","https://d3mz24vhl6xvgp.cloudfront.net/CopilotService.exe","https://d3mz24vhl6xvgp.cloudfront.net/liblivenet_amd64.dll","https://d6nue5fz4t6y8.cloudfront.net/9083743654554665.ps1"]);
+let FileHashHits = DeviceFileEvents
+| where MD5 in~ (malicious_hashes)
+| extend IocType = "FileHash-MD5", IocValue = MD5
+| project TimeGenerated, DeviceId, DeviceName, IocType, IocValue, FileName, FolderPath, SHA256, ProcessCommandLine = "", InitiatingProcessFileName = InitiatingProcessFileName;
+let NetworkDomainHits = DeviceNetworkEvents
+| where tostring(parse_url(RemoteUrl).Host) in~ (malicious_domains)
+| extend IocType = "Domain", IocValue = RemoteUrl
+| project TimeGenerated, DeviceId, DeviceName, IocType, IocValue, FileName = "", FolderPath = "", SHA256 = "", ProcessCommandLine = "", InitiatingProcessFileName = InitiatingProcessFileName;
+let CommandLineUrlHits = DeviceProcessEvents
+| where ProcessCommandLine has_any (malicious_urls)
+| where ProcessCommandLine has_any ("iwr", "Invoke-WebRequest", "DownloadString", "IEX", "Invoke-Expression", "curl", "wget")
+| extend IocType = "URL-CommandLine", IocValue = ProcessCommandLine
+| project TimeGenerated, DeviceId, DeviceName, IocType, IocValue, FileName, FolderPath = FolderPath, SHA256 = SHA256, ProcessCommandLine, InitiatingProcessFileName = InitiatingProcessFileName;
+union FileHashHits, NetworkDomainHits, CommandLineUrlHits
+| sort by TimeGenerated desc
