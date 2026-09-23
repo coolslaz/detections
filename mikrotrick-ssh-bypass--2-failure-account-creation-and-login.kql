@@ -1,0 +1,30 @@
+// Detects the MikroTrick chain signature: a rejected SSH login for the crafted username "-2"
+// immediately followed by a new user account created via the same "ssh:-2@<ip>" session marker,
+// and then confirmed by a successful login using that newly-created account shortly after —
+// the full hallmark of CVE-2026-67276/CVE-2026-86060 exploitation against RouterOS.
+let loginFailures = Syslog
+| where SyslogMessage has "login failure for user -2" and SyslogMessage has "via ssh"
+| extend SourceIp = extract(@"login failure for user -2 from ([\d\.]+) via ssh", 1, SyslogMessage)
+| project FailTime = TimeGenerated, Computer, SourceIp, FailMessage = SyslogMessage;
+let accountAdds = Syslog
+| where SyslogMessage has "added by ssh:-2@"
+| extend AddedUser = extract(@"user (\S+) added by ssh:-2@([\d\.]+)", 1, SyslogMessage)
+| extend AddSourceIp = extract(@"user (\S+) added by ssh:-2@([\d\.]+)", 2, SyslogMessage)
+| project AddTime = TimeGenerated, Computer, AddedUser, AddSourceIp, AddMessage = SyslogMessage;
+let successfulLogins = Syslog
+| where SyslogMessage has "logged in" and SyslogMessage has "via ssh" and not(SyslogMessage has "login failure")
+| extend LoginUser = extract(@"user (\S+) logged in from ([\d\.]+) via ssh", 1, SyslogMessage)
+| extend LoginSourceIp = extract(@"user (\S+) logged in from ([\d\.]+) via ssh", 2, SyslogMessage)
+| project LoginTime = TimeGenerated, Computer, LoginUser, LoginSourceIp, LoginMessage = SyslogMessage;
+loginFailures
+| join kind=inner (accountAdds) on Computer, $left.SourceIp == $right.AddSourceIp
+| where AddTime between (FailTime .. (FailTime + 60s))
+| join kind=inner (successfulLogins) on Computer, $left.AddedUser == $right.LoginUser, $left.SourceIp == $right.LoginSourceIp
+| where LoginTime between (AddTime .. (AddTime + 5m))
+| project FailTime, AddTime, LoginTime, Computer, SourceIp, AddedUser, FailMessage, AddMessage, LoginMessage
+| extend IsKnownMikroTrickIp = SourceIp in ("82.192.72.4", "103.102.31.18")
+| extend IsOpsAccount = AddedUser =~ "ops"
+| sort by FailTime desc
+// false_positives: Excludes unrelated account provisioning that happens to follow a failed "-2" login
+// probe within 60 seconds but is never actually used to log in (no matching successful ssh login
+// with the same account and source IP within 5 minutes of account creation).
