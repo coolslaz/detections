@@ -1,0 +1,21 @@
+let KnownApprovedEAMDomains = dynamic(["login.microsoftonline.com","login.windows.net","microsoftonline.com"]); // add your organization's approved external IdP/EAM hostnames here (e.g. your Okta/Duo/Ping tenant domain) to suppress expected changes
+let KnownApprovedInitiators = dynamic([]); // add UPNs or app/service-principal IDs of admins or automation expected to manage this policy to suppress their routine changes
+AuditLogs
+| where Category == "Policy"
+| where OperationName has_any ("Update authentication methods policy", "Added external authentication method")
+| where ActivityDisplayName has_any ("externalAuthenticationMethodConfiguration", "External Authentication Method")
+| mv-expand TargetResource = TargetResources
+| extend TargetDisplayName = tostring(TargetResource.displayName)
+| where TargetDisplayName has "authenticationMethodsPolicy" or TargetDisplayName has "External Authentication"
+| mv-expand Modified = TargetResource.modifiedProperties
+| extend PropertyName = tostring(Modified.displayName), NewValue = tostring(Modified.newValue)
+| where PropertyName has_any ("externalAuthenticationMethodConfiguration", "authenticationMethodsPolicy", "AuthenticationMethodConfiguration")
+| where NewValue matches regex @'https?://[^/]+/\.well-known/openid-configuration' or NewValue has "discoveryUrl"
+| extend DiscoveryHost = extract(@'https?://([^/]+)', 1, NewValue)
+| where isnotempty(DiscoveryHost)
+| where not(DiscoveryHost has_any (KnownApprovedEAMDomains))
+| extend InitiatedByUser = tostring(InitiatedBy.user.userPrincipalName)
+| where not(InitiatedByUser has_any (KnownApprovedInitiators))
+| summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), EventCount = count(), OperationNames = make_set(OperationName), PropertyNames = make_set(PropertyName)
+    by CorrelationId, InitiatedByUser, TargetDisplayName, DiscoveryHost, NewValue
+| sort by LastSeen desc
