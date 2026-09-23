@@ -1,0 +1,27 @@
+// Detect a new device join/registration occurring within ~10 minutes of a device-code-flow sign-in for the same account,
+// consistent with EvilTokens-style token theft followed by minting a Primary Refresh Token for durable persistence.
+// Excludes registrations resulting in a managed/compliant device or enrolled via a known MDM/Autopilot workflow,
+// since new-device Entra-join/PRT issuance shortly after device-code sign-in is the normal corporate enrollment flow.
+let DeviceCodeSignins = SigninLogs
+| where TimeGenerated > ago(14d)
+| where AuthenticationDetails has 'deviceCode'
+| where ResultType == 0
+| project SigninTime = TimeGenerated, AccountObjectId = UserId, AccountUpn = UserPrincipalName, SigninIPAddress = IPAddress, SigninDeviceName = DeviceDetail.displayName;
+let DeviceRegistrations = AuditLogs
+| where TimeGenerated > ago(14d)
+| where OperationName in ('Register device', 'Add device', 'Add registered owner to device', 'Join device')
+| extend TargetProps = TargetResources[0].modifiedProperties
+| extend IsManagedVal = tostring(TargetProps[array_index_of(TargetProps, TargetProps, 0)])
+| extend RegDeviceName = tostring(TargetResources[0].displayName)
+| extend RegIsManaged = tostring(TargetResources[0].modifiedProperties)
+| extend AdditionalDetailsStr = tostring(AdditionalDetails)
+| extend IsManagedFlag = (RegIsManaged has '"IsManaged"' and RegIsManaged has '"true"')
+| extend IsCompliantFlag = (RegIsManaged has '"IsCompliant"' and RegIsManaged has '"true"')
+| extend IsMdmAutopilot = (AdditionalDetailsStr has_any ('MDM', 'Autopilot', 'Intune') or RegDeviceName has_any ('Autopilot'))
+| where not(IsManagedFlag) and not(IsCompliantFlag) and not(IsMdmAutopilot)
+| project RegTime = TimeGenerated, AccountObjectId = tostring(InitiatedBy.user.id), RegActionType = OperationName, RegDeviceName, RegIPAddress = tostring(parse_json(tostring(InitiatedBy.user.ipAddress)));
+DeviceCodeSignins
+| join kind=inner (DeviceRegistrations) on AccountObjectId
+| where RegTime between (SigninTime .. (SigninTime + 10m))
+| project SigninTime, RegTime, TimeToRegistration = RegTime - SigninTime, AccountObjectId, AccountUpn, SigninIPAddress, RegIPAddress, RegActionType, RegDeviceName
+| sort by SigninTime desc
