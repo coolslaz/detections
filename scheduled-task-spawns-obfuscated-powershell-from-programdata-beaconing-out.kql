@@ -1,0 +1,25 @@
+// Detects scheduled-task-launched PowerShell scripts staged under randomly-named C:\ProgramData subfolders executing with mandatory encoding obfuscation (secondary flags must co-occur), correlated with an outbound network connection shortly after to a C2 domain
+let ps_launch = DeviceProcessEvents
+| where TimeGenerated > ago(14d)
+| where (FileName =~ "schtasks.exe" and ProcessCommandLine has "/create")
+    or (InitiatingProcessFileName =~ "schtasks.exe")
+    or (FileName has_any ("powershell.exe", "powershell_ise.exe") and InitiatingProcessFileName =~ "taskeng.exe")
+    or (FileName has_any ("powershell.exe", "powershell_ise.exe") and InitiatingProcessFileName =~ "svchost.exe")
+| where ProcessCommandLine has @"C:\ProgramData\" and ProcessCommandLine endswith ".ps1"
+// Narrow to random/GUID-like or short alphanumeric staging subfolder names typical of malware drop dirs
+| where ProcessCommandLine matches regex @"(?i)C:\\ProgramData\\([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[A-Za-z0-9]{6,12})\\"
+// Exclude common legitimate ProgramData publishers/subfolders
+| where not(ProcessCommandLine has_any (@"\Chocolatey\", @"\Microsoft\", @"\Datadog\", @"\Amazon\", @"\Google\", @"\Mozilla\"))
+// Mandatory encoded-command obfuscation signal
+| where ProcessCommandLine has_any ("-enc", "-EncodedCommand") or ProcessCommandLine matches regex @"-e\s+[A-Za-z0-9+/=]{20,}"
+// Secondary weak flags must co-occur with the mandatory encoding signal above, not qualify alone
+| extend HasSecondaryFlag = ProcessCommandLine has_any ("-nop", "-noni", "-w hidden", "-windowstyle hidden")
+| project TimeGenerated, DeviceId, DeviceName, AccountName, ProcessCommandLine, HasSecondaryFlag, LaunchSHA1=SHA1;
+let beacons = DeviceNetworkEvents
+| where TimeGenerated > ago(14d)
+| where RemoteUrl has "throughoutes.net" or RemoteUrl has "throughoutes[.]net"
+| project NetTimestamp = TimeGenerated, DeviceId, RemoteUrl, RemoteIP, InitiatingProcessFileName;
+ps_launch
+| join kind=inner (beacons) on DeviceId
+| where NetTimestamp between (TimeGenerated .. (TimeGenerated + 15m))
+| project TimeGenerated, DeviceName, AccountName, ProcessCommandLine, HasSecondaryFlag, NetTimestamp, RemoteUrl, RemoteIP, InitiatingProcessFileName;
