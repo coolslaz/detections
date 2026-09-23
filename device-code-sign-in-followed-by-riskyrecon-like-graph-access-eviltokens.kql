@@ -1,0 +1,30 @@
+// Detects the EvilTokens device-code phishing pattern: a successful OAuth device-code authentication
+// immediately followed by Microsoft Graph resource access from the same account, consistent with
+// an attacker's polling session (Broker / MS Office capture mode) instantly receiving the token.
+// Tightened: excludes well-known first-party client apps (Azure CLI, Microsoft Authentication Broker,
+// Graph Explorer) that legitimately chain device-code auth with immediate Graph calls, and requires
+// either a risk signal on the sign-in or a reconnaissance-like pattern of broad Graph access
+// (multiple distinct Graph sign-in events / resources touched in the window) rather than any single call.
+let KnownFirstPartyAppIds = dynamic([
+  "04b07795-8ddb-461a-bbee-02f9e1bf7b46", // Azure CLI
+  "29d9ed98-a469-4536-ade2-f981bc1d605e", // Microsoft Authentication Broker
+  "de8bc8b5-d9f9-48b1-a8ad-b748da725064"  // Graph Explorer
+]);
+let deviceCodeSignins = SigninLogs
+| where AuthenticationDetails has 'deviceCode'
+| where ResultType == 0
+| where not(AppId in (KnownFirstPartyAppIds))
+| project DeviceCodeTime = TimeGenerated, AccountObjectId = UserId, AccountUpn = UserPrincipalName, IPAddress, ClientAppUsed, Application = AppDisplayName, DeviceCodeAppId = AppId, RiskLevelDuringSignIn;
+let graphAccess = SigninLogs
+| where ResourceDisplayName has 'Microsoft Graph'
+| where ResultType == 0
+| where not(AppId in (KnownFirstPartyAppIds))
+| project GraphTime = TimeGenerated, AccountObjectId = UserId, GraphIPAddress = IPAddress, GraphApplication = AppDisplayName, GraphAppId = AppId, GraphResource = ResourceDisplayName, GraphRisk = RiskLevelDuringSignIn;
+deviceCodeSignins
+| join kind=inner (graphAccess) on AccountObjectId
+| where GraphTime between (DeviceCodeTime .. (DeviceCodeTime + 5m))
+| summarize DeviceCodeTime = min(DeviceCodeTime), GraphTime = min(GraphTime), GraphApps = make_set(GraphApplication, 10), GraphResources = make_set(GraphResource, 10), DistinctGraphEvents = count(), IPAddresses = make_set(IPAddress, 10), MaxDeviceCodeRisk = max(RiskLevelDuringSignIn), MaxGraphRisk = max(GraphRisk) by AccountObjectId, AccountUpn, ClientAppUsed, Application, DeviceCodeAppId
+| extend TimeToGraphAccess = GraphTime - DeviceCodeTime
+| where DistinctGraphEvents >= 3 or MaxDeviceCodeRisk in ('low','medium','high') or MaxGraphRisk in ('low','medium','high')
+| project AccountUpn, AccountObjectId, DeviceCodeTime, ClientAppUsed, Application, DeviceCodeAppId, GraphTime, TimeToGraphAccess, DistinctGraphEvents, GraphApps, GraphResources, IPAddresses, MaxDeviceCodeRisk, MaxGraphRisk
+| sort by DeviceCodeTime desc
