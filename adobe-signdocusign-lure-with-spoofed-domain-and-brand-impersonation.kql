@@ -1,0 +1,34 @@
+// Detects brand-impersonation phishing emails using RFP/invoice-themed lures that link to a fake
+// Adobe Acrobat Sign / DocuSign document-verification page (device-code phishing entry point).
+// Tightened to require lure keywords AND a link domain that is NOT the legitimate Adobe Sign/DocuSign
+// domain AND either sender display-name brand impersonation with a mismatched domain, or a sender
+// domain not seen sending mail in this tenant over the prior 90 days, to avoid firing on keyword
+// match alone (legitimate Adobe Sign/DocuSign invoice mail is common).
+let lure_subjects = dynamic(["proposal", "RFP", "Request for Proposal", "invoice", "invite you to submit", "Acrobat Sign", "Adobe Sign", "DocuSign"]);
+let brand_terms = dynamic(["adobe", "docusign", "acrobat sign", "echosign"]);
+EmailEvents
+| where TimeGenerated > ago(1d)
+| where Subject has_any (lure_subjects)
+| extend SenderDomain = tostring(split(SenderFromAddress, "@")[1])
+| join kind=inner (
+    EmailUrlInfo
+    | where Url matches regex @"REF-[A-Z0-9]{4}-[A-Z0-9]{4}-"
+    | extend UrlDomain = tostring(parse_url(Url).Host)
+    | where not(UrlDomain endswith "adobesign.com" or UrlDomain endswith "echosign.com" or UrlDomain endswith "docusign.net" or UrlDomain endswith "docusign.com")
+) on NetworkMessageId
+| extend SenderDisplayNameImpersonatesBrand = SenderDisplayName has_any (brand_terms)
+| extend SenderDomainMismatch = SenderDisplayNameImpersonatesBrand and not(SenderDomain endswith "adobesign.com" or SenderDomain endswith "echosign.com" or SenderDomain endswith "docusign.net" or SenderDomain endswith "docusign.com")
+| join kind=leftouter (
+    EmailEvents
+    | where TimeGenerated between (ago(90d) .. ago(1d))
+    | extend SenderDomain = tostring(split(SenderFromAddress, "@")[1])
+    | summarize FirstSeen = min(TimeGenerated) by SenderDomain
+) on SenderDomain
+| extend NewlySeenSenderDomain = isnull(FirstSeen)
+| where SenderDomainMismatch or NewlySeenSenderDomain
+| join kind=leftouter (
+    EmailAttachmentInfo
+    | where FileName =~ "Important_update.pdf"
+) on NetworkMessageId
+| project TimeGenerated, NetworkMessageId, SenderFromAddress, SenderDomain, SenderDisplayName, RecipientEmailAddress, Subject, Url, UrlDomain, SenderDomainMismatch, NewlySeenSenderDomain, FileName, DeliveryLocation, ThreatTypes
+| sort by TimeGenerated desc
