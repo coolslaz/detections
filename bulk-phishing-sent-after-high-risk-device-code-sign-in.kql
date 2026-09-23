@@ -1,0 +1,31 @@
+// Correlates a successful OAuth device code sign-in carrying an elevated risk signal with a subsequent burst of outbound mail from the same mailbox
+// that shows either a high external-recipient ratio or repeated near-identical subjects, matching EvilTokens' pattern of using persistent stolen
+// tokens to send further phishing from a trusted, compromised sender identity while filtering out routine group emails and newsletters.
+let DeviceCodeSignins = SigninLogs
+| where TimeGenerated > ago(2d)
+| where ResultType == 0
+| where AuthenticationDetails has "Device Code" or AuthenticationRequirement has "deviceCode" or ResourceDisplayName =~ "Microsoft Graph"
+| where RiskLevelDuringSignIn in ("high", "medium") or RiskLevelAggregated in ("high", "medium")
+| project SignInTime = TimeGenerated, AccountUpn = UserPrincipalName, SignInIPAddress = IPAddress;
+EmailEvents
+| where TimeGenerated > ago(2d)
+| where DeliveryAction != "Blocked"
+| join kind=inner (DeviceCodeSignins) on $left.SenderFromAddress == $right.AccountUpn
+| where TimeGenerated >= SignInTime and TimeGenerated <= (SignInTime + 24h)
+| extend SenderDomain = tostring(split(SenderFromAddress, "@")[1])
+| extend RecipientDomain = tostring(split(RecipientEmailAddress, "@")[1])
+| extend IsExternalRecipient = RecipientDomain != SenderDomain
+| summarize OutboundRecipients = dcount(RecipientEmailAddress),
+            ExternalRecipients = dcountif(RecipientEmailAddress, IsExternalRecipient),
+            TotalEmails = count(),
+            DistinctSubjects = dcount(Subject),
+            SampleRecipients = make_set(RecipientEmailAddress, 20),
+            SampleSubjects = make_set(Subject, 5),
+            FirstSent = min(TimeGenerated),
+            LastSent = max(TimeGenerated)
+            by SenderFromAddress, SignInTime, SignInIPAddress
+| extend ExternalRatio = round(todouble(ExternalRecipients) / OutboundRecipients, 2)
+| extend BulkSubjectRatio = round(todouble(TotalEmails) / DistinctSubjects, 2)
+| where OutboundRecipients >= 15
+| where ExternalRatio >= 0.5 or BulkSubjectRatio >= 3
+| sort by FirstSent asc
