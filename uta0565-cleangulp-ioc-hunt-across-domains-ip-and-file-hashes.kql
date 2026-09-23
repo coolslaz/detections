@@ -1,0 +1,43 @@
+let lookback = 30d;
+let domains = dynamic(["chinadigitaltimes.top","americanprgoress.top","thecovnresation.com","thecovnresation.net","personclouds.com","outsourcingwise.net","halal-navi.net","halalketak.net","halaltak.net","borneobulletins.top"]);
+let ips = dynamic(["96.9.125.52"]);
+let payloadUrl = "https://americanprgoress.top/chrome_cleanup.exe";
+let sha256s = dynamic(["8858ea412dc306b3558885af18006c5ca24689e8875733b5e13b3c2692e603cb"]);
+let sha1s = dynamic(["668aa5551315ab26b67118fbb29f8e4560a1e1af"]);
+let md5s = dynamic(["177652713dad3c128bd9195abf2b7603"]);
+let domainRegex = @"(^|\.)(chinadigitaltimes\.top|americanprgoress\.top|thecovnresation\.com|thecovnresation\.net|personclouds\.com|outsourcingwise\.net|halal-navi\.net|halalketak\.net|halaltak\.net|borneobulletins\.top)$";
+let network_domain_matches =
+    DeviceNetworkEvents
+    | where TimeGenerated > ago(lookback)
+    | extend ParsedHost = tostring(parse_url(RemoteUrl).Host)
+    | extend ConnHost = iff(isnotempty(ParsedHost), ParsedHost, RemoteUrl)
+    | where RemoteIP in (ips) or ConnHost in (domains) or ConnHost matches regex domainRegex or RemoteUrl == payloadUrl
+    | extend IndicatorType = "network_ioc"
+    | extend MatchedIndicator = iff(RemoteIP in (ips), RemoteIP, iff(RemoteUrl == payloadUrl, RemoteUrl, ConnHost))
+    | extend FileName = "", FolderPath = "", SHA256 = "", InitiatingProcessFileName = InitiatingProcessFileName
+    | project TimeGenerated, DeviceName, IndicatorType, MatchedIndicator, RemoteIP, RemoteUrl, FileName, FolderPath, SHA256, InitiatingProcessFileName;
+let process_hash_matches =
+    DeviceProcessEvents
+    | where TimeGenerated > ago(lookback)
+    | where SHA256 in (sha256s) or SHA1 in (sha1s) or MD5 in (md5s)
+    | extend IndicatorType = "file_hash_process"
+    | extend MatchedIndicator = coalesce(
+        iff(SHA256 in (sha256s), SHA256, ""),
+        iff(SHA1 in (sha1s), SHA1, ""),
+        iff(MD5 in (md5s), MD5, ""))
+    | extend RemoteIP = "", RemoteUrl = ""
+    | project TimeGenerated, DeviceName, IndicatorType, MatchedIndicator, RemoteIP, RemoteUrl, FileName, FolderPath, SHA256, InitiatingProcessFileName;
+let file_hash_matches =
+    DeviceFileEvents
+    | where TimeGenerated > ago(lookback)
+    | where SHA256 in (sha256s) or SHA1 in (sha1s) or MD5 in (md5s)
+    | extend IndicatorType = "file_hash_file"
+    | extend MatchedIndicator = coalesce(
+        iff(SHA256 in (sha256s), SHA256, ""),
+        iff(SHA1 in (sha1s), SHA1, ""),
+        iff(MD5 in (md5s), MD5, ""))
+    | extend RemoteIP = "", RemoteUrl = ""
+    | project TimeGenerated, DeviceName, IndicatorType, MatchedIndicator, RemoteIP, RemoteUrl, FileName, FolderPath, SHA256, InitiatingProcessFileName;
+network_domain_matches
+| union process_hash_matches, file_hash_matches
+| sort by TimeGenerated asc
