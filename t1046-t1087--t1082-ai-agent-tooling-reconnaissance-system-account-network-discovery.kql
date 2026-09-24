@@ -1,0 +1,35 @@
+// false_positives: (1) Removed bare 'ver' from SystemInfo indicators - collides with unrelated 'ver=1.2.3' style version parameters in build/deploy command lines.
+// (2) Removed bare 'id ' from AccountDiscovery indicators - space-containing substring matched unrelated phrases like 'valid parameter', 'grid search', 'build id', 'session id'; kept only specific Linux id invocations (id -a, id -Gn).
+// (3) NetworkRecon volume signal now only counts distinct RemoteIP:port pairs where RemoteIP is RFC1918 private (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16) or link-local (169.254.0.0/16), so ordinary external API/CDN/web fan-out no longer triggers the signal.
+let AgentTools = dynamic(["claude","claude-code","cursor","copilot","gh-copilot","autogpt","langchain","langgraph","ollama","aider","continue","open-interpreter","openinterpreter","autogen","crewai","chatgpt"]);
+let ProcessRecon =
+    DeviceProcessEvents
+    | where InitiatingProcessFileName has_any (AgentTools) or InitiatingProcessFolderPath has_any (AgentTools)
+    | extend ReconCategory = case(
+        ProcessCommandLine has_any ("systeminfo","Get-ComputerInfo","hostname","uname -a","sw_vers","wmic os get","system_profiler"), "SystemInfo",
+        ProcessCommandLine has_any ("whoami /all","net user","net group","net localgroup","Get-LocalUser","Get-LocalGroupMember","Get-ADUser","dscl . -list /Users","id -a","id -Gn","net user /domain"), "AccountDiscovery",
+        ProcessCommandLine has_any ("nmap","masscan","net view","arp -a","netstat -an","Test-NetConnection","nc -zv","Get-NetTCPConnection"), "NetworkDiscovery",
+        "")
+    | where ReconCategory != ""
+    | extend TechniqueId = case(ReconCategory == "SystemInfo", "T1082", ReconCategory == "AccountDiscovery", "T1087", ReconCategory == "NetworkDiscovery", "T1046", "")
+    | project Timestamp, DeviceId, DeviceName, AccountName, InitiatingProcessId, InitiatingProcessFileName, InitiatingProcessCommandLine = ProcessCommandLine, ReconCategory, TechniqueId, DistinctEndpointCount = 0;
+let NetworkRecon =
+    DeviceNetworkEvents
+    | where InitiatingProcessFileName has_any (AgentTools) or InitiatingProcessFolderPath has_any (AgentTools)
+    | summarize DistinctEndpointCount = dcountif(strcat(RemoteIP, ":", tostring(RemotePort)), ipv4_is_private(RemoteIP) or ipv4_is_in_range(RemoteIP, "169.254.0.0/16")), DeviceName = any(DeviceName), AccountName = any(AccountName), InitiatingProcessFileName = any(InitiatingProcessFileName) by DeviceId, InitiatingProcessId, Timestamp = bin(Timestamp, 2m)
+    | where DistinctEndpointCount > 15
+    | extend ReconCategory = "NetworkDiscovery", TechniqueId = "T1046", InitiatingProcessCommandLine = ""
+    | project Timestamp, DeviceId, DeviceName, AccountName, InitiatingProcessId, InitiatingProcessFileName, InitiatingProcessCommandLine, ReconCategory, TechniqueId, DistinctEndpointCount;
+let AllRecon = union ProcessRecon, NetworkRecon;
+let ReconChain =
+    AllRecon
+    | summarize CategoryCount = dcount(ReconCategory) by DeviceId, InitiatingProcessId, AccountName, bin(Timestamp, 10m)
+    | where CategoryCount >= 2;
+AllRecon
+| join kind=leftouter (
+    ReconChain
+    | project DeviceId, InitiatingProcessId, AccountName, CategoryCount
+) on DeviceId, InitiatingProcessId, AccountName
+| extend Severity = iff(isnotnull(CategoryCount) and CategoryCount >= 2, "High", "Medium")
+| project Timestamp, DeviceName, AccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, ReconCategory, TechniqueId, DistinctEndpointCount, Severity
+| order by Timestamp desc
