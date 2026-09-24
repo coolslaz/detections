@@ -1,0 +1,61 @@
+// Detects RMMCRAT installation masquerading as JivaChat management software.
+// Key behavioral signals: rmm.exe or RMMAgent service registration, JivaChat
+// installer artifacts, and C:\ProgramData\RMMAgent directory creation.
+// Note: PPID spoofing to explorer.exe may hide the true installer parent;
+// correlate InitiatingProcessFileName with smartscreen.exe or pythonw.exe.
+// The COM CLSID hijack for {01575CFE-9A55-4003-A5E1-F38D1EBDCBE1} is unique to this
+// campaign and can alert on its own; all other (generic) signals require
+// corroboration from at least one other category (process + file + registry).
+let RMMCRATInstallEvents =
+    DeviceProcessEvents
+    | where Timestamp > ago(7d)
+    | where
+        // Service binary named rmm.exe registering as RMMAgent
+        (FileName =~ "rmm.exe" or ProcessCommandLine has "RMMAgent")
+        or
+        // pythonw.exe spawning into ProgramData\RMMAgent path
+        (FileName =~ "pythonw.exe" and FolderPath contains "RMMAgent")
+        or
+        // Inno Setup installer for JivaChat campaign launching installer-related children
+        (InitiatingProcessCommandLine has "JivaChat" and FileName =~ "rmm.exe")
+    | extend SignalType = case(
+        FileName =~ "rmm.exe", "RMMAgent binary execution",
+        ProcessCommandLine has "RMMAgent", "RMMAgent service reference",
+        FileName =~ "pythonw.exe" and FolderPath contains "RMMAgent", "pythonw in RMMAgent dir",
+        "JivaChat->rmm.exe spawn"
+    )
+    | extend SignalCategory = "process";
+let RMMCRATFileEvents =
+    DeviceFileEvents
+    | where Timestamp > ago(7d)
+    | where
+        FolderPath has "RMMAgent"
+        and FileName has_any ("rmm.exe", "credentials.dat", "client_id.bin", "agent.log")
+    | extend SignalType = "RMMAgent file artifact"
+    | extend SignalCategory = "file";
+let RMMCRATRegistryEvents =
+    DeviceRegistryEvents
+    | where Timestamp > ago(7d)
+    | where
+        // RMMAgent Windows service registry key
+        RegistryKey has "RMMAgent"
+        or
+        // RMMCRAT persistence: COM CLSID hijack for {01575CFE-9A55-4003-A5E1-F38D1EBDCBE1}
+        RegistryKey has "{01575CFE-9A55-4003-A5E1-F38D1EBDCBE1}"
+        or
+        // Persistence via Windows Load value
+        (RegistryKey has @"Windows NT\CurrentVersion\Windows" and RegistryValueName =~ "Load" and RegistryValueData has "RMMAgent")
+    | extend SignalType = iff(RegistryKey has "{01575CFE-9A55-4003-A5E1-F38D1EBDCBE1}", "COM CLSID hijack {01575CFE-9A55-4003-A5E1-F38D1EBDCBE1}", "RMMAgent registry artifact")
+    | extend SignalCategory = "registry";
+union RMMCRATInstallEvents, RMMCRATFileEvents, RMMCRATRegistryEvents
+| summarize
+    FirstSeen = min(Timestamp),
+    LastSeen = max(Timestamp),
+    Signals = make_set(SignalType, 20),
+    Categories = make_set(SignalCategory, 20),
+    SignalCount = dcount(SignalType),
+    CategoryCount = dcount(SignalCategory),
+    HasCLSIDHijack = countif(SignalType == "COM CLSID hijack {01575CFE-9A55-4003-A5E1-F38D1EBDCBE1}") > 0
+    by DeviceId, DeviceName
+| where HasCLSIDHijack or (SignalCount >= 2 and CategoryCount >= 2)
+| sort by SignalCount desc, LastSeen desc
