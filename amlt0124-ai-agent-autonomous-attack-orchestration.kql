@@ -1,0 +1,59 @@
+// AI Agent Security — Autonomous Recon -> Credential Access -> Collection -> Exfiltration
+// Behavioral/anomaly multi-stage correlation detection (NOT a single-IOC signature).
+// Maps to MITRE ATLAS AML.T0124 (Autonomous Attack Orchestration) and ATT&CK chain
+// T1046 -> T1552.001 -> T1078 -> T1005 -> T1567.
+// Modeled on MITRE ATLAS case study C0062 (Claude Code used for autonomous recon,
+// credential harvesting, collection, database access, and exfiltration).
+// Severity: High
+// ATT&CK: T1046, T1552.001, T1078, T1005, T1567
+// ATLAS: AML.T0124
+// Author: Arnold Chan
+let lookback = 1d;
+// Tightened thresholds: requires >=4 distinct discovery behaviours (was 3) and a
+// 15-minute end-to-end chain window (was 30) to cut noise from routine admin/recon
+// activity and only flag a genuinely fast, automated attack chain.
+let corrWindow = 15m;
+let AIAgentActivity =
+    DeviceProcessEvents
+    | where Timestamp > ago(lookback)
+    | where FileName has_any ("claude", "cursor", "copilot", "aider", "autogpt", "auto-gpt", "langchain", "agentgpt", "gpt-engineer")
+        or ProcessCommandLine has_any ("claude", "cursor-agent", "copilot", "aider", "autogpt", "auto-gpt", "langchain", "agentgpt", "gpt-engineer", "agent.py")
+    | summarize AgentStart = min(Timestamp) by DeviceId, AccountName, DeviceName;
+let DiscoveryActivity =
+    DeviceProcessEvents
+    | where Timestamp > ago(lookback)
+    | where ProcessCommandLine has_any ("nmap", "arp", "net view", "net group", "ipconfig", "nltest", "Get-NetTCPConnection", "nslookup", "portqry", "Test-NetConnection", "masscan")
+    | summarize DiscoveryCount = dcount(ProcessCommandLine), FirstDiscovery = min(Timestamp), LastDiscovery = max(Timestamp) by DeviceId
+    | where DiscoveryCount >= 4;
+let CredentialAccessActivity =
+    DeviceFileEvents
+    | where Timestamp > ago(lookback)
+    | where ActionType in ("FileCreated", "FileModified", "FileRenamed", "FileAccessed")
+    | where FileName has_any (".env", "id_rsa", "credentials.json", ".npmrc", ".git-credentials", "unattend.xml", "web.config", ".kdbx", "secrets.yaml")
+        or FolderPath has_any (".aws\\credentials", ".kube\\config")
+    | summarize CredAccessTime = min(Timestamp) by DeviceId;
+let CollectionActivity =
+    DeviceFileEvents
+    | where Timestamp > ago(lookback)
+    | where FileName endswith ".zip" or FileName endswith ".7z" or FileName endswith ".rar" or FileName endswith ".tar.gz"
+        or FolderPath has_any ("staging", "temp", "tmp")
+    | summarize CollectionTime = min(Timestamp) by DeviceId;
+let ExfiltrationActivity =
+    DeviceNetworkEvents
+    | where Timestamp > ago(lookback)
+    | where ActionType == "ConnectionSuccess"
+    | where RemoteUrl has_any ("transfer.sh", "pastebin", "anonfiles", "mega.nz", "dropbox", "drive.google", "wetransfer", "0x0.st", "file.io", "cdn.discordapp.com", "t.me")
+    | summarize ExfilTime = min(Timestamp), RemoteUrl = take_any(RemoteUrl) by DeviceId;
+AIAgentActivity
+| join kind=inner (DiscoveryActivity) on DeviceId
+| join kind=inner (CredentialAccessActivity) on DeviceId
+| join kind=inner (CollectionActivity) on DeviceId
+| join kind=inner (ExfiltrationActivity) on DeviceId
+| where AgentStart <= FirstDiscovery
+    and FirstDiscovery <= CredAccessTime
+    and CredAccessTime <= CollectionTime
+    and CollectionTime <= ExfilTime
+| extend ChainDurationMinutes = datetime_diff('minute', ExfilTime, AgentStart)
+| where ExfilTime - AgentStart <= corrWindow
+| project DeviceId, DeviceName, AccountName, AgentStart, FirstDiscovery, DiscoveryCount, CredAccessTime, CollectionTime, ExfilTime, RemoteUrl, ChainDurationMinutes
+| sort by ExfilTime desc
