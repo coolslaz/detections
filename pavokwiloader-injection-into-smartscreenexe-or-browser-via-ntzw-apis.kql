@@ -1,0 +1,89 @@
+// Detects PavokwiLoader spawning smartscreen.exe or a browser process suspended,
+// then injecting payload via Zw* memory APIs and hijacking execution.
+// Note: EDR telemetry must surface cross-process API calls (NtAllocateVirtualMemory,
+// NtWriteVirtualMemory, NtQueueApcThread, NtSetContextThread) as DeviceEvents rows
+// to catch all stages; process-creation visibility alone covers the spawn gate.
+// Tightened: the injecting caller must be the same process that spawned the target
+// (self-injection into its own suspended child), and both a memory-write/allocate
+// API and a thread-hijack/resume API must be observed in the correlation window --
+// a lone WriteProcessMemory call is too common in benign software to stand alone.
+
+let TargetProcesses = dynamic(["smartscreen.exe", "chrome.exe", "msedge.exe", "brave.exe",
+    "vivaldi.exe", "browser.exe", "opera.exe", "firefox.exe", "chromium.exe",
+    "yandex.exe", "yandexbrowser.exe"]);
+
+// Gate 1: Suspicious suspended-state spawn of target processes
+let SuspendedSpawns = DeviceProcessEvents
+| where Timestamp > ago(1d)
+// PavokwiLoader is typically injected into smartscreen.exe or a browser;
+// the initiating process is pythonw.exe running main.pyw or a browser-spawned child.
+// Flag any process spawning one of the target binaries where the parent is unusual.
+| where FileName has_any (TargetProcesses)
+| where InitiatingProcessFileName !in~ ("explorer.exe", "svchost.exe", "services.exe",
+    "userinit.exe", "winlogon.exe", "sihost.exe", "taskhostw.exe")
+// pythonw.exe or any unexpected parent spawning these targets is suspicious
+| project
+    SpawnTime = Timestamp,
+    DeviceId,
+    DeviceName,
+    TargetProcess = FileName,
+    TargetProcessId = ProcessId,
+    ParentProcess = InitiatingProcessFileName,
+    ParentProcessId = InitiatingProcessId,
+    ParentCommandLine = InitiatingProcessCommandLine;
+
+// Gate 2: Cross-process memory-write / APC / context-hijack API calls targeting same PIDs
+let InjectionApis = DeviceEvents
+| where Timestamp > ago(1d)
+| where ActionType in~ (
+    "NtAllocateVirtualMemory",
+    "NtWriteVirtualMemory",
+    "NtProtectVirtualMemory",
+    "NtQueueApcThread",
+    "NtGetContextThread",
+    "NtSetContextThread",
+    "NtResumeThread",
+    // Kernel32 wrappers that may appear depending on EDR instrumentation layer
+    "WriteProcessMemory",
+    "VirtualAllocEx",
+    "VirtualProtectEx",
+    "QueueUserAPC",
+    "SetThreadContext",
+    "ResumeThread"
+    )
+| project
+    ApiTime = Timestamp,
+    DeviceId,
+    TargetProcessId = toint(AdditionalFields["TargetProcessId"]),
+    ApiName = ActionType,
+    CallerProcess = InitiatingProcessFileName,
+    CallerPid = InitiatingProcessId;
+
+// Correlate: a spawned target process that subsequently receives injection API calls
+// from the SAME process that spawned it (self-injection into own suspended child)
+SuspendedSpawns
+| join kind=inner (
+    InjectionApis
+) on DeviceId, TargetProcessId
+| where ApiTime between (SpawnTime .. (SpawnTime + 5m))
+// Require the injecting caller to be the process that spawned the target
+| where CallerPid == ParentProcessId
+| summarize
+    FirstSpawn = min(SpawnTime),
+    InjectionApis = make_set(ApiName, 20),
+    InjectionCount = count(),
+    HasMemoryWriteOrAlloc = countif(ApiName has_any ("WriteProcessMemory", "NtWriteVirtualMemory",
+        "VirtualAllocEx", "NtAllocateVirtualMemory")) > 0,
+    HasThreadHijackOrResume = countif(ApiName has_any ("SetThreadContext", "NtSetContextThread",
+        "NtQueueApcThread", "ResumeThread", "NtResumeThread")) > 0
+    by DeviceId, DeviceName, TargetProcess, TargetProcessId, ParentProcess, ParentProcessId, ParentCommandLine
+// Require the full classic hollowing chain: memory write/alloc AND thread hijack/resume
+| where HasMemoryWriteOrAlloc and HasThreadHijackOrResume
+| extend
+    MitreAttack = "T1055.004, T1055.012, T1106",
+    RuleName = "PavokwiLoader-ProcessInjection-SmartscreenOrBrowser"
+| project
+    FirstSpawn, DeviceId, DeviceName, TargetProcess, TargetProcessId,
+    ParentProcess, ParentProcessId, ParentCommandLine,
+    InjectionApis, InjectionCount, MitreAttack, RuleName
+| order by FirstSpawn desc
