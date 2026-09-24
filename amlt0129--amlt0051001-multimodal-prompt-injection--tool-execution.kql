@@ -1,0 +1,102 @@
+// Multimodal Prompt Injection — Image/PDF Input Followed by AI Agent Tool Execution
+// MITRE ATLAS: AML.T0129 (Triggers in Multimodal Inputs), AML.T0051.001
+// MITRE ATT&CK: T1204 (User Execution), T1059 (Command and Scripting Interpreter), T1105 (Ingress Tool Transfer)
+// Author: Arnold Chan
+// This is NOT keyword-matching on phrases like 'ignore previous instructions'.
+// It detects the actual exploitation behavior: a multimodal file (PDF/image/audio) is ingested,
+// then read by an AI agent process, and that SAME agent process instance (matched by exact
+// ProcessId/InitiatingProcessId lineage, not DeviceId+filename coincidence) either spawns a
+// shell or reaches a rare external destination shortly afterward — consistent with a hidden
+// instruction embedded in the file being executed by the agent.
+// Stages use tight per-stage sub-windows instead of one loose umbrella window, and network
+// destinations are filtered by a computed 30-day rarity baseline rather than a static domain list.
+// Further tightened for false positives:
+//   1) File ingestion must come from an actual delivery vector process (browser/mail/Teams),
+//      not just land in a folder that happens to be named Downloads/Attachments.
+//   2) Agent identification uses exact process-image-name matches (claude.exe, cursor.exe, ...),
+//      not substring text matching -- removes collisions with unrelated OS/Copilot features
+//      that happen to contain the same word.
+//   3) The shell-execution branch now also requires the spawned shell's command line to either
+//      reference the ingested file or show a classic download/execution primitive (-enc,
+//      DownloadString, IEX, curl, certutil, hidden window, etc.) -- an agent's incidental,
+//      unrelated shell use (e.g. running a build/test command) no longer alone qualifies.
+//   4) The network branch excludes private/loopback IP ranges so only genuinely external
+//      connections count.
+//   5) Results are deduplicated to the first qualifying event per device/file/agent-process/
+//      trigger-type combination to avoid alert-spam from one real chain being counted multiple times.
+let lookback = 1d;
+let DeliveryVectors = dynamic(["msedge.exe", "chrome.exe", "firefox.exe", "outlook.exe", "olk.exe", "teams.exe"]);
+let AgentBinaries = dynamic(["claude.exe", "cursor.exe", "chatgpt.exe", "githubcopilot.exe", "copilot.exe"]);
+let FileIngest =
+    DeviceFileEvents
+    | where Timestamp > ago(lookback)
+    | where ActionType == "FileCreated"
+    | where FileName endswith ".pdf" or FileName endswith ".png" or FileName endswith ".jpg"
+        or FileName endswith ".jpeg" or FileName endswith ".gif" or FileName endswith ".bmp"
+        or FileName endswith ".mp3" or FileName endswith ".wav" or FileName endswith ".mp4"
+    | where FolderPath has_any ("Downloads", "Attachments", "INetCache", "Temporary Internet Files", "Outlook")
+    // Tightened: require the file to have actually arrived via a browser/mail/Teams delivery
+    // vector, not merely land in a folder that happens to be named Downloads/Attachments.
+    | where InitiatingProcessFileName in~ (DeliveryVectors)
+    | project DeviceId, IngestTime = Timestamp, IngestedFileName = FileName;
+let AgentFileAccess =
+    DeviceProcessEvents
+    | where Timestamp > ago(lookback)
+    // Tightened: exact process-image-name match instead of substring text match -- removes
+    // collisions with unrelated OS/Copilot features or processes that merely contain the word.
+    | where FileName in~ (AgentBinaries) or InitiatingProcessFileName in~ (AgentBinaries)
+    | project DeviceId, AccessTime = Timestamp, AgentProcessId = ProcessId, AgentFileName = FileName, ProcessCommandLine;
+let FileToAgent =
+    FileIngest
+    | join kind=inner (AgentFileAccess) on DeviceId
+    | where ProcessCommandLine has IngestedFileName
+    | where AccessTime > IngestTime and AccessTime - IngestTime <= 10m
+    // Dedupe to the first qualifying agent access per ingested file to avoid downstream
+    // fan-out from repeated background activity by the same agent process.
+    | summarize AccessTime = min(AccessTime) by DeviceId, IngestTime, IngestedFileName, AgentProcessId, AgentFileName;
+let DomainPrevalence =
+    DeviceNetworkEvents
+    | where Timestamp > ago(30d)
+    | where isnotempty(RemoteUrl)
+    | summarize DomainPrevalence = dcount(DeviceId) by RemoteUrl;
+let SuspiciousExecPatterns = dynamic(["-enc", "-EncodedCommand", "FromBase64String", "DownloadString", "DownloadFile", "IEX", "Invoke-Expression", "Invoke-WebRequest", "iwr ", "curl ", "wget ", "certutil", "Net.WebClient", "-WindowStyle Hidden", "-w hidden"]);
+let ToolExecutionBranch =
+    DeviceProcessEvents
+    | where Timestamp > ago(lookback)
+    | where FileName in~ ("powershell.exe", "pwsh.exe", "cmd.exe", "bash", "sh")
+    | join kind=inner (FileToAgent) on DeviceId, $left.InitiatingProcessId == $right.AgentProcessId
+    | where Timestamp > AccessTime and Timestamp - AccessTime <= 5m
+    // Tightened: the shell must either reference the ingested file directly or show a classic
+    // download/execution primitive -- an agent's incidental, unrelated shell use (e.g. running
+    // a build/test command right after briefly touching a PDF) no longer alone qualifies.
+    | where ProcessCommandLine has_any (SuspiciousExecPatterns) or ProcessCommandLine has IngestedFileName
+    | project DeviceId, DeviceName, AccountName, IngestTime, IngestedFileName, AccessTime, AgentFileName,
+        TriggerType = "ShellExecution", ExecCommandLine = ProcessCommandLine, RemoteUrl = "", DomainPrevalence = long(null),
+        FinalStageTime = Timestamp;
+let NetworkActionBranch =
+    DeviceNetworkEvents
+    | where Timestamp > ago(lookback)
+    | where ActionType == "ConnectionSuccess"
+    | where isnotempty(RemoteUrl)
+    | where not(RemoteUrl has_any ("registry.npmjs.org", "pypi.org", "github.com", "raw.githubusercontent.com"))
+    // Tightened: exclude private/loopback destinations so only genuinely external connections count.
+    | where not(RemoteIP startswith "10." or RemoteIP startswith "192.168." or RemoteIP startswith "127."
+        or RemoteIP matches regex @"^172\.(1[6-9]|2[0-9]|3[0-1])\.")
+    | join kind=inner (FileToAgent) on DeviceId, $left.InitiatingProcessId == $right.AgentProcessId
+    | where Timestamp > AccessTime and Timestamp - AccessTime <= 10m
+    | join kind=inner (DomainPrevalence) on RemoteUrl
+    | where DomainPrevalence <= 2
+    | project DeviceId, DeviceName, AccountName, IngestTime, IngestedFileName, AccessTime, AgentFileName,
+        TriggerType = "RareNetworkConnection", ExecCommandLine = "", RemoteUrl, DomainPrevalence,
+        FinalStageTime = Timestamp;
+union ToolExecutionBranch, NetworkActionBranch
+// Dedupe: one alert per real chain, not one per matching downstream event.
+| summarize FinalStageTime = min(FinalStageTime) by DeviceId, DeviceName, AccountName, IngestTime, IngestedFileName,
+    AccessTime, AgentFileName, TriggerType, ExecCommandLine, RemoteUrl, DomainPrevalence
+| extend ChainDurationMinutes = datetime_diff('minute', FinalStageTime, IngestTime)
+| project DeviceId, DeviceName, AccountName, IngestTime, IngestedFileName, AccessTime, AgentFileName,
+    TriggerType, ExecCommandLine, RemoteUrl, DomainPrevalence, ChainDurationMinutes, FinalStageTime
+| sort by FinalStageTime desc
+// Severity: High
+// ATT&CK: T1204, T1059, T1105
+// ATLAS: AML.T0129, AML.T0051.001
