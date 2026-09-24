@@ -1,0 +1,114 @@
+// Title: AI Agent Trigger-Channel Recon — Repeated Cross-Channel Agent Probing
+// Author: Arnold Chan
+// Severity: Medium
+// MITRE ATT&CK: T1595.002 (Active Scanning: Vulnerability Scanning) - reconnaissance-tactic analogue
+// MITRE ATLAS: AML.T0006.003 (Active Scanning: Probe AI Agent Trigger Channels)
+//
+// Description:
+// An attacker probes multiple autonomous-trigger input surfaces for an AI agent
+// (email, Teams/chat, calendar invites, tickets, webhooks, documents, GitHub issues)
+// trying to learn "which of these inputs does this agent process automatically?"
+// The core signal is the SAME external identity reaching the target across MULTIPLE
+// DIFFERENT channels with SIMILAR agent-triggering/instruction-style language within
+// a short period. Any external partner using multiple channels is normal and must
+// NOT alone trigger this rule - the keyword gate on instruction-style/agent-triggering
+// language is what separates deliberate probing from legitimate multi-channel outreach.
+//
+// Requires cloud/collaboration telemetry (Exchange Online, Teams, custom channel
+// connectors) - NOT endpoint data. This is a behavioral analytic, not an IOC match.
+// The organization MUST adapt OwnDomains and the third-party channel branch below.
+
+// Analyst must populate this with the organization's own accepted domains.
+let OwnDomains = dynamic(['contoso.com']);
+// Tightened: removed 'system:', 'assistant:', and 'auto-reply' from the original keyword list --
+// these are extremely common in ordinary business traffic (IT/ticketing system notifications,
+// email signatures like "Executive Assistant:", and routine out-of-office auto-replies) and were
+// the single biggest false-positive source in this rule. The remaining terms are much more
+// distinctly instruction-injection-style language.
+let TriggerKeywords = dynamic([
+    'ignore previous instructions',
+    'you are an ai',
+    'execute the following',
+    'run this command',
+    'as an autonomous agent',
+    'process this automatically',
+    'do not verify',
+    'bypass approval',
+    'act on this immediately'
+]);
+//
+// Channel 1: Email
+let EmailChannel = EmailEvents
+| project MessageTime = Timestamp,
+          SenderIdentity = tolower(SenderFromAddress),
+          ChannelType = "Email",
+          Content = tostring(Subject);
+//
+// Channel 2: Teams chat message creation (CloudAppEvents, Microsoft Teams application)
+// NOTE: ObjectName typically carries an object identifier, not the actual message text.
+// The keys below (MessageText/Body inside RawEventData) are illustrative -- verify the exact
+// JSON key against your tenant's CloudAppEvents payload and adjust; falls back to ObjectName
+// only when no parsed text field is found, to avoid keyword-matching against an identifier.
+let TeamsChannel = CloudAppEvents
+| where Application == "Microsoft Teams"
+| where ActionType in ("MessageSent", "ChatCreated", "MessageCreated")
+| extend ParsedEvent = parse_json(RawEventData)
+| extend Content = case(
+    isnotempty(tostring(ParsedEvent.MessageText)), tostring(ParsedEvent.MessageText),
+    isnotempty(tostring(ParsedEvent.Body)), tostring(ParsedEvent.Body),
+    tostring(ObjectName))
+| project MessageTime = Timestamp,
+          SenderIdentity = tolower(AccountId),
+          ChannelType = "TeamsChat",
+          Content;
+//
+// Channel 3: Exchange calendar invite creation (CloudAppEvents, Exchange application)
+// Same caveat as above -- verify the RawEventData key for the invite subject/body/agenda text.
+let CalendarChannel = CloudAppEvents
+| where Application == "Microsoft Exchange Online"
+| where ActionType in ("New-CalendarEvent", "MeetingRequestCreated", "Create")
+| where RawEventData has "Calendar"
+| extend ParsedEvent = parse_json(RawEventData)
+| extend Content = case(
+    isnotempty(tostring(ParsedEvent.Subject)), tostring(ParsedEvent.Subject),
+    isnotempty(tostring(ParsedEvent.Body)), tostring(ParsedEvent.Body),
+    tostring(ObjectName))
+| project MessageTime = Timestamp,
+          SenderIdentity = tolower(AccountId),
+          ChannelType = "CalendarInvite",
+          Content;
+//
+// Channel 4 (illustrative placeholder): webhook / ticketing / GitHub-issue channels.
+// There is NO universal Sentinel schema for these third-party channels. The table name
+// (CustomChannelEvents_CL) and field names (TimeGenerated, SenderIdentity_s, ChannelType_s,
+// Content_s) below are placeholders that MUST be adapted to whatever connector the
+// organization actually has (GitHub audit log, ServiceNow, Jira, generic webhook ingestion).
+// This branch is disabled by default (produces zero rows if the table does not exist);
+// wire it up per-environment before enabling.
+let CustomChannel = CustomChannelEvents_CL
+| project MessageTime = TimeGenerated,
+          SenderIdentity = tolower(tostring(SenderIdentity_s)),
+          ChannelType = tostring(ChannelType_s),
+          Content = tostring(Content_s);
+//
+union EmailChannel, TeamsChannel, CalendarChannel, CustomChannel
+| where isnotempty(SenderIdentity)
+// Gate 1: external senders only - excludes internal cross-channel communication
+| where not(SenderIdentity has_any (OwnDomains))
+// Tightened: exclude common automated/system-generated sender patterns (ticketing/notification
+// systems, mailer daemons) -- these are a high-volume, legitimate source of multi-channel,
+// oddly-worded automated traffic that would otherwise dilute this rule's precision.
+| where not(SenderIdentity has_any ('no-reply', 'noreply', 'mailer-daemon', 'donotreply', 'notifications@'))
+// Gate 2: agent-triggering / instruction-style language
+| where Content has_any (TriggerKeywords)
+| summarize DistinctChannels = dcount(ChannelType),
+            Channels = make_set(ChannelType),
+            MessageCount = count(),
+            SampleContent = make_set(Content, 5),
+            FirstSeen = min(MessageTime),
+            LastSeen = max(MessageTime)
+          by SenderIdentity, bin(MessageTime, 24h)
+// Raise only when the same external sender used 3+ distinct trigger-language channels in 24h
+| where DistinctChannels >= 3
+| project SenderIdentity, DistinctChannels, Channels, MessageCount, SampleContent, FirstSeen, LastSeen
+| sort by DistinctChannels desc, MessageCount desc
