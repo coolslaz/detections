@@ -1,0 +1,71 @@
+// Title: AI Agent Environment Reconstruction — Rapid System, Tool & Network Enumeration
+// Author: Arnold Chan
+// Severity: High
+// MITRE ATLAS: AML.T0121 (AI Agent Environment Reconstruction)
+// MITRE ATT&CK: T1082 (System Information Discovery), T1016 (System Network Configuration Discovery), T1057 (Process Discovery), T1518 (Software Discovery)
+//
+// This is a category-breadth BEHAVIORAL analytic, not an IOC/keyword list.
+// It is deliberately broader/more structured than a single reconnaissance-burst
+// detection: rather than flagging a couple of discovery commands, it looks for
+// an AI agent process reconstructing the FULL operating context of the host —
+// machine/OS identity, network configuration, running processes, installed
+// tools/packages, and its own configuration/credentials/integrations — all
+// within a tight correlation window. Near-ceiling breadth (>=4 of 5 categories)
+// distinguishes genuine environment reconstruction from a developer running one
+// or two ordinary diagnostic commands through an agent-assisted terminal.
+//
+// AI-agent identification uses EXACT match on the INITIATING process image name
+// (InitiatingProcessFileName in~ agent-binary list), not substring text matching,
+// to avoid false positives from unrelated tools whose command lines happen to
+// contain agent-related substrings.
+//
+// Further tightened for false positives:
+//   1) The credential category now covers ONLY genuine credential material (.env,
+//      credentials.json, .aws\credentials, .kube\config) -- it no longer includes
+//      mcp.json/settings.json/claude_desktop_config.json, which these agents read on
+//      EVERY normal startup as their own routine self-configuration and would
+//      otherwise make this category fire constantly on completely benign sessions.
+//   2) The category-breadth threshold is raised to the full ceiling (5 of 5, not 4 of 5)
+//      to match the title's "reconstruction" framing -- a single legitimate troubleshooting
+//      request ("check my system, network, and packages") can plausibly touch 4 of 5
+//      vanilla diagnostic categories; requiring every category narrows this to genuinely
+//      comprehensive enumeration.
+//   3) A minimum total-event count (>=6) is required alongside category breadth, so one
+//      isolated command per category (5 total commands across a debugging session) no
+//      longer alone qualifies -- this is meant to catch a RAPID, REPEATED burst, not a
+//      single pass through each category.
+let AgentBinaries = dynamic(['claude.exe','cursor.exe','chatgpt.exe','githubcopilot.exe','copilot.exe']);
+let ProcessEvents =
+    DeviceProcessEvents
+    | where InitiatingProcessFileName in~ (AgentBinaries)
+    | extend DiscoveryCategory = case(
+        ProcessCommandLine has_any ('systeminfo','Get-ComputerInfo','hostname','uname -a','sw_vers','ver'), 'MachineOS',
+        ProcessCommandLine has_any ('ipconfig','Get-NetIPConfiguration','netsh interface','ifconfig','ip addr','route print'), 'NetworkEnv',
+        ProcessCommandLine has_any ('tasklist','Get-Process','ps aux','ps -ef'), 'ProcessDiscovery',
+        ProcessCommandLine has_any ('pip list','pip freeze','npm list','npm ls','Get-InstalledModule','Get-Package','code --list-extensions','conda list'), 'SoftwareTools',
+        '')
+    | where DiscoveryCategory != ''
+    | extend Evidence = ProcessCommandLine
+    | project Timestamp, DeviceId, DeviceName, AccountName, InitiatingProcessFileName, InitiatingProcessId, DiscoveryCategory, Evidence;
+let FileEvents =
+    DeviceFileEvents
+    | where InitiatingProcessFileName in~ (AgentBinaries)
+    // Tightened: only genuine credential material -- excludes the agent's own routine
+    // self-configuration files (mcp.json, settings.json, claude_desktop_config.json),
+    // which are touched on every normal startup and are not evidence of credential probing.
+    | where FileName has_any ('.env', 'credentials.json')
+        or FolderPath has_any ('.aws', '.kube')
+    | extend DiscoveryCategory = 'CredentialFiles'
+    | extend Evidence = strcat(FolderPath, '\\', FileName, ' (', ActionType, ')')
+    | project Timestamp, DeviceId, DeviceName, AccountName, InitiatingProcessFileName, InitiatingProcessId, DiscoveryCategory, Evidence;
+union ProcessEvents, FileEvents
+| summarize DistinctCategories = dcount(DiscoveryCategory),
+            Categories = make_set(DiscoveryCategory),
+            EventCount = count(),
+            SampleEvidence = make_set(Evidence, 10),
+            FirstSeen = min(Timestamp),
+            LastSeen = max(Timestamp)
+    by DeviceId, DeviceName, AccountName, InitiatingProcessFileName, InitiatingProcessId, bin(Timestamp, 10m)
+| where DistinctCategories >= 5 and EventCount >= 6
+| project DeviceId, DeviceName, AccountName, InitiatingProcessFileName, DistinctCategories, Categories, EventCount, SampleEvidence, FirstSeen, LastSeen
+| sort by DistinctCategories desc, EventCount desc
