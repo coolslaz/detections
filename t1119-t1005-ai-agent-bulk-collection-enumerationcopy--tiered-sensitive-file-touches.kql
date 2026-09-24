@@ -1,0 +1,45 @@
+let lookback = 1d;
+let AiToolNames = dynamic(["claude","claude-code","cursor","copilot","gh-copilot","autogpt","langchain","langgraph","ollama","aider","continue","open-interpreter","openinterpreter","autogen","crewai","chatgpt"]);
+let AiProcess = (T:string) {
+    (T has_any (AiToolNames))
+};
+let ProcessSignal =
+    DeviceProcessEvents
+    | where Timestamp > ago(lookback)
+    | where AiProcess(tolower(InitiatingProcessFileName)) or AiProcess(tolower(InitiatingProcessFolderPath))
+    | where ProcessCommandLine has_any ("Get-ChildItem -Recurse", "dir /s", "grep -r", "robocopy", "rclone copy", "xcopy /s", "rsync -a")
+        or (ProcessCommandLine has "find " and ProcessCommandLine has_any ("-name", "-type f"))
+        or (ProcessCommandLine has_any ("tar ", "zip ") and ProcessCommandLine has_any ("-r", "-C", "*"))
+    | project DeviceId, InitiatingProcessId, ProcCommandLine = ProcessCommandLine, ProcFileName = InitiatingProcessFileName, ProcBin = bin(Timestamp, 2m);
+let FileEventsBase =
+    DeviceFileEvents
+    | where Timestamp > ago(lookback)
+    | where AiProcess(tolower(InitiatingProcessFileName)) or AiProcess(tolower(InitiatingProcessFolderPath))
+    | where ActionType in ("FileCreated", "FileModified", "FileRenamed");
+let LowTierSignal =
+    FileEventsBase
+    | where FolderPath has_any ("\\.ssh", "/.ssh", "\\.aws", "/.aws", "\\.kube", "/.kube", "\\.azure", "/.azure")
+        or FileName endswith ".pst" or FileName endswith ".ost"
+        or (FolderPath has_any ("Chrome\\User Data", "Firefox\\Profiles", "Edge\\User Data")
+            and FileName in ("Login Data", "Login Data-journal", "Cookies", "Web Data"))
+    | summarize DistinctFileCount = dcount(FileName), SampleFileNames = make_set(FileName, 10), SampleFolderPaths = make_set(FolderPath, 10),
+        AccountName = any(InitiatingProcessAccountName), InitiatingProcessFileName = any(InitiatingProcessFileName)
+        by DeviceId, InitiatingProcessId, FileBin = bin(Timestamp, 2m)
+    | where DistinctFileCount > 5;
+let HighTierSignal =
+    FileEventsBase
+    | where FolderPath has_any ("\\Documents\\", "\\Desktop\\", "\\Downloads\\", "/Documents/", "/Desktop/", "/Downloads/")
+        or FileName endswith ".docx" or FileName endswith ".xlsx" or FileName endswith ".pptx"
+        or FileName endswith ".pdf" or FileName endswith ".csv" or FileName endswith ".sql" or FileName endswith ".db"
+    | summarize DistinctFileCount = dcount(FileName), SampleFileNames = make_set(FileName, 10), SampleFolderPaths = make_set(FolderPath, 10),
+        AccountName = any(InitiatingProcessAccountName), InitiatingProcessFileName = any(InitiatingProcessFileName)
+        by DeviceId, InitiatingProcessId, FileBin = bin(Timestamp, 2m)
+    | where DistinctFileCount > 50;
+let FileSignal = union LowTierSignal, HighTierSignal;
+ProcessSignal
+| join kind=inner (FileSignal) on DeviceId, InitiatingProcessId
+| where ProcBin == FileBin
+| extend Timestamp = FileBin
+| project Timestamp, DeviceId, AccountName, InitiatingProcessFileName = ProcFileName, InitiatingProcessCommandLine = ProcCommandLine, DistinctFileCount, SampleFolderPaths, SampleFileNames
+| order by Timestamp desc
+// false_positives: Generic '.git' folder-path matches were removed entirely (normal git checkout/pull/clone/gc routinely touch dozens of files under .git). Browser-profile matches are now limited to credential-bearing filenames (Login Data, Login Data-journal, Cookies, Web Data) rather than the whole Chrome/Firefox/Edge profile tree, excluding constant cache/cookie-journal/service-worker churn. Sensitive-file scoring uses two tiers: a LOW threshold (>5 distinct files in a 2-minute window) for high-risk categories (.ssh/.aws/.kube/.azure, .pst/.ost, and the narrowed browser credential filenames) that are rarely legitimately bulk-written, and a HIGHER threshold (>50 distinct files in the window) for generic office/document/data extensions and Documents/Desktop/Downloads paths, since agents legitimately generate many such files as normal work product. The final join now requires ProcBin to equal FileBin exactly (same 2-minute bin) instead of allowing bins up to ~4 minutes apart to correlate.
