@@ -1,0 +1,39 @@
+// RMMCRAT injects into smartscreen.exe and spawns cmd.exe -> powershell.exe with
+// stdin/stdout over named pipes (\Device\NamedPipe\S. and \Device\NamedPipe\A.*).
+// The PowerShell command line is always identical; detection anchors on the
+// parent/child chain and the fixed command-line pattern.
+// Paths are constrained to legitimate system locations and a tight time window
+// links the cmd.exe/powershell.exe pair to avoid PID-reuse false correlations.
+DeviceProcessEvents
+| where Timestamp > ago(1d)
+| where InitiatingProcessFileName =~ "smartscreen.exe"
+    and InitiatingProcessFolderPath =~ @"C:\Windows\System32\smartscreen.exe"
+    and FileName =~ "cmd.exe"
+    and FolderPath =~ @"C:\Windows\System32\cmd.exe"
+    and ProcessCommandLine has_all ("/C", "powershell", "-NoLogo", "-NoProfile", "-Command", "-")
+| join kind=inner (
+    DeviceProcessEvents
+    | where Timestamp > ago(1d)
+    | where FileName =~ "powershell.exe"
+        and FolderPath =~ @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+        and ProcessCommandLine has_all ("-NoLogo", "-NoProfile", "-Command", "-")
+    | project
+        PowerShellTime = Timestamp,
+        DeviceId,
+        PowerShellPid = ProcessId,
+        PowerShellCmdLine = ProcessCommandLine,
+        ParentPid = InitiatingProcessId
+) on DeviceId, $left.ProcessId == $right.ParentPid
+| where PowerShellTime > Timestamp and PowerShellTime - Timestamp <= 2m
+| project
+    Timestamp,
+    DeviceId,
+    DeviceName,
+    SmartscreenPid = InitiatingProcessId,
+    CmdPid = ProcessId,
+    CmdCommandLine = ProcessCommandLine,
+    PowerShellTime,
+    PowerShellPid,
+    PowerShellCmdLine
+| extend
+    Alert = "RMMCRAT: smartscreen.exe -> cmd.exe -> powershell.exe with fixed named-pipe command line"
