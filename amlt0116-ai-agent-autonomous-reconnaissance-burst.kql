@@ -1,0 +1,43 @@
+// AI Agent Security — Autonomous Host & Network Reconnaissance Burst
+// MITRE ATLAS AML.T0116 (Autonomous Reconnaissance); ATLAS case study C0062 documents Claude Code
+// being used to autonomously enumerate accounts, services, endpoints, configurations, and network
+// topology in a single agent-driven session.
+// ATT&CK: T1087 (Account Discovery), T1046 (Network Service Discovery), T1082 (System Information
+// Discovery), T1016 (System Network Configuration Discovery)
+// Severity: High
+// Author: Arnold Chan
+//
+// Category-breadth behavioral detection: distinguishes autonomous AI-agent-driven reconnaissance
+// (many distinct discovery techniques fired rapidly by one agent process instance) from a single
+// manual discovery command run by a developer/admin through an agent-assisted terminal.
+let lookback = 1d;
+let timeframe = 10m;
+let MinCategories = 4;
+let agentBinaries = dynamic(["claude.exe", "cursor.exe", "chatgpt.exe", "githubcopilot.exe", "copilot.exe"]);
+DeviceProcessEvents
+| where Timestamp > ago(lookback)
+// Tightened: exact process-image-name match on the INITIATING process, not substring text
+// matching -- the previous bare marker "code" would have matched ordinary VS Code activity
+// org-wide, and "claude" without an extension could collide with unrelated strings.
+| where InitiatingProcessFileName in~ (agentBinaries)
+| extend DiscoveryCategory = case(
+    ProcessCommandLine has_any ("whoami", "net user", "net group", "net localgroup", "Get-ADUser", "Get-ADComputer", "Get-ADGroup", "nltest", "dsquery"), "AccountDiscovery",
+    ProcessCommandLine has_any ("netstat", "arp -a", "nmap", "Test-NetConnection", "portqry", "Get-NetTCPConnection"), "NetworkServiceDiscovery",
+    ProcessCommandLine has_any ("systeminfo", "Get-ComputerInfo", "hostname", "uname -a", "wmic os"), "SystemInformationDiscovery",
+    ProcessCommandLine has_any ("ipconfig", "Get-NetIPConfiguration", "route print", "netsh interface", "ifconfig", "ip addr", "nslookup"), "NetworkConfigDiscovery",
+    ""
+)
+| where DiscoveryCategory != ""
+| summarize DistinctCategories = dcount(DiscoveryCategory),
+    Categories = make_set(DiscoveryCategory),
+    CommandCount = count(),
+    SampleCommands = make_set(ProcessCommandLine, 10),
+    FirstSeen = min(Timestamp),
+    LastSeen = max(Timestamp)
+    by DeviceId, DeviceName, AccountName, InitiatingProcessFileName, InitiatingProcessId, bin(Timestamp, timeframe)
+// Ceiling threshold: require ALL FOUR categories from the same agent process instance in the
+// same window -- keeps the rule scoped to genuinely broad, rapid multi-category enumeration
+// bursts rather than a developer/admin running one or two legitimate diagnostic commands.
+| where DistinctCategories >= MinCategories
+| project DeviceId, DeviceName, AccountName, InitiatingProcessFileName, DistinctCategories, Categories, CommandCount, SampleCommands, FirstSeen, LastSeen
+| sort by DistinctCategories desc, CommandCount desc
