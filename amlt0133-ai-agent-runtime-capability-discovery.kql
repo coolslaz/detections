@@ -1,0 +1,40 @@
+// AI Agent Security — Runtime Tool & Permission Enumeration
+// MITRE ATLAS: AML.T0133 (Discover AI Agent Runtime Capabilities)
+// MITRE ATT&CK: T1082 (System Information Discovery), T1518 (Software Discovery),
+//               T1083 (File and Directory Discovery), T1016 (System Network Configuration Discovery)
+// Author: Arnold Chan
+// Severity: Medium
+//
+// This detects an AI-agent process (Claude Code/Desktop, Cursor, Copilot CLI, Aider, AutoGPT,
+// LangChain-based agents, MCP servers, etc.) enumerating its OWN runtime capabilities —
+// what tools/plugins/connectors/permissions/API keys it has available — as distinct from
+// ordinary host/machine recon. This is a BEHAVIORAL BREADTH-OF-ENUMERATION detection:
+// it requires activity spanning at least 3 distinct discovery categories from processes
+// spawned BY the same AI-agent process (matched via InitiatingProcessFileName/
+// InitiatingProcessCommandLine, not by coincidental text overlap in one command line) on
+// the same device within a 10-minute window. It is NOT a single-command signature — one
+// isolated 'ipconfig' or 'pip list' alone will not trigger this rule, and generic file-
+// listing/env commands are scoped to tool/plugin/MCP-path context or explicit enumeration
+// syntax so routine agent file operations (e.g. listing a user's requested directory) don't
+// get miscounted as capability discovery.
+let lookback = 1d;
+let timeframe = 10m;
+let MinCategories = 3;
+let AgentMarkers = dynamic(["claude", "cursor", "aider", "autogpt", "langchain"]);
+DeviceProcessEvents
+| where TimeGenerated > ago(lookback)
+// Require the enumeration command to be a CHILD of the AI-agent process (not just a
+// coincidental text match in the same command line) to eliminate the prior rule's
+// biggest false-positive/false-negative source.
+| where InitiatingProcessFileName has_any (AgentMarkers) or InitiatingProcessCommandLine has_any (AgentMarkers)
+| extend DiscoveryCategory = case(
+    ProcessCommandLine has_any ("ipconfig", "Get-NetIPConfiguration", "netsh interface", "ifconfig", "ip addr"), "Network",
+    ProcessCommandLine has_any ("mcp.json", "claude_desktop_config.json", "settings.json", ".cursor", ".claude", ".vscode")
+        or ((ProcessCommandLine has_any ("Get-ChildItem", "dir", "ls", "find", "tree")) and (ProcessCommandLine has_any ("plugins", "connectors", "extensions", "tools", "mcp"))), "FileDiscovery",
+    ProcessCommandLine has_any ("pip list", "pip freeze", "npm list", "npm ls", "code --list-extensions", "Get-InstalledModule", "Get-Package", "conda list", "gem list"), "SoftwareDiscovery",
+    ProcessCommandLine has_any ("systeminfo", "Get-ComputerInfo", "uname -a", "sw_vers", "hostnamectl", "printenv", "Get-ChildItem env:", "Get-ChildItem Env:\\"), "SystemDiscovery",
+    "Other"
+)
+| where DiscoveryCategory != "Other"
+| summarize DistinctCategories = dcount(DiscoveryCategory), Categories = make_set(DiscoveryCategory), Events = count(), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by DeviceId, InitiatingProcessFileName, bin(TimeGenerated, timeframe)
+| where DistinctCategories >= MinCategories
