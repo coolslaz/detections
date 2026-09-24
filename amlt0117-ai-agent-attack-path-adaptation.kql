@@ -1,0 +1,101 @@
+// AI Agent Attack-Path Adaptation — Rapid Technique Switching After Failed Access
+// ATLAS AML.T0117 (Autonomous Attack-Path Adaptation) | ATT&CK T1190, T1210, T1078
+// Author: Arnold Chan
+//
+// NOTE ON NOVELTY: unlike simple IOC/tool-signature rules, this is a sequential
+// failure-then-pivot CORRELATION analytic across four stages tied to a single
+// process instance (same InitiatingProcessId lineage, not just DeviceId
+// coincidence). The distinguishing signal is machine-speed adaptation: a human
+// operator manually trying SMB, then SSH, then HTTP, then credential auth, then
+// pivoting to a new target takes minutes-to-hours with research/lookup pauses.
+// An autonomous agent compresses the same failure->pivot sequence into a tight,
+// near-continuous burst (whole chain capped at 20 minutes here). This makes the
+// rule inherently harder to write and more novel than the other rules in this
+// series, which mostly key on single-event indicators or short recon bursts.
+//
+// FP lessons applied from the rest of the series:
+//  - identify the agent by EXACT process-image-name match on the INITIATING
+//    process (InitiatingProcessFileName in~ known agent binaries), not on any
+//    process in the tree, so this targets agent-driven adaptation specifically
+//    and not ordinary human pentest-tool usage;
+//  - link every stage by EXACT InitiatingProcessId AND InitiatingProcessCreationTime
+//    (the same process instance, not just a reused PID -- Windows PIDs recycle
+//    quickly on busy hosts, so PID-only joins across a 1-day lookback can silently
+//    stitch together two unrelated agent sessions that happen to share a PID);
+//  - tight per-stage sub-windows (5 minutes) and a tight overall chain cap;
+//  - Stage 4's "new target" is restricted to private/internal destinations on the
+//    same attack-relevant service ports, so the agent's own routine outbound calls
+//    to cloud APIs/telemetry endpoints (which would otherwise satisfy "any new IP
+//    within 5 minutes" almost continuously) can no longer masquerade as a pivot.
+let AgentBinaries = dynamic(['claude.exe','cursor.exe','chatgpt.exe','githubcopilot.exe','copilot.exe']);
+let CredTools = dynamic(['hydra.exe','crackmapexec.exe','medusa.exe','ncrack.exe','evil-winrm.ps1']);
+let lookback = 1d;
+// Stage 1: failed connection attempts by the agent process, classified by service category
+let FailedServiceAttempts =
+    DeviceNetworkEvents
+    | where Timestamp > ago(lookback)
+    | where InitiatingProcessFileName in~ (AgentBinaries)
+    | where ActionType in ('ConnectionFailed','ConnectionBlocked')
+    | extend ServiceCategory = case(
+        RemotePort in (445, 139), 'SMB',
+        RemotePort == 22, 'SSH',
+        RemotePort in (80, 443), 'HTTP',
+        RemotePort == 3389, 'RDP',
+        RemotePort in (5985, 5986), 'WinRM',
+        '')
+    | where ServiceCategory != ''
+    | project DeviceId, DeviceName, InitiatingProcessId, InitiatingProcessCreationTime, InitiatingProcessFileName, RemoteIP, RemotePort, ServiceCategory, FailTime = Timestamp;
+// Stage 2: same process instance failing against >=3 distinct service categories within a 5-minute bin
+let MultiProtocolBurst =
+    FailedServiceAttempts
+    | summarize DistinctServices = dcount(ServiceCategory),
+                Services = make_set(ServiceCategory),
+                DistinctTargets = dcount(RemoteIP),
+                TargetsAttempted = make_set(RemoteIP),
+                FirstFail = min(FailTime),
+                LastFail = max(FailTime)
+              by DeviceId, DeviceName, InitiatingProcessId, InitiatingProcessCreationTime, InitiatingProcessFileName, bin(FailTime, 5m)
+    | where DistinctServices >= 3;
+// Stage 3: credential attempt (interactive/remote logon OR credential-attack tool) by the same process instance shortly after the burst
+let CredLogons =
+    DeviceLogonEvents
+    | where Timestamp > ago(lookback)
+    | where InitiatingProcessFileName in~ (AgentBinaries)
+    | where LogonType in ('Network','RemoteInteractive','Batch')
+    | where ActionType in ('LogonFailed','LogonSuccess')
+    | project DeviceId, InitiatingProcessId, InitiatingProcessCreationTime, CredTime = Timestamp, CredEvidence = strcat('Logon:', LogonType), CredResult = ActionType, AccountName;
+let CredTools_ =
+    DeviceProcessEvents
+    | where Timestamp > ago(lookback)
+    | where InitiatingProcessFileName in~ (AgentBinaries)
+    | where FileName in~ (CredTools)
+    | project DeviceId, InitiatingProcessId, InitiatingProcessCreationTime, CredTime = Timestamp, CredEvidence = strcat('Tool:', FileName), CredResult = 'ToolExecuted', AccountName;
+let CredentialAttempt = CredLogons | union CredTools_;
+// Stage 4: pivot to a genuinely new, previously-untouched target from the same process instance shortly after the credential attempt
+let TargetSwitchCandidates =
+    DeviceNetworkEvents
+    | where Timestamp > ago(lookback)
+    | where InitiatingProcessFileName in~ (AgentBinaries)
+    | where ActionType in ('ConnectionSuccess','ConnectionFailed')
+    // Tightened: the pivot must be genuine lateral-movement-relevant traffic, not the agent's own
+    // routine outbound API/telemetry calls to cloud services (which would otherwise satisfy "any
+    // new IP within 5 minutes" almost continuously). Require an internal/private destination on
+    // one of the same attack-relevant service ports.
+    | where ipv4_is_private(RemoteIP)
+    | where RemotePort in (445, 139, 22, 80, 443, 3389, 5985, 5986)
+    | project DeviceId, InitiatingProcessId, InitiatingProcessCreationTime, NewTargetIP = RemoteIP, NewTargetTime = Timestamp;
+// Chain the stages: strict causal ordering + tight overall time cap
+MultiProtocolBurst
+| join kind=inner (CredentialAttempt) on DeviceId, InitiatingProcessId, InitiatingProcessCreationTime
+| where CredTime > LastFail and CredTime <= LastFail + 5m
+| join kind=inner (TargetSwitchCandidates) on DeviceId, InitiatingProcessId, InitiatingProcessCreationTime
+| where NewTargetTime > CredTime and NewTargetTime <= CredTime + 5m
+| where not(set_has_element(TargetsAttempted, NewTargetIP))
+| extend ChainDurationMinutes = datetime_diff('minute', NewTargetTime, FirstFail)
+| where FirstFail <= LastFail and LastFail <= CredTime and CredTime <= NewTargetTime
+| where ChainDurationMinutes <= 20
+| project DeviceId, DeviceName, AccountName, InitiatingProcessFileName, DistinctServices, Services, FirstFail, LastFail, CredTime, CredEvidence, NewTargetIP, NewTargetTime, ChainDurationMinutes
+| sort by ChainDurationMinutes asc
+// Severity: High
+// MITRE ATT&CK: T1190 (Exploit Public-Facing Application), T1210 (Exploitation of Remote Services), T1078 (Valid Accounts)
+// MITRE ATLAS: AML.T0117 (Autonomous Attack-Path Adaptation)
