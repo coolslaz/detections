@@ -1,0 +1,34 @@
+// T1136.001 - Create Account: Local Account, initiated by AI agent tooling
+let agentTools = dynamic(["claude", "claude-code", "cursor", "copilot", "gh-copilot", "autogpt", "langchain", "langgraph", "ollama", "aider", "continue", "open-interpreter", "interpreter", "autogen", "crewai", "chatgpt"]);
+let AgentAccountCreationProcess =
+    DeviceProcessEvents
+    | where InitiatingProcessFileName has_any (agentTools) or InitiatingProcessFolderPath has_any (agentTools)
+    | where (ProcessCommandLine has "net user" and ProcessCommandLine has "/add")
+        or ProcessCommandLine has "New-LocalUser"
+        or ProcessCommandLine has "useradd"
+        or ProcessCommandLine has "adduser"
+        or ProcessCommandLine has "dscl . -create"
+        or ProcessCommandLine has "dscl . create"
+        or ProcessCommandLine has "sysadminctl -addUser"
+    | project Timestamp, DeviceId, DeviceName, AccountName, InitiatingProcessFileName, CreationCommandLine = InitiatingProcessCommandLine;
+let ConfirmedAccountCreation =
+    SecurityEvent
+    | where EventID == 4720
+    | project EventTime = TimeGenerated, Computer, TargetAccount, SubjectAccount;
+let AdminGroupAdditions =
+    SecurityEvent
+    | where EventID == 4732
+    | where TargetAccount has "Administrators" or MemberName has "Administrators"
+    | project EscTime = TimeGenerated, EscComputer = Computer, AddedMember = MemberName;
+AgentAccountCreationProcess
+| join kind=inner (ConfirmedAccountCreation) on $left.DeviceName == $right.Computer
+| where EventTime between (Timestamp .. (Timestamp + 5m))
+| where CreationCommandLine has TargetAccount
+| join kind=leftouter (AdminGroupAdditions) on $left.DeviceName == $right.EscComputer
+| where isempty(EscTime) or EscTime between (EventTime .. (EventTime + 5m))
+| where isempty(EscTime) or AddedMember =~ TargetAccount
+| summarize AddedToAdminGroup = max(isnotempty(EscTime)) by Timestamp, DeviceName, AccountName, InitiatingProcessFileName, CreationCommandLine, TargetAccount
+| extend Severity = iff(AddedToAdminGroup, "High", "Medium")
+| project Timestamp, DeviceName, AccountName, InitiatingProcessFileName, CreationCommandLine, TargetAccount, AddedToAdminGroup, Severity
+| order by Timestamp desc
+// false_positives: Correlation now ties the agent's process command line to the confirmed 4720 account-creation event by requiring the TargetAccount name to actually appear in CreationCommandLine, preventing false correlation with unrelated account-creation events on a busy host in the same time window. Admin-group escalation correlation now uses an exact case-insensitive match on AddedMember rather than substring containment, preventing false positives from unrelated member names that merely contain the target account name as a token, and results are collapsed to one row per account-creation event to avoid duplicate fan-out from unrelated group-addition events on the same computer. Legitimate IT/DevOps provisioning scripts run by an agent under an approved change ticket are still expected to trigger this rule; triage alerts against change records rather than assuming malicious intent.
