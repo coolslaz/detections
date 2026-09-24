@@ -1,0 +1,91 @@
+// Title: AI Targeted Cloaking — Same URL Returning Different Content to AI and Human Clients
+// Author: Arnold Chan
+// Severity: Medium (size-based fallback path is inherently noisy; hash-based path is materially higher confidence)
+// MITRE ATLAS: AML.T0134 (AI Targeted Cloaking)
+// MITRE ATT&CK (loose conceptual bridge only — there is NO exact ATT&CK match for AI-targeted cloaking):
+//   T1036 (Masquerading) — the content masquerades as benign to non-AI clients
+//   T1027 (Obfuscated Files or Information) — potentially different/obfuscated material served to AI crawlers/agents
+//
+// IMPORTANT DATA-SOURCE CAVEAT:
+// Standard EDR/endpoint telemetry (e.g. DeviceNetworkEvents) does NOT retain HTTP response bodies, sizes, or
+// content hashes, so this technique is NOT observable from endpoint data. This is a content-diffing behavioral
+// analytic that REQUIRES proxy, WAF, or secure web gateway (SWG) telemetry with response metadata.
+//
+// This rule is built against Microsoft Sentinel's ASIM Web Session normalization (the _Im_WebSession unifying
+// parser / ASimWebSessionLogs normalized schema) so it works across whatever proxy/WAF/SWG connector the org has
+// mapped into ASIM (Zscaler, Netskope, Squid, Fortinet, Palo Alto, Application Gateway, etc.), rather than
+// hardcoding one vendor's raw schema. VERIFY exact field names against your deployed ASIM parser version —
+// conceptual fields needed:
+//   TimeGenerated / EventStartTime  - event time
+//   Url                             - requested URL
+//   HttpUserAgent                   - client user-agent string
+//   HttpStatusCode                  - response status
+//   a response-size field (name varies by parser version, e.g. HttpResponseBodyBytes / DstBytes)
+//   an optional response-hash field, if the source captures one (e.g. via ICAP/DLP integration) — falls back
+//   to size-based comparison when no hash field is populated.
+//
+// Tightened for false positives: a single flagged 4-hour window is often just SEO/SSR rendering
+// noise, a transient CDN/compression artifact, or A/B-test variance -- NOT a persistent cloaking
+// campaign. The rule now requires the divergence to RECUR: a genuine hash mismatch is kept as a
+// high-confidence single-hit signal, but the noisier size-based signal must recur across >=3
+// distinct 4-hour windows over an extended 7-day lookback before it surfaces.
+let lookback = 7d;
+let aiUaTokens = dynamic(['GPTBot','ChatGPT-User','CCBot','ClaudeBot','Claude-Web','anthropic-ai','PerplexityBot','Google-Extended','Bytespider','cohere-ai','OAI-SearchBot','meta-externalagent']);
+let genericBotTokens = dynamic(['bot','crawler','spider']);
+ASimWebSessionLogs
+| where TimeGenerated > ago(lookback)
+// verify field names below (HttpResponseBodyBytes/DstBytes and any hash field) against your parser version
+| extend ResponseSizeBytes = coalesce(column_ifexists('HttpResponseBodyBytes', long(null)), column_ifexists('DstBytes', long(null)))
+| extend ResponseHash = column_ifexists('HttpResponseHash', tostring(''))
+| where HttpStatusCode == 200
+| extend UserAgentClass = case(
+    HttpUserAgent has_any (aiUaTokens), 'AIClient',
+    HttpUserAgent has_any (dynamic(['Mozilla','Chrome','Safari','Firefox','Edg/'])) and not(HttpUserAgent has_any (genericBotTokens)) and not(HttpUserAgent has_any (aiUaTokens)), 'HumanBrowser',
+    'Other')
+| where UserAgentClass in ('AIClient','HumanBrowser')
+| extend NormalizedUrl = tostring(split(tostring(split(Url, '#')[0]), '?')[0])
+| summarize
+    RepSize = arg_max(TimeGenerated, ResponseSizeBytes),
+    RepHash = arg_max(TimeGenerated, ResponseHash),
+    SessionCount = count()
+  by NormalizedUrl, TimeWindow = bin(TimeGenerated, 4h), UserAgentClass
+| project NormalizedUrl, TimeWindow, UserAgentClass, RepSize = RepSize_ResponseSizeBytes, RepHash = RepHash_ResponseHash, SessionCount
+| evaluate pivot(UserAgentClass, arg_max(SessionCount, RepSize, RepHash), NormalizedUrl, TimeWindow)
+| extend
+    AISessionCount = AIClient_SessionCount,
+    HumanSessionCount = HumanBrowser_SessionCount,
+    AIResponseSize = AIClient_RepSize,
+    HumanResponseSize = HumanBrowser_RepSize,
+    AIResponseHash = AIClient_RepHash,
+    HumanResponseHash = HumanBrowser_RepHash
+| where AISessionCount >= 1 and HumanSessionCount >= 1
+| extend SizeDeltaPct = round(100.0 * abs(toreal(AIResponseSize) - toreal(HumanResponseSize)) / max_of(toreal(AIResponseSize), toreal(HumanResponseSize), 1.0), 2)
+| extend HashesPopulated = isnotempty(AIResponseHash) and isnotempty(HumanResponseHash)
+| extend HashMismatch = HashesPopulated and AIResponseHash != HumanResponseHash
+| extend SizeDeltaSignificant = (not(HashesPopulated)) and (SizeDeltaPct >= 50.0) and (AIResponseSize > 500) and (HumanResponseSize > 500)
+| where HashMismatch or SizeDeltaSignificant
+| extend CloakingSignal = iff(HashMismatch, 'HashMismatch', 'SizeDelta')
+// KNOWN LIMITATION / CAVEAT:
+// Some legitimate sites intentionally serve different content to crawlers for SEO/accessibility reasons
+// (server-side-rendered content for bots vs a client-rendered SPA shell for humans), which can also produce
+// large size deltas. This is expected background noise for the size-based fallback path (CloakingSignal ==
+// 'SizeDelta'). The hash-based path (CloakingSignal == 'HashMismatch') should be treated as materially higher
+// confidence. Triage any hits against the organization's known SEO/rendering behavior before escalation.
+// Persistence aggregation: collapse per-window hits to one row per URL and require recurrence for the
+// noisier size-based signal (a hash mismatch alone is sufficient, since it is already high confidence).
+| summarize
+    DistinctWindowsFlagged = dcount(TimeWindow),
+    HashMismatchHits = countif(CloakingSignal == 'HashMismatch'),
+    SizeDeltaHits = countif(CloakingSignal == 'SizeDelta'),
+    FirstFlagged = min(TimeWindow),
+    LastFlagged = max(TimeWindow),
+    MaxSizeDeltaPct = max(SizeDeltaPct),
+    TotalAISessions = sum(AISessionCount),
+    TotalHumanSessions = sum(HumanSessionCount),
+    SampleAIHash = any(AIResponseHash),
+    SampleHumanHash = any(HumanResponseHash)
+  by NormalizedUrl
+| where HashMismatchHits >= 1 or SizeDeltaHits >= 3
+| extend Confidence = iff(HashMismatchHits >= 1, 'High-HashMismatch', 'Medium-RecurringSizeDelta')
+| project NormalizedUrl, Confidence, DistinctWindowsFlagged, HashMismatchHits, SizeDeltaHits, FirstFlagged, LastFlagged, MaxSizeDeltaPct, TotalAISessions, TotalHumanSessions, SampleAIHash, SampleHumanHash
+| sort by Confidence asc, MaxSizeDeltaPct desc
