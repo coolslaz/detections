@@ -1,0 +1,22 @@
+// Detects AI coding assistants / LLM agent frameworks spawning a shell or interpreter to execute commands
+// Restricted to command lines carrying suspicious execution, download-cradle, recon/credential-access, or persistence/lateral-movement indicators
+// MITRE ATT&CK T1059 - Command and Scripting Interpreter
+DeviceProcessEvents
+| where ActionType == "ProcessCreate"
+| where InitiatingProcessFileName has_any ("claude", "cursor", "copilot", "autogpt", "langchain", "ollama", "aider", "open-interpreter", "autogen", "crewai", "chatgpt")
+    or InitiatingProcessFolderPath has_any ("claude", "cursor", "copilot", "autogpt", "langchain", "ollama", "aider", "open-interpreter", "autogen", "crewai", "chatgpt")
+| where FileName has_any ("cmd.exe", "powershell.exe", "pwsh.exe", "wscript.exe", "cscript.exe", "bash", "sh", "zsh")
+    or (FileName has_any ("python", "python3", "python.exe") and ProcessCommandLine has "-c")
+// Exclude bare interactive shell launches with no meaningful command-line arguments (normal IDE-integrated-terminal opens)
+| where not(FileName has_any ("cmd.exe", "powershell.exe", "pwsh.exe", "wscript.exe", "cscript.exe", "bash", "sh", "zsh")
+    and not(ProcessCommandLine has_any ("/c", "-c", "-Command", "-EncodedCommand", "-enc", ".ps1", ".vbs", ".js", ".py")))
+// Require at least one suspicious-execution, download-cradle, recon/credential-access, or persistence/lateral-movement indicator
+| where ProcessCommandLine has_any (
+    "-enc", "-EncodedCommand", "FromBase64String", "IEX", "Invoke-Expression",
+    "curl", "wget", "Invoke-WebRequest", "iwr", "certutil -urlcache", "bitsadmin", "DownloadString", "DownloadFile",
+    "whoami /all", "net user", "net localgroup", "reg query", "Get-Process lsass", "mimikatz",
+    "schtasks /create", "sc create", "wmic", "psexec", "reg add"
+    )
+| project Timestamp, DeviceName, AccountName, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, FileName, ProcessCommandLine
+| order by Timestamp desc
+// false_positives: Plain interactive terminal sessions opened by AI coding assistants (e.g. bare bash, cmd.exe, powershell.exe with no /c, -c, -Command, or script arguments) are expected and excluded by this rule. Remaining alerts should still be triaged, since agentic tools may legitimately run diagnostic commands (e.g. whoami, reg query, net user) that match some of these patterns.
