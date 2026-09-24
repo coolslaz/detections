@@ -1,0 +1,46 @@
+// Detects RMMCRAT PPID spoofing: smartscreen.exe (injected RMMCRAT host) spawns
+// child processes whose recorded parent is explorer.exe — the kernel-level result
+// of passing an explorer.exe PROCESS_CREATE_PROCESS handle to ZwCreateUserProcess.
+// Note: this rule catches the observable kernel artifact (creator vs. recorded parent
+// mismatch). PROCESS_CREATE_PROCESS handle opens on explorer.exe from unusual callers
+// are not directly surfaced in standard EDR process-creation telemetry.
+DeviceProcessEvents
+| where Timestamp > ago(1d)
+// Child process has explorer.exe recorded as parent
+| where InitiatingProcessFileName =~ "explorer.exe"
+// Require the recorded explorer.exe parent to be the legitimate system binary,
+// excluding malware masquerading under the explorer.exe process name
+| where InitiatingProcessFolderPath =~ @"C:\Windows\explorer.exe"
+// But the actual creator (grandparent / process that called CreateProcess) is smartscreen.exe
+// In Defender XDR, InitiatingProcessParentFileName is the grandparent
+| where InitiatingProcessParentFileName =~ "smartscreen.exe"
+// Exclude explorer.exe legitimately spawning children (this catches spoofed-parent cases
+// where smartscreen.exe is the true ancestor but explorer.exe is recorded as direct parent)
+| where FileName !in~ ("explorer.exe")
+// Exclude machine/service accounts - this is a user-desktop technique
+| where not(AccountName endswith "$")
+// Optionally scope to browser and shell processes commonly launched by RMMCRAT HVNC/shell
+| where FileName has_any ("chrome.exe", "msedge.exe", "brave.exe", "vivaldi.exe",
+                          "opera.exe", "firefox.exe", "chromium.exe", "yandex.exe",
+                          "cmd.exe", "powershell.exe", "conhost.exe")
+| extend Bucket = bin(Timestamp, 30m)
+// Aggregate to require a burst of at least 2 distinct spoofed-parent child spawns
+// within the 30-minute window per device/grandparent - a single spawn is more likely
+// a legitimate SmartScreen 'Open' click-through, RMMCRAT produces repeated automated spawns
+| summarize
+    SpawnCount = count(),
+    DistinctChildren = dcount(ProcessId),
+    DeviceName = any(DeviceName),
+    LatestChildFileName = arg_max(Timestamp, FileName)[1],
+    LatestChildCommandLine = arg_max(Timestamp, ProcessCommandLine)[1],
+    LatestAccountName = arg_max(Timestamp, AccountName)[1],
+    LatestAccountDomain = arg_max(Timestamp, AccountDomain)[1],
+    ChildFileNames = make_set(FileName, 20),
+    ChildCommandLines = make_set(ProcessCommandLine, 20),
+    ChildProcessIds = make_set(ProcessId, 20),
+    InitiatingProcessIds = make_set(InitiatingProcessId, 20),
+    FirstSeen = min(Timestamp),
+    LastSeen = max(Timestamp)
+    by DeviceId, InitiatingProcessParentFileName, Bucket
+| where DistinctChildren >= 2
+| order by LastSeen desc
