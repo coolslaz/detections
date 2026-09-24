@@ -1,0 +1,81 @@
+// Detection: MCP Tool Poisoning — Configuration Change Followed by Unexpected Tool Execution
+// ATLAS AML.T0110 (AI Agent Tool Poisoning) — covers poisoned tool definitions/instructions, malicious implementation,
+// and runtime response manipulation; ATLAS has documented real MCP/tool-related exfiltration cases.
+// ATT&CK: T1195.002 (Compromise Software Supply Chain), T1565.001 (Stored Data Manipulation), T1059 (Command and Scripting Interpreter)
+// Severity: High
+// Author: Arnold Chan
+// This is a lineage- and rarity-based multi-stage correlation, not a single-IOC signature.
+// Tightened for false positives:
+//   1) The tool/server process (stage 2) must be launched BY an AI-agent application
+//      (process lineage), eliminating the large volume of unrelated node/npm/python activity
+//      on dev/build machines that has nothing to do with an AI agent.
+//   2) Every downstream stage is linked by EXACT ProcessId/InitiatingProcessId lineage, not
+//      DeviceId + filename repetition -- this removes the cross-product false-positive risk
+//      where unrelated same-named processes on a busy device could coincidentally satisfy a
+//      loose DeviceId-only join within the time window.
+//   3) Each stage transition has its own tight sub-window (config->launch <=10m, launch->script
+//      <=5m, script->connection <=10m) instead of one loose 20-minute umbrella across all stages.
+//   4) The rarity baseline excludes common package-registry/source-hosting domains
+//      (npm/PyPI/GitHub) that legitimate first-time tool installs routinely touch and would
+//      otherwise look "rare".
+let lookback = 1d;
+let AgentMarkers = dynamic(['claude', 'cursor', 'code', 'Code.exe', 'electron']);
+let BenignInfraDomains = dynamic(['registry.npmjs.org', 'pypi.org', 'files.pythonhosted.org', 'github.com', 'raw.githubusercontent.com', 'objects.githubusercontent.com']);
+let ConfigMod =
+    DeviceFileEvents
+    | where Timestamp > ago(lookback)
+    | where (FileName has_any ('mcp.json', 'claude_desktop_config.json')
+              or FolderPath has_any ('.cursor', '.claude', '\\mcp\\', '/mcp/'))
+    | where ActionType in ('FileCreated','FileModified','FileRenamed')
+    | project DeviceId, ConfigModTime = Timestamp;
+let ToolProcess =
+    DeviceProcessEvents
+    | where Timestamp > ago(lookback)
+    | where FileName in~ ('node.exe','node','npx.exe','npx','python.exe','python3','python')
+    // Tightened: the tool/server process must be launched BY the AI-agent application itself
+    // (lineage, not text coincidence) -- removes the large volume of unrelated node/npm/python
+    // activity on dev/build machines that has nothing to do with an AI agent.
+    | where InitiatingProcessFileName has_any (AgentMarkers)
+    | project DeviceId, DeviceName, AccountName, LaunchTime = Timestamp, ToolCommandLine = ProcessCommandLine, ToolProcessId = ProcessId;
+// Pair each tool launch with the most recent qualifying config change on the same device that
+// happened shortly before it (<=10m) -- replaces the old DeviceId-only cross join, which could
+// pair an unrelated config edit from hours earlier with any later, unrelated tool launch.
+let PoisonedLaunch =
+    ToolProcess
+    | join kind=inner (ConfigMod) on DeviceId
+    | where ConfigModTime <= LaunchTime and datetime_diff('minute', LaunchTime, ConfigModTime) <= 10
+    | summarize ConfigModTime = arg_max(ConfigModTime, *) by DeviceId, LaunchTime, ToolCommandLine, ToolProcessId, DeviceName, AccountName;
+let ScriptChild =
+    DeviceProcessEvents
+    | where Timestamp > ago(lookback)
+    | where FileName in~ ('powershell.exe','pwsh.exe','bash','sh','cmd.exe')
+    | project DeviceId, ScriptTime = Timestamp, ScriptCommandLine = ProcessCommandLine, ScriptProcessId = ProcessId, ScriptParentId = InitiatingProcessId;
+// Exact parent-child lineage via ProcessId, not filename repetition: the script's INITIATING
+// process must be the SPECIFIC tool-process instance already tied to a poisoned config change.
+let ChainToScript =
+    PoisonedLaunch
+    | join kind=inner (ScriptChild) on DeviceId
+    | where ScriptParentId == ToolProcessId
+    | where ScriptTime >= LaunchTime and datetime_diff('minute', ScriptTime, LaunchTime) <= 5;
+let DomainBaseline =
+    DeviceNetworkEvents
+    | where Timestamp > ago(30d)
+    | summarize DomainPrevalence = dcount(DeviceId) by RemoteUrl;
+let ExternalConn =
+    DeviceNetworkEvents
+    | where Timestamp > ago(lookback)
+    | where ActionType == 'ConnectionSuccess'
+    | project DeviceId, ConnTime = Timestamp, RemoteUrl, RemoteIP, ConnInitiatingProcessId = InitiatingProcessId;
+// Connection must be initiated by the SAME script-process instance (exact ProcessId), and the
+// destination must be genuinely rare AND not a common package-registry/source-hosting domain
+// that legitimate first-time tool installs routinely touch.
+ChainToScript
+| join kind=inner (ExternalConn) on DeviceId
+| where ConnInitiatingProcessId == ScriptProcessId
+| where ConnTime >= ScriptTime and datetime_diff('minute', ConnTime, ScriptTime) <= 10
+| where RemoteUrl !in~ (BenignInfraDomains)
+| join kind=inner (DomainBaseline) on RemoteUrl
+| where DomainPrevalence <= 2
+| extend ChainDurationMinutes = datetime_diff('minute', ConnTime, ConfigModTime)
+| project DeviceId, DeviceName, AccountName, ConfigModTime, LaunchTime, ProcessCommandLine = ToolCommandLine, ScriptTime, ScriptCommandLine, ConnTime, RemoteUrl, DomainPrevalence, ChainDurationMinutes
+| sort by ConnTime desc
