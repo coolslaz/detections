@@ -1,0 +1,54 @@
+// AI agent tooling makes outbound call to an LLM/AI provider API, then the SAME process
+// spawns a shell/script interpreter shortly after - converting a model response
+// (including a prompt-injected or hallucinated one) directly into local command execution.
+// High severity is reserved for command patterns with little legitimate agent-assisted dev-workflow use:
+// classic download-cradle-to-execute (piped into a shell/interpreter, targeting known exfil/relay hosts,
+// or a raw IP-literal URL), LOLBin download utilities (certutil -urlcache, bitsadmin), credential/account-
+// targeted recon (net user/localgroup, lsass, mimikatz), and persistence primitives that are inherently
+// abnormal (schtasks /create, sc create, psexec, wmic process call create or startup/run-key verbs,
+// reg add against a Run/RunOnce key). Routine bare curl/wget/whoami/reg query/wmic inventory use stays
+// Informational alongside the base correlation.
+// MITRE ATT&CK: T1071.001 (Application Layer Protocol: Web Protocols), T1059 (Command and Scripting Interpreter)
+let aiAgentTools = dynamic(["claude", "claude-code", "cursor", "copilot", "gh-copilot", "autogpt", "langchain", "langgraph", "ollama", "aider", "continue", "open-interpreter", "interpreter", "autogen", "crewai", "chatgpt"]);
+let aiProviderDomains = dynamic(["api.openai.com", "api.anthropic.com", "generativelanguage.googleapis.com", "api.cohere.ai", "openrouter.ai", "api.mistral.ai", "api.x.ai", "api.together.ai", "api.groq.com", "bedrock-runtime"]);
+let downloadCradlePipeTargets = dynamic(["| bash", "| sh", "| iex", "| powershell"]);
+let exfilRelayDestinations = dynamic(["transfer.sh", "file.io", "anonfiles", "mega.nz", "wetransfer", "pastebin.com", "gofile.io", "webhook.site", "ngrok", "requestbin", "pipedream"]);
+let NetworkCalls = DeviceNetworkEvents
+| where ActionType == "ConnectionSuccess"
+| where InitiatingProcessFileName has_any (aiAgentTools) or InitiatingProcessFolderPath has_any (aiAgentTools)
+| where RemoteUrl has_any (aiProviderDomains)
+| project DeviceId, InitiatingProcessId, NetTimestamp = Timestamp, RemoteUrl, InitiatingProcessFileName, InitiatingProcessCommandLine;
+let ShellSpawns = DeviceProcessEvents
+| where ActionType == "ProcessCreate"
+| where InitiatingProcessFileName has_any (aiAgentTools) or InitiatingProcessFolderPath has_any (aiAgentTools)
+| where FileName has_any ("cmd.exe", "powershell.exe", "pwsh.exe", "bash", "sh", "zsh", "wscript.exe", "cscript.exe")
+    or (FileName has_any ("python.exe", "python3", "python") and ProcessCommandLine has "-c")
+| project DeviceId, InitiatingProcessId, ProcTimestamp = Timestamp, FileName, ProcessCommandLine, DeviceName, AccountName;
+NetworkCalls
+| join kind=inner (ShellSpawns) on DeviceId, InitiatingProcessId
+| where ProcTimestamp > NetTimestamp and ProcTimestamp <= NetTimestamp + 2m
+| extend IsDownloadUtility = ProcessCommandLine has_any ("curl", "wget", "Invoke-WebRequest", "iwr", "DownloadString", "DownloadFile")
+| extend IsDownloadCradle = IsDownloadUtility and (
+    ProcessCommandLine has_any (downloadCradlePipeTargets)
+    or ProcessCommandLine has_any (exfilRelayDestinations)
+    or ProcessCommandLine matches regex @"https?://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+)
+| extend IsLolbinDownload = (ProcessCommandLine has "certutil" and ProcessCommandLine has "-urlcache") or ProcessCommandLine has "bitsadmin"
+| extend IsCredentialRecon = ProcessCommandLine has_any ("net user", "net localgroup", "lsass", "mimikatz")
+| extend IsWmicPersistence = ProcessCommandLine has "wmic" and (ProcessCommandLine has "process call create" or ProcessCommandLine has_any ("startup", "run key", "currentversion\\run"))
+| extend IsRegAddPersistence = ProcessCommandLine has "reg add" and ProcessCommandLine has_any ("\\Run\\", "\\RunOnce\\", "CurrentVersion\\Run")
+| extend IsSchtasksCreate = ProcessCommandLine has "schtasks" and ProcessCommandLine has "/create"
+| extend FlaggedSuspiciousCommand = (
+    ProcessCommandLine has_any ("-enc", "-EncodedCommand", "FromBase64String", "IEX", "Invoke-Expression")
+    or IsDownloadCradle
+    or IsLolbinDownload
+    or IsCredentialRecon
+    or IsSchtasksCreate
+    or ProcessCommandLine has "sc create"
+    or ProcessCommandLine has "psexec"
+    or IsWmicPersistence
+    or IsRegAddPersistence
+)
+| extend Severity = iff(FlaggedSuspiciousCommand, "High", "Informational")
+| project Timestamp = ProcTimestamp, DeviceName, AccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteUrl, FileName, ProcessCommandLine, FlaggedSuspiciousCommand, Severity
+| order by Timestamp desc
