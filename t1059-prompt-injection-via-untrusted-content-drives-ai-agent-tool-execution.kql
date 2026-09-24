@@ -1,0 +1,28 @@
+// NOTE: AIAgentAuditLogs_CL is a PLACEHOLDER custom Log Analytics table representing an org's
+// AI agent tracing/audit log export (e.g. from LangSmith, Langfuse, or custom middleware).
+// There is no standardized schema for AI agent observability across frameworks (Claude Code,
+// Cursor, Copilot CLI, LangChain/LangGraph, AutoGPT, Aider, Continue, OpenInterpreter, AutoGen,
+// CrewAI, etc.) - adapt table/field names (TimeGenerated, SessionId_s, AgentName_s, ToolName_s,
+// ToolInput_s, UserPrompt_s, ContentSource_s, PromptInjectionFlag_b, DeviceName_s, AccountName_s)
+// to your actual agent-observability export.
+let lookback = 2m;
+let shellToolPattern = dynamic(["run_shell", "execute_command", "bash", "shell_exec", "python_exec", "terminal", "run_code"]);
+let FlaggedToolCalls =
+    AIAgentAuditLogs_CL
+    | where ToolName_s has_any (shellToolPattern)
+    | where PromptInjectionFlag_b == true
+    | where ContentSource_s in ('web_page','email','document','api_response','untrusted','tool_output')
+    | project TimeGenerated, SessionId_s, AgentName_s, ToolName_s, ToolInput_s, ContentSource_s, PromptInjectionFlag_b, DeviceName_s, AccountName_s;
+let SpawnedProcesses =
+    DeviceProcessEvents
+    | where InitiatingProcessFileName has_any (shellToolPattern) or InitiatingProcessFolderPath has_any (shellToolPattern)
+    | project Timestamp, DeviceName, AccountName, InitiatingProcessFileName, SpawnedProcessFileName = FileName, SpawnedProcessCommandLine = ProcessCommandLine;
+FlaggedToolCalls
+| join kind=inner (SpawnedProcesses) on $left.DeviceName_s == $right.DeviceName and $left.AccountName_s == $right.AccountName
+| where Timestamp > TimeGenerated and Timestamp <= TimeGenerated + lookback
+| extend Severity = case(
+    SpawnedProcessCommandLine has_any ("-enc", "-EncodedCommand", "FromBase64String", "IEX", "| bash", "| sh", "| iex", "net user", "lsass", "mimikatz", "schtasks /create", "sc create", "reg add"),
+    "High",
+    "Medium")
+| project Timestamp, DeviceName, AccountName, AgentName = AgentName_s, ToolName = ToolName_s, ToolInput = ToolInput_s, ContentSource = ContentSource_s, PromptInjectionFlag = PromptInjectionFlag_b, SpawnedProcessFileName, SpawnedProcessCommandLine, Severity
+| order by Timestamp desc
