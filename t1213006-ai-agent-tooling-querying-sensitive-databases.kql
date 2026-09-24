@@ -1,0 +1,34 @@
+// AI agent tooling (Claude Code, Cursor, Copilot CLI, LangChain/LangGraph, LlamaIndex, AutoGPT, Aider, Continue,
+// OpenInterpreter, AutoGen, CrewAI, generic text-to-SQL agents) performing SELECT/data-read operations against
+// sensitive-looking database content, or bulk-enumerating many distinct objects, via Azure SQL Database auditing.
+// NOTE: application_name_s is set arbitrarily by the calling application/driver and is a WEAK attribution signal.
+// Tune ai_agent_tokens to your org's actual agent framework connection-string / application-name conventions.
+// false_positives:
+//   - application_name_s matching is weak attribution; any process can set an arbitrary application name, so tune
+//     ai_agent_tokens to what your org's real agent frameworks/drivers actually send.
+//   - schema/metadata introspection (information_schema, sys.tables, sys.columns, sys.objects, SHOW/DESCRIBE) is
+//     explicitly excluded because agents routinely explore DB structure before running real queries; that
+//     exploration alone is not data access.
+//   - approved BI/reporting tools or ETL service principals performing legitimate broad SELECT * pulls or touching
+//     many sensitive-looking tables will trigger this; allowlist known service principals or application names.
+let ai_agent_tokens = dynamic(["claude", "cursor", "copilot", "langchain", "langgraph", "llamaindex", "autogpt", "aider", "openinterpreter", "autogen", "crewai"]);
+let sensitive_patterns = dynamic(["users", "customers", "accounts", "payments", "creditcard", "credit_card", "ssn", "password", "pii", "employees", "salary", "patients", "health", "medical"]);
+let introspection_patterns = dynamic(["information_schema", "sys.tables", "sys.columns", "sys.objects", "show tables", "describe "]);
+let SensitiveAccess = AzureDiagnostics
+| where Category == "SQLSecurityAuditEvents"
+| where ResourceProvider == "MICROSOFT.SQL"
+| where application_name_s has_any (ai_agent_tokens)
+| where succeeded_s == true or succeeded_s =~ "true" or succeeded_s == "1"
+| where action_name_s has_any (dynamic(["SELECT", "BATCH COMPLETED", "SQL BATCH COMPLETED", "EXECUTE"])) or action_id_s has_any (dynamic(["SL", "SELECT"]))
+| where not(statement_s has_any (introspection_patterns))
+| where statement_s has_any (sensitive_patterns) or (statement_s has "select *" and not(statement_s has "where"))
+| extend DetectionReason = "SensitiveDataAccess";
+let BulkEnumeration = SensitiveAccess
+| summarize DistinctObjects = dcount(object_name_s), DistinctDatabases = dcount(database_name_s) by server_principal_name_s, application_name_s, bin(TimeGenerated, 5m)
+| where DistinctObjects > 10
+| join kind=inner (SensitiveAccess) on server_principal_name_s, application_name_s
+| extend DetectionReason = "BulkSensitiveEnumeration";
+SensitiveAccess
+| union BulkEnumeration
+| project TimeGenerated, server_principal_name_s, application_name_s, client_ip_s, database_name_s, schema_name_s, object_name_s, statement_s, action_name_s, succeeded_s, DetectionReason
+| order by TimeGenerated desc
