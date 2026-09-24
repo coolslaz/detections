@@ -1,0 +1,106 @@
+// Title: AI Assistant Prompt-Link Abuse — External URL Launching Pre-Populated Agent Instructions
+// Author: Arnold Chan
+// Severity: High
+// MITRE ATLAS: AML.T0131 (Crafted AI Assistant Links) — the actual target of this technique is
+//   the AI assistant's context/session (a pre-populated prompt injected via URL query parameter),
+//   NOT merely the human clicking the link. The human click is only the delivery mechanism.
+// MITRE ATT&CK: T1566.002 (Spearphishing Link) — delivery vector, confirmed via EmailUrlInfo origin
+// MITRE ATT&CK: T1204.001 (Malicious Link) — user-execution step (the click itself)
+// This is a delivery-confirmed, session-corroborated multi-stage correlation designed to
+// distinguish genuine prompt-injection-via-link delivery from a user's own benign AI-assistant
+// bookmark/shared-conversation usage that happens to carry a similar query string.
+// Further tightened for false positives: generic single-word query parameters (q=, query=,
+// input=) are extremely common on these SAME domains for entirely legitimate deep-link sharing
+// (e.g. Perplexity and Microsoft Copilot both support pre-filled search/ask links via "q=").
+// Those generic parameters now only count when their decoded VALUE is long or contains
+// instruction-like language; prompt=/instructions=/system= remain high-signal on their own.
+let lookback = 1d;
+let aiDomains = dynamic(["chat.openai.com","chatgpt.com","claude.ai","copilot.microsoft.com","gemini.google.com","poe.com","perplexity.ai"]);
+let highSignalParams = @"(?i)[?&](prompt|instructions|system)=";
+let genericParamRegex = @"(?i)[?&](?:q|query|input)=([^&#]*)";
+let instructionKeywords = dynamic(["ignore", "disregard", "override", "act as", "you are", "system prompt", "forget previous", "bypass"]);
+// ---------------------------------------------------------------------------------------------
+// Stage 1: PromptLinkClick — a completed (not blocked/warned) click on an AI-assistant URL that
+// carries attacker-supplied prompt material in the query string.
+// ---------------------------------------------------------------------------------------------
+let PromptLinkClick =
+    UrlClickEvents
+    | where Timestamp > ago(lookback)
+    | where Url has_any (aiDomains)
+    | where IsClickedThrough == true or ActionType in ("ClickAllowed", "ClickedAllowed", "Allowed")
+    // Tightened: treat prompt=/instructions=/system= as high-signal on their own, but only treat
+    // the generic q=/query=/input= parameters as suspicious when their VALUE is long (a real
+    // injected instruction, not a short search phrase) or contains instruction-like language.
+    | extend HighSignalMatch = Url matches regex highSignalParams
+    | extend GenericParamValue = extract(genericParamRegex, 1, Url)
+    | extend GenericParamDecoded = iff(isnotempty(GenericParamValue), url_decode(GenericParamValue), "")
+    | extend GenericSuspicious = isnotempty(GenericParamValue) and (strlen(GenericParamDecoded) > 60 or GenericParamDecoded has_any (instructionKeywords))
+    | where HighSignalMatch or GenericSuspicious
+    | extend UrlDomain = tostring(parse_url(Url).Host)
+    | project ClickTime = Timestamp, NetworkMessageId, DeviceId, AccountUpn, Url, UrlDomain;
+// ---------------------------------------------------------------------------------------------
+// Stage 2: ExternalOrigin — confirm the clicked URL actually originated from an email
+// (T1566.002), not a self-typed/bookmarked link. PRIMARY high-confidence path.
+// ---------------------------------------------------------------------------------------------
+let ExternalOrigin =
+    PromptLinkClick
+    | join kind=inner (
+        EmailUrlInfo
+        | where isnotempty(NetworkMessageId)
+        | project NetworkMessageId, EmailUrl = Url
+    ) on NetworkMessageId
+    | where EmailUrl == Url or EmailUrl has UrlDomain;
+// ---------------------------------------------------------------------------------------------
+// Stage 3: CorroboratingSession — within 5 minutes AFTER the click, on the SAME DeviceId,
+// confirm a live session with the assistant via network connection to the same domain, or
+// via CloudAppEvents session activity against the assistant application.
+// ---------------------------------------------------------------------------------------------
+let NetworkCorroboration =
+    DeviceNetworkEvents
+    | where Timestamp > ago(lookback)
+    | project SessionTime = Timestamp, DeviceId, RemoteUrl, SessionSource = "Network";
+let CloudAppCorroboration =
+    CloudAppEvents
+    | where Timestamp > ago(lookback)
+    | project SessionTime = Timestamp, AccountId, Application, SessionSource = "CloudApp";
+// ---------------------------------------------------------------------------------------------
+// PRIMARY (high-confidence): requires confirmed email origin + corroborating session.
+// ---------------------------------------------------------------------------------------------
+let PrimaryNetworkPath =
+    ExternalOrigin
+    | join kind=inner (NetworkCorroboration) on DeviceId
+    | where SessionTime between (ClickTime .. ClickTime + 5m)
+    | where RemoteUrl has UrlDomain
+    | project AccountUpn, DeviceId, ClickTime, Url, UrlDomain, SessionTime, SessionSource, NetworkMessageId;
+let PrimaryCloudAppPath =
+    ExternalOrigin
+    | join kind=inner (CloudAppCorroboration) on $left.AccountUpn == $right.AccountId
+    | where SessionTime between (ClickTime .. ClickTime + 5m)
+    | where Application has_any (aiDomains) or UrlDomain has Application
+    | project AccountUpn, DeviceId, ClickTime, Url, UrlDomain, SessionTime, SessionSource, NetworkMessageId;
+PrimaryNetworkPath
+| union PrimaryCloudAppPath
+| summarize arg_min(SessionTime, *) by AccountUpn, DeviceId, ClickTime, Url
+| project AccountUpn, DeviceId, ClickTime, Url, UrlDomain, SessionTime, SessionSource, NetworkMessageId
+| sort by ClickTime desc
+// ---------------------------------------------------------------------------------------------
+// SECONDARY (LOWER-CONFIDENCE, non-email vectors) — commented out by default.
+// Use only if the organization also wants to catch prompt-link abuse delivered via chat apps,
+// QR codes, or other non-email external referrers. This path does NOT require the EmailUrlInfo
+// join, so it will surface more false positives from a user's own legitimate AI-assistant links
+// that happen to carry a similar query parameter. The PRIMARY rule above requires confirmed
+// email origin specifically to keep false positives low — enable this block only with that
+// tradeoff in mind.
+// let SecondaryNetworkPath =
+//     PromptLinkClick
+//     | join kind=inner (NetworkCorroboration) on DeviceId
+//     | where SessionTime between (ClickTime .. ClickTime + 5m)
+//     | where RemoteUrl has UrlDomain
+//     | project AccountUpn, DeviceId, ClickTime, Url, UrlDomain, SessionTime, SessionSource, NetworkMessageId;
+// let SecondaryCloudAppPath =
+//     PromptLinkClick
+//     | join kind=inner (CloudAppCorroboration) on $left.AccountUpn == $right.AccountId
+//     | where SessionTime between (ClickTime .. ClickTime + 5m)
+//     | where Application has_any (aiDomains) or UrlDomain has Application
+//     | project AccountUpn, DeviceId, ClickTime, Url, UrlDomain, SessionTime, SessionSource, NetworkMessageId;
+// SecondaryNetworkPath | union SecondaryCloudAppPath | sort by ClickTime desc
