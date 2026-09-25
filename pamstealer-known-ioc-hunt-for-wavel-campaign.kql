@@ -1,0 +1,39 @@
+// PamStealer / Wavel campaign known IOC hunt
+// Hashes:
+//   ed980f2fa0642b1a5ba0bca65f5b3baee8a7b3f5d149bf295aa4ac7a70b92cec - JXA dropper .scpt delivered inside Wavel.dmg
+//   484129123e8509acdc733d44e9a53c1cafa5afc1e2a28d49a55d0e209806d898 - pkgunpack ECIES/X25519 decrypt utility
+// Domains:
+//   wavel.app - fraudulent crypto wallet lure site
+//   y32me8.com - distribution host serving Wavel.dmg
+//   wavel.apple03cloudstore.com - C2 typosquat domain for pkgunpack download, DEK key exchange, and exfil upload
+// URLs: lure site, DMG download, pkgunpack fetch, encrypted payload fetch, DEK exchange, loader log, and asset upload endpoints
+// Author: Arnold Chan
+let KnownHashes = dynamic([
+    "ed980f2fa0642b1a5ba0bca65f5b3baee8a7b3f5d149bf295aa4ac7a70b92cec",
+    "484129123e8509acdc733d44e9a53c1cafa5afc1e2a28d49a55d0e209806d898"
+]);
+let KnownDomains = dynamic([
+    "wavel.app",
+    "y32me8.com",
+    "wavel.apple03cloudstore.com"
+]);
+let KnownUrls = dynamic([
+    "https://wavel.app/",
+    "https://y32me8.com/Wavel.dmg",
+    "https://wavel.apple03cloudstore.com/pkgunpack",
+    "https://wavel.apple03cloudstore.com/4e7a12e1c294f377/CoreUpdate.pkg.enc",
+    "https://wavel.apple03cloudstore.com/v1/loader/dek",
+    "https://wavel.apple03cloudstore.com/v1/loader/log",
+    "https://wavel.apple03cloudstore.com/v1/asset"
+]);
+let FileHashHits =
+    union DeviceFileEvents, DeviceProcessEvents
+    | where SHA256 in (KnownHashes) or InitiatingProcessSHA256 in (KnownHashes)
+    | project Timestamp, DeviceId, DeviceName, MatchType = "hash", Indicator = iif(SHA256 in (KnownHashes), SHA256, InitiatingProcessSHA256), FileName, FolderPath, ProcessCommandLine, AccountName;
+let NetworkHits =
+    DeviceNetworkEvents
+    | where RemoteUrl has_any (KnownDomains) or RemoteUrl in (KnownUrls)
+    | project Timestamp, DeviceId, DeviceName, MatchType = "network", Indicator = RemoteUrl, FileName = InitiatingProcessFileName, FolderPath = InitiatingProcessFolderPath, ProcessCommandLine = InitiatingProcessCommandLine, AccountName = InitiatingProcessAccountName;
+FileHashHits
+| union NetworkHits
+| sort by Timestamp desc
