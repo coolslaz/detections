@@ -1,0 +1,12 @@
+DeviceImageLoadEvents
+| where FileName =~ "FrameworkBase.dll"
+| where InitiatingProcessFileName =~ "ReportDump.exe"
+| project FBLoadTime = Timestamp, DeviceId, InitiatingProcessId, InitiatingProcessFileName, FrameworkBaseFolder = FolderPath
+| join kind=inner (
+    DeviceImageLoadEvents
+    | where FileName =~ "sdkcra.dll"
+    | where InitiatingProcessFileName =~ "ReportDump.exe"
+    | project SdkcraLoadTime = Timestamp, DeviceId, InitiatingProcessId, SdkcraFolder = FolderPath
+) on DeviceId, InitiatingProcessId
+| where SdkcraLoadTime between (FBLoadTime .. (FBLoadTime + 2m))
+| project DeviceId, InitiatingProcessId, FBLoadTime, SdkcraLoadTime, FrameworkBaseFolder, SdkcraFolder
