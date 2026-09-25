@@ -1,0 +1,20 @@
+// Detects the sequence following AvisLoader-related processes (loader binary, VLCAssistant launcher,
+// or auto.exe) executing operator shell-command tasks over its Tox C2 channel, optionally
+// followed by delivery of an additional payload file into a suspicious user-writable directory.
+let LoaderProcs = dynamic(["78324.exe","VLCAssistant.exe","auto.exe"]);
+let ShellHosts = dynamic(["cmd.exe","powershell.exe","powershell_ise.exe","pwsh.exe"]);
+let SuspiciousDirs = dynamic(["\\appdata\\","\\temp\\","\\local\\temp\\","\\windows\\temp\\"]);
+DeviceProcessEvents
+| where InitiatingProcessFileName in~ (LoaderProcs)
+| where FileName in~ (ShellHosts)
+| project Timestamp, DeviceId, ShellTime = Timestamp, InitiatingProcessFileName, FileName, ProcessCommandLine, InitiatingProcessCommandLine
+| join kind=leftouter (
+    DeviceFileEvents
+    | where InitiatingProcessFileName in~ (LoaderProcs)
+    | where ActionType in ("FileCreated", "FileModified")
+    | where FolderPath has_any (SuspiciousDirs)
+    | project DeviceId, DropTime = Timestamp, FileName, FolderPath, SHA256
+) on DeviceId
+| where isnull(DropTime) or DropTime between (ShellTime .. ShellTime + 10m)
+| project Timestamp, DeviceId, InitiatingProcessFileName, ProcessCommandLine, ShellTime, DropTime, FileName1, FolderPath, SHA256
+| sort by Timestamp desc
