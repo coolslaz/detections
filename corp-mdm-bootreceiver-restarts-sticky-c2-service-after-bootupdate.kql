@@ -1,0 +1,8 @@
+// Detects com.corp.mdm BootReceiver re-launching device registration and the sticky MdmService
+// after a boot-completed, vendor quick-boot, or package-replaced broadcast on Android devices
+DeviceProcessEvents
+| where FileName has "com.corp.mdm" or InitiatingProcessFileName has "com.corp.mdm" or ProcessCommandLine has "com.corp.mdm"
+| where ProcessCommandLine has_any ("BootReceiver", "MdmService") or FileName has_any ("BootReceiver", "MdmService")
+| where ProcessCommandLine has_any ("android.intent.action.BOOT_COMPLETED", "QUICKBOOT_POWERON", "PACKAGE_REPLACED", "MY_PACKAGE_REPLACED") or ProcessCommandLine has "START_STICKY"
+| project Timestamp, DeviceId, DeviceName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName
+| sort by Timestamp desc
