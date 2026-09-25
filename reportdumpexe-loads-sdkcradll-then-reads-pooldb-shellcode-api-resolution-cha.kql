@@ -1,0 +1,19 @@
+// Detects the SectopRAT loader sequence: ReportDump.exe sideloads sdkcra.dll (tampered IAT),
+// after which the shellcode resolves ~187 APIs via hardcoded hash pairs and uses the
+// resolved CreateFileW/ReadFile pointers to open and read pool.db for the next decryption stage.
+// The hash-based API resolution itself is not observable in EDR telemetry, so this rule anchors
+// on the observable file-access consequence of that resolution tied to the sideloaded module.
+let loads = DeviceImageLoadEvents
+| where FileName =~ "sdkcra.dll"
+| where InitiatingProcessFileName =~ "ReportDump.exe"
+| project DeviceId, DeviceName, LoadTime = Timestamp, LoadingProcessId = InitiatingProcessId, LoadingProcessCommandLine = InitiatingProcessCommandLine;
+let reads = DeviceFileEvents
+| where FileName =~ "pool.db"
+| where InitiatingProcessFileName =~ "ReportDump.exe"
+| project DeviceId, DeviceName, ReadTime = Timestamp, ReadProcessId = InitiatingProcessId, ReadCommandLine = InitiatingProcessCommandLine, FolderPath;
+loads
+| join kind=inner (reads) on DeviceId, DeviceName
+| where LoadingProcessId == ReadProcessId
+| where ReadTime between (LoadTime .. (LoadTime + 2m))
+| project DeviceId, DeviceName, LoadTime, ReadTime, LoadingProcessId, LoadingProcessCommandLine, FolderPath
+| sort by ReadTime desc
