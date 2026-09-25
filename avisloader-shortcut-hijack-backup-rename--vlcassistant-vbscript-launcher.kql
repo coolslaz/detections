@@ -1,0 +1,31 @@
+// Detects AvisLoader's shortcut persistence chain: an original .lnk shortcut is backed up with a .backup
+// extension AND a new/modified shortcut of the same base name plus a wscript.exe/cscript.exe launcher
+// referencing 'VLCAssistant' VBScript appear within a short time window on the same device.
+// Requires the full combination to avoid alerting on ordinary installer shortcut modifications.
+let lookback = 14d;
+let window = 1h;
+let shortcutFolders = dynamic([@"\Desktop\", @"\TaskBar\", @"\User Pinned\", @"\AppData\Roaming\Microsoft\Internet Explorer\Quick Launch\"]);
+let backups = DeviceFileEvents
+| where Timestamp > ago(lookback)
+| where FolderPath has_any (shortcutFolders)
+| where FileName endswith ".lnk.backup"
+| extend BaseName = tolower(replace_string(FileName, ".lnk.backup", ""))
+| project DeviceId, DeviceName, BackupTime = Timestamp, BaseName, BackupFile = FileName;
+let newShortcuts = DeviceFileEvents
+| where Timestamp > ago(lookback)
+| where FolderPath has_any (shortcutFolders)
+| where FileName endswith ".lnk"
+| extend BaseName = tolower(replace_string(FileName, ".lnk", ""))
+| project DeviceId, ShortcutTime = Timestamp, BaseName, ShortcutFile = FileName;
+let launchers = DeviceProcessEvents
+| where Timestamp > ago(lookback)
+| where FileName in~ ("wscript.exe", "cscript.exe")
+| where ProcessCommandLine has "VLCAssistant"
+| project DeviceId, LaunchTime = Timestamp, ProcessCommandLine;
+backups
+| join kind=inner newShortcuts on DeviceId, BaseName
+| where ShortcutTime between (BackupTime .. (BackupTime + window))
+| join kind=inner launchers on DeviceId
+| where LaunchTime between (BackupTime .. (BackupTime + window))
+| project DeviceId, DeviceName, BaseName, BackupFile, BackupTime, ShortcutFile, ShortcutTime, ProcessCommandLine, LaunchTime
+| order by BackupTime desc
