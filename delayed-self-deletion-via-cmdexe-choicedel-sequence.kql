@@ -1,0 +1,4 @@
+DeviceProcessEvents
+| where FileName =~ "cmd.exe"
+| where ProcessCommandLine has "choice /C Y /N /D Y /T 6" and ProcessCommandLine has "Del"
+| project Timestamp, DeviceId, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName, InitiatingProcessAccountName
