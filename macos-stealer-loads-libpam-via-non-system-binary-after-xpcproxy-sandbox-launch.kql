@@ -1,0 +1,26 @@
+// Detects a non-Apple binary launched via xpcproxy under a com.local sandbox identifier
+// that subsequently loads libpam.2.dylib -- consistent with PamStealer's fake auth-prompt
+// / fake 'damaged' dialog flow that harvests the password and validates it via PAM
+// Tightened: excludes common Apple system binaries that legitimately load libpam under
+// xpcproxy sandboxing, excludes Apple-trusted signed binaries via DeviceFileCertificateInfo,
+// and narrows the process-spawn-to-libpam-load correlation window from 5m to 2m.
+DeviceProcessEvents
+| where Timestamp > ago(14d)
+| where InitiatingProcessFileName =~ "xpcproxy"
+| where ProcessCommandLine has "com.local." and ProcessCommandLine !has "com.apple."
+| where FileName !in~ ("sudo", "login", "su", "sshd", "screensharingd", "corescreensharingd", "opendirectoryd", "authd", "remotemanagementd", "ARDAgent", "coreauthd", "sharingd", "loginwindow", "security")
+| project SpawnTime = Timestamp, DeviceId, DeviceName, SpawnedProcess = FileName, SpawnedProcessId = ProcessId, SpawnedProcessSHA1 = SHA1, ProcessCommandLine, InitiatingProcessFileName, AccountName
+| join kind=leftanti (
+    DeviceFileCertificateInfo
+    | where IsTrusted == true and Signer has "Apple"
+    | project SpawnedProcessSHA1 = SHA1
+) on SpawnedProcessSHA1
+| join kind=inner (
+    DeviceImageLoadEvents
+    | where Timestamp > ago(14d)
+    | where FileName =~ "libpam.2.dylib"
+    | where InitiatingProcessFolderPath !startswith "/usr/" and InitiatingProcessFolderPath !startswith "/System/"
+    | project LoadTime = Timestamp, DeviceId, InitiatingProcessId, InitiatingProcessFileName, InitiatingProcessFolderPath, LoadedDll = FileName
+) on DeviceId, $left.SpawnedProcessId == $right.InitiatingProcessId
+| where LoadTime between (SpawnTime .. SpawnTime + 2m)
+| project SpawnTime, LoadTime, DeviceId, DeviceName, AccountName, SpawnedProcess, ProcessCommandLine, InitiatingProcessFolderPath, LoadedDll
