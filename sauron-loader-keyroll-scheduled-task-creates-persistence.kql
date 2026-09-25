@@ -1,0 +1,14 @@
+DeviceProcessEvents
+| where FileName =~ "schtasks.exe"
+| where ProcessCommandLine has_any ("/create", "-create")
+| where ProcessCommandLine has "keyroll"
+| where ProcessCommandLine has @"\ProgramData\keyroll" or ProcessCommandLine has "rnpkeys.exe"
+| project Timestamp, DeviceId, DeviceName, AccountName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, TaskCreateReportId = ReportId
+| join kind=inner (
+    DeviceProcessEvents
+    | where FileName =~ "rnpkeys.exe" and FolderPath has @"\ProgramData\keyroll\"
+    | project DeviceId, RelaunchTime = Timestamp, RelaunchAccount = AccountName
+) on DeviceId
+| where RelaunchTime between (Timestamp .. Timestamp + 1d)
+| project Timestamp, DeviceId, DeviceName, AccountName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, RelaunchTime, RelaunchAccount, TaskCreateReportId
+| sort by Timestamp asc
