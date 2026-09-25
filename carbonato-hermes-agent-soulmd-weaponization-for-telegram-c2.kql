@@ -1,0 +1,34 @@
+// Detects CARBONATO botnet weaponizing the Hermes Agent framework by overwriting
+// SOUL.md with a malicious GH0ST persona, then executing commands via Telegram C2.
+// Key behaviors: file writes to /root/.hermes/SOUL.md or /opt/netd/SOUL.md,
+// hermes-agent process execution, and associated entry script activity.
+// Tightened for false positives: dropped the generic "entrypoint.sh" term (matches most
+// container entrypoint conventions) and scoped hermes-agent process launches to known
+// CARBONATO deployment paths or a SOUL.md reference, so unrelated/legitimate Hermes Agent
+// installs are not flagged.
+// Note: Telegram egress C2 channel is best correlated in NDR; this rule covers EDR-visible process/file activity.
+DeviceProcessEvents
+| where Timestamp > ago(1d)
+| where
+    // entry.sh driving the persona overwrite and agent launch - specific CARBONATO paths only
+    // ("entrypoint.sh" alone dropped: matches nearly all container entrypoint conventions)
+    (FileName in~ ("sh", "bash") and ProcessCommandLine has_any ("/opt/gh0st/entry.sh", "/opt/netd/SOUL.md"))
+    or
+    // hermes-agent process spawned from a known CARBONATO deployment path, or referencing the
+    // malicious SOUL.md persona - avoids flagging unrelated/legitimate Hermes Agent deployments
+    (FileName =~ "hermes-agent" and (FolderPath has_any ("/root/.hermes", "/opt/netd", "/opt/gh0st") or ProcessCommandLine has "SOUL.md"))
+    or
+    // cp of SOUL.md backup over the default persona
+    (FileName in~ ("cp", "sh", "bash") and ProcessCommandLine has_all ("SOUL.md", "/root/.hermes"))
+    or
+    // CARBONATO_API_KEY present in process environment/command line
+    ProcessCommandLine contains "CARBONATO_API_KEY"
+| extend TriggerReason = case(
+    FileName =~ "hermes-agent", "hermes-agent process launched",
+    ProcessCommandLine has "CARBONATO_API_KEY", "CARBONATO_API_KEY in command line",
+    ProcessCommandLine has_all ("SOUL.md", "/root/.hermes"), "SOUL.md persona overwrite",
+    ProcessCommandLine has_any ("/opt/gh0st/entry.sh", "/opt/netd/SOUL.md"), "entry.sh / netd SOUL.md reference",
+    "other"
+)
+| project Timestamp, DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, AccountName, FolderPath, TriggerReason
+| order by Timestamp desc
