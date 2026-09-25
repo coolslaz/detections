@@ -1,0 +1,18 @@
+// Detects GitHub Actions workflow runs on/after 2026-09-16 that resolved the compromised
+// actions-cool/issues-helper or actions-cool/maintain-one-comment action by the malicious
+// mutable tag (e.g. @v2.2.1) AND show evidence that GITHUB_TOKEN was referenced or exposed
+// within that run's logs/steps, meaning the run's token and workflow secrets were exposed
+// to attacker-controlled code.
+GitHubAuditLogPolling_CL
+| where TimeGenerated >= datetime(2026-09-16)
+| where Action_s in~ ("workflows.completed_workflow_run", "workflows.workflow_run", "actions.artifact_created") or isnotempty(Action_s)
+| where Data_s has_any ("actions-cool/issues-helper", "actions-cool/maintain-one-comment")
+| extend UsesTag = extract(@"actions-cool/(issues-helper|maintain-one-comment)@([\w\.\-]+)", 2, Data_s)
+| where isnotempty(UsesTag) and not(UsesTag matches regex @"^[0-9a-f]{40}$")
+// Restrict to the specific compromised release tag observed in this reactivation (v2.2.1)
+| where UsesTag =~ "v2.2.1"
+// Require explicit evidence GITHUB_TOKEN was referenced/exposed in the run's steps or logs,
+// not merely that the run used actions-cool at all.
+| where Data_s has "GITHUB_TOKEN"
+| project TimeGenerated, Actor_s, RepositoryName_s = coalesce(RepositoryName_s, Data_s), Action_s, UsesTag
+| extend Recommendation = "Rotate GITHUB_TOKEN and all secrets exposed to this workflow; review token scope"
