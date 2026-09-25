@@ -1,0 +1,27 @@
+// Detects the Sauron Loader GetFile/direct-URL payload staging and execution pattern:
+// a randomly named file dropped under %TEMP% is immediately loaded/executed by a
+// native OS binary or interpreter (rundll32, regsvr32, msiexec, cmd, powershell, wscript).
+// Scoped to hosts that already show the confirmed rnpkeys.exe/ProgramData\keyroll
+// side-load chain, since the raw temp-drop-then-exec pattern alone is extremely
+// common in legitimate installers/updaters and is not usable as a fleet-wide signal.
+let SauronInfectedHosts = 
+    DeviceProcessEvents
+    | where Timestamp > ago(1d)
+    | where FileName =~ "rnpkeys.exe" and FolderPath has @"\ProgramData\keyroll\"
+    | distinct DeviceId;
+DeviceFileEvents
+| where Timestamp > ago(1d)
+| where DeviceId in (SauronInfectedHosts)
+| where FolderPath has @"\AppData\Local\Temp" or FolderPath has @"\Windows\Temp"
+| where FileName matches regex @"^[A-Za-z0-9]{6,16}\.(exe|dll|ps1|vbs|js|sys)$"
+| project DeviceId, DropTime = Timestamp, StagedFile = FileName, FolderPath, SHA256
+| join kind=inner (
+    DeviceProcessEvents
+    | where Timestamp > ago(1d)
+    | where FileName in~ ("rundll32.exe","regsvr32.exe","msiexec.exe","cmd.exe","powershell.exe","wscript.exe")
+    | project DeviceId, ExecTime = Timestamp, Launcher = FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
+) on DeviceId
+| where ExecTime between (DropTime .. DropTime + 5m)
+| where ProcessCommandLine has StagedFile
+| project DropTime, ExecTime, DeviceId, StagedFile, FolderPath, SHA256, Launcher, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
+| sort by ExecTime desc
