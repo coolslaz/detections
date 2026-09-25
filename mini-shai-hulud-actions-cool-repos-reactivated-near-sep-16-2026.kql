@@ -1,0 +1,15 @@
+// Detects the GitHub audit-log sequence where the two specific actions-cool
+// repositories compromised in the Mini Shai-Hulud supply-chain attack
+// (previously disabled in May 2026) transition back to enabled/active status
+// within the September 16, 2026 reactivation window, re-exposing their
+// malicious release tags to downstream consumers.
+GitHubAuditLogPolling_CL
+| where repo_s in ("actions-cool/issues-helper", "actions-cool/maintain-one-comment")
+| where action_s has_any ("repo.disable", "repo.enable", "repo.access", "repo.archived", "repo.unarchived")
+| sort by repo_s asc, TimeGenerated asc
+| serialize
+| extend PrevAction = prev(action_s), PrevRepo = prev(repo_s), PrevTime = prev(TimeGenerated)
+| where repo_s == PrevRepo
+| where PrevAction has "disable" and action_s has_any ("repo.enable", "repo.access", "repo.unarchived")
+| where TimeGenerated between (datetime(2026-09-14) .. datetime(2026-09-19))
+| project RepositoryReactivated = repo_s, DisabledAt = PrevTime, ReEnabledAt = TimeGenerated, DisableAction = PrevAction, EnableAction = action_s, actor_s, org_s
