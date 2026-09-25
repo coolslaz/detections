@@ -1,0 +1,8 @@
+DeviceProcessEvents
+| where FileName =~ "ntdsutil.exe"
+| where ProcessCommandLine has "ac i ntds" and ProcessCommandLine has "ifm" and ProcessCommandLine has "create full"
+| where ProcessCommandLine has @"C:\Windows\Temp"
+// Exclude known enterprise backup/DC-maintenance agents that may legitimately invoke ntdsutil
+// during authorized system-state backup or DC promotion workflows. Tune to your approved tooling.
+| where InitiatingProcessFileName !in~ ("wbengine.exe", "VeeamAgent.exe", "cvd.exe", "beremote.exe")
+| project Timestamp, DeviceId, DeviceName, AccountName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, FolderPath
