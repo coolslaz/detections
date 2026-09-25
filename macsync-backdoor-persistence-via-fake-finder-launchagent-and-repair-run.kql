@@ -1,0 +1,28 @@
+// Detects MacSync backdoor persistence: com.apple.finder.agent LaunchAgent, .repair-run script,
+// GIT hook invocation, .zshrc injection, or correlated killing of notification agents
+// (BTMNotificationAgent, NotificationCenter, BackgroundTaskManagementAgent) to suppress user alerts
+let notif_kills = DeviceProcessEvents
+| where TimeGenerated > ago(14d)
+| where FileName in~ ("kill", "pkill", "killall") and ProcessCommandLine has_any ("BTMNotificationAgent", "NotificationCenter", "BackgroundTaskManagementAgent")
+| extend AgentName = case(
+    ProcessCommandLine has "BTMNotificationAgent", "BTMNotificationAgent",
+    ProcessCommandLine has "NotificationCenter", "NotificationCenter",
+    ProcessCommandLine has "BackgroundTaskManagementAgent", "BackgroundTaskManagementAgent",
+    "")
+| extend TimeBin = bin(TimeGenerated, 5m);
+let correlated_devices = notif_kills
+| summarize DistinctAgents = dcount(AgentName) by DeviceId, TimeBin
+| where DistinctAgents >= 2
+| project DeviceId, TimeBin;
+let notification_matches = notif_kills
+| join kind=inner (correlated_devices) on DeviceId, TimeBin
+| project TimeGenerated, DeviceId, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine;
+let main_matches = DeviceProcessEvents
+| where TimeGenerated > ago(14d)
+| where (FileName in~ ("launchctl", "defaults") and ProcessCommandLine has "com.apple.finder.agent")
+ or ProcessCommandLine has ".repair-run"
+ or (ProcessCommandLine has_any ("pre-commit", "post-checkout") and ProcessCommandLine has ".repair-run")
+ or ProcessCommandLine has "Library/Application Support/System"
+| project TimeGenerated, DeviceId, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine;
+union main_matches, notification_matches
+| order by TimeGenerated desc
