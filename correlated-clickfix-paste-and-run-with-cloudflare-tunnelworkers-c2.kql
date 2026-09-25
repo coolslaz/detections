@@ -1,0 +1,33 @@
+// Requires BOTH signals to correlate within a short window: (1) a short-lived, sibling-free paste-and-run execution pattern where explorer.exe (Run dialog / manual paste) directly launches a shell/interpreter, AND (2) a reference to a Cloudflare Quick Tunnel or Workers domain either in that process's command line or in an outbound connection made by that same process shortly after launch. Neither signal alone triggers an alert.
+let CFDomains = dynamic(["trycloudflare.com", "workers.dev"]);
+let lookback = 14d;
+let correlationWindow = 5m;
+// Paste-and-run heuristic: explorer.exe spawns a shell/interpreter, not via a browser, and no sibling child process was launched by the same explorer instance within a tight 2-minute bucket (i.e. this is a one-off manual paste-execute, not routine shell activity)
+let PasteRunEvents = DeviceProcessEvents
+| where Timestamp > ago(lookback)
+| where FileName in~ ("cmd.exe", "powershell.exe", "pwsh.exe", "mshta.exe", "wscript.exe", "cscript.exe", "curl.exe")
+| where InitiatingProcessFileName =~ "explorer.exe"
+| where not(InitiatingProcessFileName has_any ("chrome.exe", "msedge.exe", "firefox.exe", "iexplore.exe", "brave.exe"))
+| extend TimeBucket = bin(Timestamp, 2m)
+| summarize ChildCount = count(), arg_min(Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine, ProcessId, InitiatingProcessCommandLine) by DeviceId, InitiatingProcessId, TimeBucket
+| where ChildCount == 1
+| project PasteTime = Timestamp, DeviceId, DeviceName, AccountName, FileName, ProcessCommandLine, ProcessId, InitiatingProcessCommandLine;
+// Signal A: the launched process's own command line references the Cloudflare domain
+let CmdlineHits = PasteRunEvents
+| where ProcessCommandLine has_any (CFDomains)
+| extend MatchType = "commandline_reference", CorrelatedSignal = ProcessCommandLine;
+// Signal B: the launched process itself makes an outbound connection to the Cloudflare domain shortly after execution
+let NetworkHits = PasteRunEvents
+| join kind=inner (
+    DeviceNetworkEvents
+    | where Timestamp > ago(lookback)
+    | where RemoteUrl has_any (CFDomains)
+    | project NetTime = Timestamp, DeviceId, RemoteUrl, NetInitiatingProcessId = InitiatingProcessId
+) on DeviceId
+| where NetInitiatingProcessId == ProcessId
+| where NetTime between (PasteTime .. PasteTime + correlationWindow)
+| extend MatchType = "outbound_connection", CorrelatedSignal = RemoteUrl;
+CmdlineHits
+| union NetworkHits
+| project PasteTime, DeviceId, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessCommandLine, MatchType, CorrelatedSignal
+| sort by PasteTime desc
