@@ -1,0 +1,50 @@
+// Sauron Loader IOC sweep across Microsoft Defender Advanced Hunting tables: known malicious
+// SHA256 file hashes, C2 domains, and malicious C2 URLs from DCSO CyTec reporting.
+// The legitimate rnpkeys.exe hash is intentionally excluded — it is a benign Mozilla RNP
+// binary abused via side-loading, not itself an indicator of compromise (see the dedicated
+// side-loading correlation rule for that behavior).
+// No malicious IP addresses were published in the source intel — Sauron Loader's C2 is
+// domain-based over HTTPS, so the IP bucket is intentionally empty pending future IOC updates.
+let MaliciousHashes = dynamic([
+    "ee727d639eaa4ee2e0d7cafbe496e14aaac8df0955d9fb599f2c11dfa1d0f8f2", // Sauron Loader MSI installer
+    "5606afdc5191d42f38d3c4f1692eda0a629c88810e29bfe78528733284ad1bf8", // malicious rnp.dll (loader)
+    "6551293e996d19755ba497f50b30a18c178f0d6e2a73b29ae742b8171e2985b7", // malicious tdwp.dll (decrypter/scheduler)
+    "6e4e2d528821025b082f6ebf429497f1df6ebf75c401e85a4637fa628d5854a0", // embedded RSA private key SHA256
+    "7460272b6d4f0ca995783d1010952f0fa57ad7c877209947ae7ae1dc7d0a81ea"  // embedded RSA public key SHA256
+]);
+let MaliciousDomains = dynamic([
+    "api.namsb-show.com",
+    "api.quinlantours.com",
+    "api.virtual-magic.com",
+    "api.lahaina-shores.com"
+]);
+let MaliciousUrls = dynamic([
+    "https://api.namsb-show.com/",
+    "https://api.quinlantours.com/",
+    "https://api.virtual-magic.com/",
+    "https://api.lahaina-shores.com/"
+]);
+let HashHits = union isfuzzy=true
+    (DeviceFileEvents
+    | where SHA256 in~ (MaliciousHashes)
+    | project Timestamp, DeviceName, FileName, FolderPath, MatchedIndicator = SHA256, IOCType = "sha256", SourceTable = "DeviceFileEvents"),
+    (DeviceProcessEvents
+    | where SHA256 in~ (MaliciousHashes)
+    | project Timestamp, DeviceName, FileName, FolderPath, ProcessCommandLine, MatchedIndicator = SHA256, IOCType = "sha256", SourceTable = "DeviceProcessEvents"),
+    (DeviceImageLoadEvents
+    | where SHA256 in~ (MaliciousHashes)
+    | project Timestamp, DeviceName, FileName, FolderPath, InitiatingProcessFileName, MatchedIndicator = SHA256, IOCType = "sha256", SourceTable = "DeviceImageLoadEvents");
+let NetworkHits = union isfuzzy=true
+    (DeviceNetworkEvents
+    | where RemoteUrl has_any (MaliciousDomains)
+    | project Timestamp, DeviceName, RemoteUrl, RemoteIP, RemotePort, InitiatingProcessFileName, MatchedIndicator = RemoteUrl, IOCType = "domain", SourceTable = "DeviceNetworkEvents"),
+    (DeviceNetworkEvents
+    | where RemoteUrl has_any (MaliciousUrls)
+    | project Timestamp, DeviceName, RemoteUrl, RemoteIP, RemotePort, InitiatingProcessFileName, MatchedIndicator = RemoteUrl, IOCType = "url", SourceTable = "DeviceNetworkEvents"),
+    (DeviceEvents
+    | where ActionType has "Dns"
+    | extend AdditionalFieldsStr = tostring(AdditionalFields)
+    | where AdditionalFieldsStr has_any (MaliciousDomains)
+    | project Timestamp, DeviceName, RemoteUrl = AdditionalFieldsStr, MatchedIndicator = AdditionalFieldsStr, IOCType = "domain", SourceTable = "DeviceEvents_DNS");
+union isfuzzy=true HashHits, NetworkHits
+| sort by Timestamp desc
