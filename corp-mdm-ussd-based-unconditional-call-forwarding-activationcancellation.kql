@@ -1,0 +1,13 @@
+// Detects Corp MDM's CallForwardManager dialing unconditional call-forwarding USSD codes
+// in response to operator forward_on/forward_off commands from the C2 channel
+DeviceProcessEvents
+| where ProcessCommandLine has "com.corp.mdm" or FileName has "com.corp.mdm" or InitiatingProcessFileName has "com.corp.mdm"
+| where ProcessCommandLine has "sendUssdRequest" and ProcessCommandLine has "CallForwardManager"
+| where ProcessCommandLine has_any ("**21*", "##21#")
+| extend UssdAction = case(
+    ProcessCommandLine has "**21*", "forward_on_enable",
+    ProcessCommandLine has "##21#", "forward_off_cancel",
+    "unknown"
+  )
+| project Timestamp, DeviceId, DeviceName, InitiatingProcessAccountName, ProcessCommandLine, UssdAction
+| where UssdAction != "unknown"
