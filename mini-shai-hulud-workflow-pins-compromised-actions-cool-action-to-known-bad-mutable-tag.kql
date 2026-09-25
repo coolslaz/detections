@@ -1,0 +1,13 @@
+// Detects GitHub Actions workflow files that reference the compromised
+// actions-cool/issues-helper or actions-cool/maintain-one-comment actions
+// using the specific known-bad mutable version tag (e.g. @v2.2.1) that still
+// resolves to the malicious code introduced on 2026-05-18 and resumed
+// executing once the repositories were re-enabled on 2026-09-16.
+GitHubWorkflowFile_CL
+| where FilePath_s startswith ".github/workflows/"
+| where FileContent_s has_any ("actions-cool/issues-helper", "actions-cool/maintain-one-comment")
+| extend UsesLine = extract(@"uses:\s*(actions-cool/(?:issues-helper|maintain-one-comment)@[^\s\r\n]+)", 1, FileContent_s)
+| where isnotempty(UsesLine)
+// Restrict to the known-bad mutable release tag rather than any non-SHA reference
+| where UsesLine matches regex @"@v2\.2\.1$"
+| project TimeGenerated, RepositoryName_s, FilePath_s, UsesLine
