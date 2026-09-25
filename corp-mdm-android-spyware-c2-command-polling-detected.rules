@@ -1,0 +1,3 @@
+alert http $HOME_NET any -> 69.55.61.82 3456 (msg:"Corp MDM Android spyware C2 command polling detected"; flow:to_server,established; http.method; content:"GET"; http.uri; content:"/api/v1/devices/"; content:"/commands"; distance:0; endswith; fast_pattern; classtype:command-and-control; metadata: mitre_technique_id T1071.001, author Arnold Chan; sid:1000101; rev:1;)
+
+alert http $HOME_NET any -> 69.55.61.82 3456 (msg:"Corp MDM Android spyware C2 command result posting detected"; flow:to_server,established; http.method; content:"POST"; http.uri; content:"/api/v1/commands/result"; endswith; fast_pattern; classtype:command-and-control; metadata: mitre_technique_id T1071.001; sid:1000102; rev:1;)
