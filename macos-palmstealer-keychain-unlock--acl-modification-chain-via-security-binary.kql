@@ -1,0 +1,24 @@
+// Detects the security binary being used to unlock the login keychain and loosen its access-control list,
+// a sequence used by PamStealer's stage-2 (r8afup9un0) prior to raw keychain database theft.
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where FileName =~ "security" or FolderPath endswith "/usr/bin/security"
+| where InitiatingProcessAccountName !~ "root"
+| where ProcessCommandLine has "unlock-keychain" or ProcessCommandLine has "set-generic-password-partition-list"
+| summarize
+    UnlockCount = countif(ProcessCommandLine has "unlock-keychain"),
+    PartitionListCount = countif(ProcessCommandLine has "set-generic-password-partition-list"),
+    Commands = make_set(ProcessCommandLine, 10),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated)
+    by DeviceId, InitiatingProcessAccountName, InitiatingProcessFileName, InitiatingProcessId
+| where UnlockCount > 0 and PartitionListCount > 0
+| join kind=inner (
+    DeviceFileEvents
+    | where TimeGenerated > ago(1d)
+    | where FolderPath has "Library/Keychains" and FileName =~ "login.keychain-db"
+    | where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+    | project DeviceId, KeychainCopyTime = TimeGenerated, KeychainDestPath = FolderPath, InitiatingProcessId, InitiatingProcessFileName
+) on DeviceId, InitiatingProcessId
+| where KeychainCopyTime between (FirstSeen .. (LastSeen + 10m))
+| project DeviceId, InitiatingProcessAccountName, InitiatingProcessFileName, InitiatingProcessId, Commands, FirstSeen, LastSeen, KeychainCopyTime, KeychainDestPath
