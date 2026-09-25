@@ -1,0 +1,30 @@
+// Detects the reactivation pattern for the compromised actions-cool GitHub Actions:
+// a run that previously failed quickly at 'Set up job' (repository access blocked)
+// is immediately followed by a run of the same workflow that succeeds with a
+// dramatically longer duration, consistent with the malicious tag resolving again
+// after the Sept 16, 2026 re-enablement of actions-cool/issues-helper and
+// actions-cool/maintain-one-comment. Both runs in the pair must belong to one of
+// the two affected repositories/workflows and occur on/after the reactivation date,
+// so unrelated flaky CI jobs in other repos or from before the reactivation are excluded.
+GitHubWorkflowRun_CL
+| where RepositoryName_s in ("actions-cool/issues-helper", "actions-cool/maintain-one-comment")
+| where TimeGenerated >= datetime(2026-09-16)
+| sort by WorkflowName_s asc, RepositoryName_s asc, TimeGenerated asc
+| serialize
+| extend PrevWorkflow = prev(WorkflowName_s, 1, ""),
+         PrevRepo = prev(RepositoryName_s, 1, ""),
+         PrevConclusion = prev(Conclusion_s, 1, ""),
+         PrevDurationSeconds = prev(DurationSeconds_d, 1, 0.0),
+         PrevStep = prev(FailureStep_s, 1, ""),
+         PrevError = prev(ErrorMessage_s, 1, ""),
+         PrevTimeGenerated = prev(TimeGenerated, 1, datetime(null))
+| where WorkflowName_s == PrevWorkflow and RepositoryName_s == PrevRepo
+| where RepositoryName_s in ("actions-cool/issues-helper", "actions-cool/maintain-one-comment")
+| where isnotnull(PrevTimeGenerated) and PrevTimeGenerated >= datetime(2026-09-16)
+| where PrevConclusion =~ "failure"
+| where PrevDurationSeconds > 0 and PrevDurationSeconds < 30
+| where PrevStep has "Set up job" or PrevError has_any ("Repository access blocked", "Getting action download info")
+| where Conclusion_s =~ "success"
+| where DurationSeconds_d > 300
+| where datetime_diff('minute', TimeGenerated, PrevTimeGenerated) between (0 .. 60)
+| project TimeGenerated, RepositoryName_s, WorkflowName_s, RunNumber_d, PrevTimeGenerated, PrevDurationSeconds, PrevError, DurationSeconds_d, Conclusion_s
