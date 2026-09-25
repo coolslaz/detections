@@ -1,0 +1,17 @@
+// Detects the monetization pattern: a risky/anomalous sign-in to a user account followed shortly by
+// mailbox-rule creation or invoice/payment-document changes consistent with invoice redirection or
+// double-brokering fraud using stolen shipment/dispatch credentials.
+let lookback = 1d;
+let correlationWindow = 2h;
+let riskySignins = SigninLogs
+| where TimeGenerated > ago(lookback)
+| where RiskLevelDuringSignIn == "high" or RiskState =~ "atRisk" or RiskState =~ "confirmedCompromised"
+| project SigninTime = TimeGenerated, UserPrincipalName, IPAddress, RiskLevelDuringSignIn, RiskState, AppDisplayName;
+let suspiciousFollowup = OfficeActivity
+| where TimeGenerated > ago(lookback)
+| where Operation in ("New-InboxRule", "Set-InboxRule", "Update-InboxRule")
+| where Parameters has_any ("ForwardTo", "RedirectTo", "ForwardAsAttachmentTo", "DeleteMessage", "BccMessage", "MoveToFolder");
+riskySignins
+| join kind=inner (suspiciousFollowup) on UserPrincipalName
+| where TimeGenerated between (SigninTime .. (SigninTime + correlationWindow))
+| project SigninTime, TimeGenerated, UserPrincipalName, IPAddress, RiskLevelDuringSignIn, Operation, Parameters
