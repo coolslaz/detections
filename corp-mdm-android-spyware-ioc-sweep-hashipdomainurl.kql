@@ -1,0 +1,40 @@
+let mal_hashes = dynamic(["61954bab16df91e7a1c940a2bdd5a5cf3c61b529a7c75a5ff21ac78f15c61a86","29f0f6c51fda728b91aaa299cf14758f01d7d83e941a549e26b8fbf2eb70fc42"]);
+let mal_ips = dynamic(["69.55.61.82"]);
+let mal_domains = dynamic(["playgoogle.logisticstkwcargo.com","playgoogle.ceva-app.help"]);
+let mal_urls = dynamic(["http://69.55.61.82:3456/api/v1/sms/report","http://69.55.61.82:3456/api/v1/devices/register","http://69.55.61.82:3456/"]);
+DeviceFileEvents
+| where SHA256 in (mal_hashes)
+| extend IndicatorType = "hash", MatchedIndicator = SHA256
+| project Timestamp, DeviceName, IndicatorType, MatchedIndicator, FileName, FolderPath, SHA256
+| union (
+    DeviceFileCertificateInfo
+    | where Sha256 in (mal_hashes) or CertificateSerialNumber in (mal_hashes)
+    | extend IndicatorType = "hash", MatchedIndicator = coalesce(Sha256, CertificateSerialNumber)
+    | project Timestamp, DeviceName, IndicatorType, MatchedIndicator
+)
+| union (
+    DeviceNetworkEvents
+    | where RemoteIP in (mal_ips)
+    | extend IndicatorType = "ip", MatchedIndicator = RemoteIP
+    | project Timestamp, DeviceName, IndicatorType, MatchedIndicator, RemoteUrl, RemotePort
+)
+| union (
+    DeviceNetworkEvents
+    | extend NetHost = tostring(parse_url(RemoteUrl).Host)
+    | where NetHost in~ (mal_domains) or NetHost endswith ".playgoogle.logisticstkwcargo.com" or NetHost endswith ".playgoogle.ceva-app.help"
+    | extend IndicatorType = "domain", MatchedIndicator = NetHost
+    | project Timestamp, DeviceName, IndicatorType, MatchedIndicator, RemoteIP, RemotePort
+)
+| union (
+    DeviceNetworkEvents
+    | where RemoteUrl in~ (mal_urls)
+    | extend IndicatorType = "url", MatchedIndicator = RemoteUrl
+    | project Timestamp, DeviceName, IndicatorType, MatchedIndicator, RemoteIP, RemotePort
+)
+| union (
+    DnsEvents
+    | where Name in~ (mal_domains) or Name endswith ".playgoogle.logisticstkwcargo.com" or Name endswith ".playgoogle.ceva-app.help"
+    | extend IndicatorType = "domain", MatchedIndicator = Name
+    | project Timestamp, DeviceName = Computer, IndicatorType, MatchedIndicator, ClientIP
+)
+| sort by Timestamp desc
