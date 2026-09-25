@@ -1,0 +1,46 @@
+// Detects CARBONATO botnet exploitation of exposed Docker daemon to deploy privileged containers
+// with host filesystem/network access. Looks for process execution patterns consistent with
+// nsenter host escape, entry.sh execution, and known CARBONATO container/image names.
+// Tightened for false positives: nsenter match now requires the mount namespace (-m) plus an
+// additional namespace flag (the full-escape signature) instead of any single namespace flag,
+// and generic terms ("entry.sh" alone, "system/resolved") that collide with legitimate
+// container entrypoints/services were dropped in favor of CARBONATO-specific paths/names only.
+// Note: EDR telemetry from inside containers may vary by agent deployment model.
+DeviceProcessEvents
+| where Timestamp > ago(1d)
+| where
+    // nsenter used to escape container into host mount namespace (host filesystem access) - core TTP.
+    // Requires the mount namespace (-m) plus at least one additional namespace flag to avoid
+    // matching routine single-namespace (e.g. network-only) debugging use of nsenter.
+    (ProcessCommandLine has_all ("nsenter", "-t", "1", "-m") and ProcessCommandLine has_any ("-n", "-u", "-i", "-p"))
+    or
+    // entry.sh execution from known CARBONATO paths only (bare "entry.sh" dropped - too common
+    // in legitimate container entrypoints and would swamp this rule with noise)
+    (ProcessCommandLine has_any ("/opt/gh0st/entry.sh", "/opt/netd/"))
+    or
+    // Known malicious container image/repo names being pulled or referenced (dropped the
+    // ambiguous "system/resolved" term, which can collide with systemd-resolved references)
+    (ProcessCommandLine has_any ("gh0st/", "fsociety/", "netd-svc", "scrub-empty"))
+    or
+    // Docker run with privileged flag and host bind mounts - privileged breakout pattern
+    (ProcessCommandLine has "docker" and ProcessCommandLine has "--privileged" and
+     ProcessCommandLine has_any ("--pid=host", "--net=host", "/:/host", "-v /:/"))
+| extend
+    SuspiciousReason = case(
+        ProcessCommandLine has_all ("nsenter", "-t", "1", "-m"), "nsenter host namespace escape",
+        ProcessCommandLine has_any ("/opt/gh0st/entry.sh", "/opt/netd/"), "CARBONATO entry.sh execution",
+        ProcessCommandLine has_any ("gh0st/", "fsociety/", "netd-svc", "scrub-empty"), "CARBONATO image reference",
+        ProcessCommandLine has "--privileged" and ProcessCommandLine has_any ("--pid=host", "--net=host", "/:/host"), "Privileged container with host namespace",
+        "Matched Docker exploitation pattern"
+    )
+| project
+    Timestamp,
+    DeviceId,
+    DeviceName,
+    AccountName,
+    FileName,
+    ProcessCommandLine,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    SuspiciousReason
+| sort by Timestamp desc
