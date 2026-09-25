@@ -1,0 +1,20 @@
+// Detects auto.exe (AvisLoader UAC-bypass helper) executing from an AvisLoader-related location AND referencing the ICMLuaUtil COM elevation moniker (CLSID 3E5FC7F9-9A51-4367-9063-A120244FBEC7, UACME method 41)
+let clsid = "3E5FC7F9-9A51-4367-9063-A120244FBEC7";
+let legit_binaries = dynamic(["fodhelper.exe", "computerdefaults.exe", "sdclt.exe", "eventvwr.exe", "slui.exe"]);
+let auto_exec = DeviceProcessEvents
+| where FileName =~ "auto.exe"
+| where FolderPath has_any ("AvisLoader", "\\Avis\\", "\\ProgramData\\", "\\AppData\\Local\\Temp\\") or InitiatingProcessFolderPath has_any ("AvisLoader", "\\Avis\\", "\\ProgramData\\", "\\AppData\\Local\\Temp\\")
+| where InitiatingProcessFileName !in~ (legit_binaries)
+| project Timestamp, DeviceId, DeviceName, AccountName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, SHA256;
+let com_elevation = DeviceRegistryEvents
+| where RegistryKey has clsid
+| where RegistryKey has "InprocServer32" or RegistryKey has "LocalServer32" or RegistryValueData has "Elevation:Administrator"
+| where InitiatingProcessCommandLine has clsid or InitiatingProcessCommandLine has "ICMLuaUtil" or InitiatingProcessCommandLine has "Elevation:Administrator!new"
+| where InitiatingProcessFileName !in~ (legit_binaries)
+| project DeviceId, DeviceName, AccountName = InitiatingProcessAccountName, FileName = InitiatingProcessFileName, FolderPath = InitiatingProcessFolderPath, ProcessCommandLine = InitiatingProcessCommandLine, ComTimestamp = Timestamp, SHA256 = InitiatingProcessSHA256;
+auto_exec
+| join kind=inner com_elevation on DeviceId
+| where abs(datetime_diff('minute', Timestamp, ComTimestamp)) <= 15
+| project Timestamp, DeviceId, DeviceName, AccountName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, SHA256
+| distinct Timestamp, DeviceId, DeviceName, AccountName, FileName, FolderPath, ProcessCommandLine, SHA256
+| sort by Timestamp desc
