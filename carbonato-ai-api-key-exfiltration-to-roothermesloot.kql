@@ -1,0 +1,41 @@
+// Detects CARBONATO botnet GH0ST agent writing AI API key loot files to /root/.hermes/loot/
+// or accessing .env files containing CARBONATO_API_KEY, as directed by the malicious SOUL.md persona.
+// Tightened for false positives: generic loot filenames (openai_key.txt/anthropic_key.txt) now
+// require a .hermes-related path (a bare match anywhere on disk is common for legitimate local
+// secret storage), and the .env + provider-name heuristic - which alone matches routine developer/
+// DevOps activity - now requires the malicious Hermes Agent/GH0ST process context.
+// Note: file write telemetry (DeviceFileEvents) is the primary signal;
+// process-level evidence (DeviceProcessEvents) provides corroborating context.
+let lootPaths = dynamic(["/root/.hermes/loot/", ".hermes/loot/"]);
+let lootFileNames = dynamic(["openai_key.txt", "anthropic_key.txt", "provider_213.136.83.197.txt"]);
+let apiKeyPatterns = dynamic(["CARBONATO_API_KEY", "openai_key", "anthropic_key", "SOUL.md"]);
+union
+(
+    // File creation events for known loot filenames or within the loot directory
+    DeviceFileEvents
+    | where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+    | where FolderPath has ".hermes/loot"
+        // provider_213.136.83.197.txt embeds the actual CARBONATO C2 IP - safe as a standalone match
+        or FileName == "provider_213.136.83.197.txt"
+        // generic loot filenames only count when also under a .hermes-related path - a bare
+        // "openai_key.txt" elsewhere on disk is common for legitimate local secret storage
+        or (FileName has_any ("openai_key.txt", "anthropic_key.txt") and FolderPath has ".hermes")
+    | extend DetectionSource = "LootFileWrite"
+    | project Timestamp, DeviceId, DeviceName, ActionType, FolderPath, FileName,
+              InitiatingProcessFileName, InitiatingProcessCommandLine,
+              InitiatingProcessAccountName, DetectionSource
+),
+(
+    // Process events writing to .env or searching for API keys with known loot-related command patterns
+    DeviceProcessEvents
+    | where ProcessCommandLine has_any ("CARBONATO_API_KEY", ".hermes/loot", "openai_key.txt", "anthropic_key.txt", "SOUL.md")
+        // .env + provider-name scanning alone is common, legitimate developer/DevOps activity;
+        // only counts here when also tied to the malicious Hermes Agent/GH0ST process context
+        or (ProcessCommandLine has ".env" and ProcessCommandLine has_any ("openai", "anthropic", "groq", "mistral", "cohere", "ollama", "vllm", "litellm")
+            and (InitiatingProcessFileName has_any ("hermes-agent", "gh0st") or ProcessCommandLine has_any (".hermes", "/opt/netd", "/opt/gh0st")))
+    | extend DetectionSource = "LootSearchProcess"
+    | project Timestamp, DeviceId, DeviceName, FileName, ProcessCommandLine,
+              InitiatingProcessFileName, InitiatingProcessCommandLine,
+              AccountName, DetectionSource
+)
+| sort by Timestamp desc
