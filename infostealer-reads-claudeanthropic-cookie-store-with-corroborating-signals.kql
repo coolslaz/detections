@@ -1,0 +1,43 @@
+// Detects processes reading Chromium/Firefox cookie or login-data stores while referencing claude.ai / anthropic.com in command line, staged file, or file path
+// Focused on known infostealer families targeting Claude session cookies (Vidar, Lumma/LummaC2, StealC, RedLine, Acreed, Atomic Stealer)
+// Excludes known-legitimate processes (password managers, sync tools, EDR/AV, backup/forensics, updaters, dev tools)
+// Requires corroborating suspicious context: process runs from a temp/download/appdata path OR is followed by an outbound network connection shortly after the read
+let cookieStorePaths = dynamic(["Cookies", "cookies.sqlite", "Login Data", "Network\\Cookies"]);
+let claudeDomainTerms = dynamic(["claude.ai", "anthropic.com", "console.anthropic.com"]);
+let suspiciousPathTerms = dynamic(["\\Temp\\", "\\AppData\\Local\\Temp\\", "\\Downloads\\", "\\AppData\\Roaming\\", "\\ProgramData\\", "\\Users\\Public\\"]);
+let knownGoodProcesses = dynamic([
+ "1password.exe", "1passwordagent.exe", "lastpass.exe", "bitwarden.exe", "keepass.exe", "dashlane.exe",
+ "msedgeupdate.exe", "googleupdate.exe", "chrome_updater.exe", "firefox_installer.exe", "updater.exe",
+ "mssense.exe", "msmpeng.exe", "defendercsp.exe", "cbcomms.exe", "csfalconservice.exe", "sentinelagent.exe",
+ "mcafeeframework.exe", "savservice.exe", "ccleaner.exe", "backupandsync.exe", "onedrive.exe", "dropbox.exe",
+ "googledrivesync.exe", "chrome_sync.exe", "edgesync.exe", "firefoxsync.exe", "veeam.exe", "vssadmin.exe",
+ "ftk imager.exe", "encase.exe", "devtools.exe", "code.exe", "chromedriver.exe", "msedgedriver.exe", "geckodriver.exe"
+]);
+let suspiciousProcessReads =
+ DeviceProcessEvents
+ | where TimeGenerated > ago(1d)
+ | where not(FileName has_any (knownGoodProcesses))
+ | where ProcessCommandLine has_any (cookieStorePaths)
+ | where ProcessCommandLine has_any (claudeDomainTerms)
+ | extend RunsFromSuspiciousPath = FolderPath has_any (suspiciousPathTerms) or ProcessCommandLine has_any (suspiciousPathTerms)
+ | project TimeGenerated, DeviceId, DeviceName, FileName, ProcessCommandLine, InitiatingProcessFileName, AccountName, RunsFromSuspiciousPath;
+let suspiciousFileReads =
+ DeviceFileEvents
+ | where TimeGenerated > ago(1d)
+ | where not(InitiatingProcessFileName has_any (knownGoodProcesses))
+ | where FolderPath has_any (cookieStorePaths) or FileName has_any (cookieStorePaths)
+ | where (FileName has_any (claudeDomainTerms)) or (FolderPath has_any (claudeDomainTerms))
+ | extend RunsFromSuspiciousPath = InitiatingProcessFolderPath has_any (suspiciousPathTerms)
+ | project TimeGenerated, DeviceId, DeviceName, FileName, ProcessCommandLine = FolderPath, InitiatingProcessFileName, AccountName, RunsFromSuspiciousPath;
+let candidateReads = suspiciousProcessReads | union suspiciousFileReads;
+let followUpNetwork =
+ DeviceNetworkEvents
+ | where TimeGenerated > ago(1d)
+ | project NetTime = TimeGenerated, DeviceId, InitiatingProcessFileName, RemoteUrl, RemoteIP;
+candidateReads
+| join kind=leftouter (followUpNetwork) on DeviceId, $left.InitiatingProcessFileName == $right.InitiatingProcessFileName
+| extend HasFollowUpNetwork = isnotnull(NetTime) and NetTime between (TimeGenerated .. TimeGenerated + 5m)
+| where RunsFromSuspiciousPath or HasFollowUpNetwork
+| summarize arg_max(TimeGenerated, *) by DeviceId, FileName, ProcessCommandLine, InitiatingProcessFileName, AccountName, RunsFromSuspiciousPath
+| project TimeGenerated, DeviceName, FileName, ProcessCommandLine, InitiatingProcessFileName, AccountName, RunsFromSuspiciousPath, HasFollowUpNetwork
+| sort by TimeGenerated desc
