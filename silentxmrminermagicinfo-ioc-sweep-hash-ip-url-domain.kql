@@ -1,0 +1,24 @@
+let sha256_ioc = "0d202e16408770e8b6cceb14e1e3e72946b154bf881d27fe33d0060315b30dd1";
+let ip_ioc = "194.87.89.30";
+let url_ioc = "http://194.87.89.30:8899/anydesk.exe";
+let domain_ioc = "auto.c3pool.org";
+union
+(DeviceFileEvents
+| where SHA256 == sha256_ioc
+| project Timestamp, DeviceId, IndicatorType = "hash", MatchedIndicator = sha256_ioc, FileName, FolderPath, SHA256, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteUrl = "", RemoteIP = ""),
+(DeviceProcessEvents
+| where SHA256 == sha256_ioc
+| project Timestamp, DeviceId, IndicatorType = "hash", MatchedIndicator = sha256_ioc, FileName, FolderPath, SHA256, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteUrl = "", RemoteIP = ""),
+(DeviceNetworkEvents
+| where RemoteIP == ip_ioc
+| project Timestamp, DeviceId, IndicatorType = "ip", MatchedIndicator = ip_ioc, FileName, FolderPath = "", SHA256 = "", InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteUrl = "", RemoteIP),
+(DeviceNetworkEvents
+| where RemoteUrl has_any (url_ioc, domain_ioc)
+| project Timestamp, DeviceId, IndicatorType = iff(RemoteUrl has url_ioc, "url", "domain"), MatchedIndicator = iff(RemoteUrl has url_ioc, url_ioc, domain_ioc), FileName, FolderPath = "", SHA256 = "", InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteUrl, RemoteIP),
+(DeviceHttpRequestEvents
+| where Url has_any (url_ioc, domain_ioc) or RemoteIP == ip_ioc
+| project Timestamp, DeviceId, IndicatorType = case(Url has url_ioc, "url", Url has domain_ioc, "domain", "ip"), MatchedIndicator = case(Url has url_ioc, url_ioc, Url has domain_ioc, domain_ioc, ip_ioc), FileName = "", FolderPath = "", SHA256 = "", InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteUrl = Url, RemoteIP),
+(DeviceNetworkInfo
+| where DnsAddresses has ip_ioc
+| project Timestamp, DeviceId, IndicatorType = "ip", MatchedIndicator = ip_ioc, FileName = "", FolderPath = "", SHA256 = "", InitiatingProcessFileName = "", InitiatingProcessCommandLine = "", RemoteUrl = "", RemoteIP = ip_ioc)
+| sort by Timestamp desc
