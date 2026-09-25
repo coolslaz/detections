@@ -1,0 +1,16 @@
+// Detects git commits or workflow file changes on/after the Sept 16, 2026 GitHub Actions reactivation window
+// that reference the compromised actions-cool/issues-helper or actions-cool/maintain-one-comment repos,
+// scoped to those two repos/tags and excluding routine automated maintenance commits by trusted bot/maintainer accounts
+let reactivation_time = datetime(2026-09-16T00:00:00Z);
+let trusted_maintainers = dynamic(["dependabot[bot]", "github-actions[bot]", "renovate[bot]"]);
+GitHubAuditLogPolling_CL
+| where TimeGenerated >= reactivation_time
+| where action_s in ("git.push", "repo.create_ref", "workflows.completed_workflow_run", "workflows.created_workflow_run")
+| where isnotempty(repo_s)
+| extend commit_message = tostring(additional_fields_s)
+| where repo_s has_any ("actions-cool/issues-helper", "actions-cool/maintain-one-comment")
+   or commit_message has_any ("actions-cool/issues-helper", "actions-cool/maintain-one-comment", "issues-helper@v", "maintain-one-comment@")
+| where not(actor_s in (trusted_maintainers))
+| where not(commit_message has_any ("chore: routine dependency bump", "chore: version bump", "docs update", "[skip ci]"))
+| project TimeGenerated, actor_s, repo_s, action_s, commit_message
+| sort by TimeGenerated asc
