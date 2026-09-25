@@ -1,0 +1,34 @@
+// Detects CARBONATO botnet multi-mechanism persistence:
+// auto-persist-host.sh installs /usr/local/bin/.docker-network-monitor via cron,
+// systemd (docker-network-resolver.service/timer), rc.local, and OpenRC,
+// then locks persistence files with chattr +i.
+// Note: ProcessCommandLine telemetry required; coverage depends on EDR agent on Linux hosts.
+DeviceProcessEvents
+| where Timestamp > ago(7d)
+| where (
+    // Watchdog binary execution or registration
+    ProcessCommandLine has ".docker-network-monitor"
+    or FolderPath has ".docker-network-monitor"
+    // Script that installs all persistence mechanisms
+    or ProcessCommandLine has "auto-persist-host.sh"
+    // Cron registration of watchdog
+    or (ProcessCommandLine has "crontab" and ProcessCommandLine has ".docker-network-monitor")
+    // Systemd timer enable for docker-network-resolver
+    or (ProcessCommandLine has "systemctl" and ProcessCommandLine has "docker-network-resolver")
+    // Immutable bit set on persistence files
+    or (ProcessCommandLine has "chattr" and ProcessCommandLine has "+i" and ProcessCommandLine has ".docker-network-monitor")
+    // Systemd service file written
+    or (ProcessCommandLine has "docker-network-resolver.service")
+    or (ProcessCommandLine has "docker-network-resolver.timer")
+)
+| extend SignalType = case(
+    ProcessCommandLine has "chattr" and ProcessCommandLine has "+i", "ImmutableBitSet",
+    ProcessCommandLine has "crontab" and ProcessCommandLine has ".docker-network-monitor", "CronPersistence",
+    ProcessCommandLine has "systemctl" and ProcessCommandLine has "docker-network-resolver", "SystemdTimerEnable",
+    ProcessCommandLine has "docker-network-resolver.service" or ProcessCommandLine has "docker-network-resolver.timer", "SystemdUnitWrite",
+    ProcessCommandLine has "auto-persist-host.sh", "PersistScript",
+    ProcessCommandLine has ".docker-network-monitor" or FolderPath has ".docker-network-monitor", "WatchdogExec",
+    "Other"
+)
+| project Timestamp, DeviceId, DeviceName, AccountName, InitiatingProcessFileName, FileName, ProcessCommandLine, FolderPath, SignalType
+| order by Timestamp desc
