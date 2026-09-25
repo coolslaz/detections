@@ -1,0 +1,12 @@
+let RnpLoad = DeviceImageLoadEvents
+| where FolderPath has @"\ProgramData\keyroll\" and FileName =~ "rnp.dll"
+| project DeviceId, RnpProcessId = InitiatingProcessId, RnpSHA256 = SHA256;
+let TdwpLoad = DeviceImageLoadEvents
+| where FolderPath has @"\ProgramData\keyroll\" and FileName =~ "tdwp.dll"
+| project DeviceId, TdwpProcessId = InitiatingProcessId, TdwpSHA256 = SHA256;
+DeviceProcessEvents
+| where FileName =~ "rnpkeys.exe" and FolderPath has @"\ProgramData\keyroll\"
+| project Timestamp, DeviceId, DeviceName, AccountName, ProcessId, ProcessCommandLine, RnpkeysSHA256 = SHA256, ReportId
+| join kind=inner RnpLoad on DeviceId, $left.ProcessId == $right.RnpProcessId
+| join kind=inner TdwpLoad on DeviceId, $left.ProcessId == $right.TdwpProcessId
+| project Timestamp, DeviceId, DeviceName, AccountName, ProcessCommandLine, RnpkeysSHA256, RnpSHA256, TdwpSHA256, ReportId
