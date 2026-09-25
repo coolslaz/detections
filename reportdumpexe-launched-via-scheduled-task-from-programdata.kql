@@ -1,0 +1,7 @@
+DeviceProcessEvents
+| where FileName =~ "ReportDump.exe"
+| where FolderPath has @"C:\ProgramData"
+| where FolderPath !has @"\Microsoft\" and FolderPath !has @"\Package Cache\"
+| where InitiatingProcessFileName in~ ("svchost.exe", "taskeng.exe", "schtasks.exe")
+| where InitiatingProcessCommandLine has "Schedule"
+| project Timestamp, DeviceName, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName
