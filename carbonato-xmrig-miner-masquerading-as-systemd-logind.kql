@@ -1,0 +1,34 @@
+// Detects XMRig cryptocurrency miner deployed at /usr/sbin/systemd-logind
+// as used by CARBONATO botnet post-exploitation (T1496, T1036.004)
+// Legitimate systemd-logind never accepts mining-related arguments or
+// connects to mining pool endpoints; any such process is a masquerade.
+// Tightened for false positives: WrongLocation now matches only the exact known-bad
+// CARBONATO path instead of excluding just two "typical" distro paths (which false-positived
+// on other legitimate systemd-logind install locations), and SuspiciousArgs dropped generic
+// flags ("--user", "--pass", "-o ") that collide with routine CLI usage in unrelated tools.
+DeviceProcessEvents
+| where Timestamp > ago(1d)
+| where FileName =~ "systemd-logind"
+| extend SuspiciousArgs = ProcessCommandLine has_any (
+    "--donate-level", "--pool", "stratum+tcp", "xmrig", "--algo", "--cpu-priority", "--randomx", "--threads"
+  )
+| extend WrongLocation = FolderPath =~ "/usr/sbin/systemd-logind"
+| where WrongLocation or SuspiciousArgs
+| project
+    Timestamp,
+    DeviceId,
+    DeviceName,
+    FileName,
+    FolderPath,
+    ProcessCommandLine,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    AccountName,
+    SuspiciousArgs,
+    WrongLocation
+| extend AlertReason = case(
+    SuspiciousArgs and WrongLocation, "XMRig miner args AND wrong path: high-confidence masquerade",
+    WrongLocation, "Process named systemd-logind running from /usr/sbin — not a legitimate systemd binary",
+    SuspiciousArgs, "systemd-logind process with miner-style arguments",
+    "Unknown"
+  )
