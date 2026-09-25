@@ -1,0 +1,10 @@
+DeviceProcessEvents
+| where FileName =~ "Silent XMR Miner Builder.exe"
+| where FolderPath has_any (@"\Users\", @"\AppData\", @"\Downloads\", @"\Temp\")
+| join kind=inner (
+    DeviceProcessEvents
+    | where FileName has_any ("csc.exe", "cvtres.exe", "donut.exe", "tcc.exe", "cc1.exe", "gcc.exe")
+) on $left.DeviceId == $right.DeviceId, $left.ProcessId == $right.InitiatingProcessId, $left.ProcessCreationTime == $right.InitiatingProcessCreationTime
+| project Timestamp, DeviceId, InitiatingProcessAccountName, FolderPath, ProcessCommandLine, ChildFileName = FileName1, ChildProcessCommandLine = ProcessCommandLine1
+| summarize ChildProcesses = make_set(ChildFileName, 10), ChildCount = dcount(ChildFileName), RareCompilerHits = countif(ChildFileName in ("donut.exe", "tcc.exe", "cc1.exe", "gcc.exe")) by DeviceId, InitiatingProcessAccountName, bin(Timestamp, 5m)
+| where ChildCount >= 2 and RareCompilerHits >= 1
