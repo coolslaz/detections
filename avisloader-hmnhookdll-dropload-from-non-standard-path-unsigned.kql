@@ -1,0 +1,36 @@
+// Detects the AvisLoader process-hiding rootkit component hmn_hook.dll
+// Tightened to reduce FPs: require drop/load from a non-standard, user-writable path
+// (outside System32/SysWOW64/Program Files), a parent process that is not a legitimate
+// signed installer, and for module-load matches require the DLL be unsigned or not
+// signed by Microsoft, with either hooking-related indicators or the specific file present.
+let StandardPaths = dynamic(["\\windows\\system32\\", "\\windows\\syswow64\\", "\\program files\\", "\\program files (x86)\\"]);
+let LegitInstallerParents = dynamic(["msiexec.exe", "trustedinstaller.exe", "setup.exe", "wusa.exe", "windowsupdatebox.exe"]);
+let SuspiciousPathHits =
+    DeviceFileEvents
+    | where FileName =~ "hmn_hook.dll"
+    | extend FolderPathLower = tolower(FolderPath)
+    | where not(StandardPaths has_any (FolderPathLower))
+    | where FolderPathLower has_any ("\\appdata\\", "\\temp\\", "\\programdata\\", "\\users\\public\\", "\\downloads\\")
+    | where tolower(InitiatingProcessFileName) !in (LegitInstallerParents)
+    | project Timestamp, DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, FolderPath, SHA256, MatchReason = "file_drop_nonstandard_path";
+let SignedInfo =
+    DeviceFileCertificateInfo
+    | where FileName =~ "hmn_hook.dll"
+    | summarize IsSignedByMS = max(iff(IsSigned == true and Signer has "Microsoft", 1, 0)), IsSigned = max(iff(IsSigned == true, 1, 0)) by SHA256;
+let HookedLoads =
+    DeviceImageLoadEvents
+    | where FileName =~ "hmn_hook.dll"
+    | extend FolderPathLower = tolower(FolderPath)
+    | where not(StandardPaths has_any (FolderPathLower))
+    | join kind=leftouter (SignedInfo) on SHA256
+    | where isnull(IsSigned) or IsSigned == 0 or IsSignedByMS == 0
+    | join kind=inner (
+        DeviceProcessEvents
+        | where ProcessCommandLine has_any ("HMN_HideStart", "HMN_HideStatus", "HMN_HideStop", "NtQuerySystemInformation") or ProcessCommandLine has "hmn_hook.dll"
+        | project DeviceId, HookCmdLine = ProcessCommandLine
+    ) on DeviceId
+    | where tolower(InitiatingProcessFileName) !in (LegitInstallerParents)
+    | project Timestamp, DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, FolderPath, SHA256, MatchReason = "unsigned_module_load_with_hook_indicators";
+SuspiciousPathHits
+| union HookedLoads
+| sort by Timestamp desc
