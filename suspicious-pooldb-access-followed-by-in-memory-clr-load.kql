@@ -1,0 +1,19 @@
+// Detects the SectopRAT loader sequence: a non-.NET-native process reads pool.db
+// then immediately loads the .NET CLR (clr.dll/mscoreei.dll), consistent with
+// reflective loading of a decrypted .NET payload entirely in memory.
+let clrLoads = DeviceImageLoadEvents
+| where Timestamp > ago(1d)
+| where FileName in~ ("clr.dll", "mscoreei.dll")
+| project LoadTime = Timestamp, DeviceId, InitiatingProcessId, InitiatingProcessFileName, InitiatingProcessFolderPath, ClrFile = FileName;
+let poolDbAccess = DeviceFileEvents
+| where Timestamp > ago(1d)
+| where FileName =~ "pool.db"
+| where FolderPath has @"\ProgramData\"
+| where ActionType in ("FileCreated", "FileModified", "FileRenamed") or ActionType has "Read"
+| project AccessTime = Timestamp, DeviceId, InitiatingProcessId, InitiatingProcessFileName, InitiatingProcessFolderPath, FolderPath;
+poolDbAccess
+| join kind=inner clrLoads on DeviceId, InitiatingProcessId
+| where LoadTime between (AccessTime .. (AccessTime + 2m))
+| where InitiatingProcessFileName !in~ ("dotnet.exe", "w3wp.exe", "devenv.exe", "powershell.exe", "pwsh.exe")
+| project DeviceId, InitiatingProcessId, InitiatingProcessFileName, InitiatingProcessFolderPath, FolderPath, AccessTime, LoadTime, ClrFile
+| sort by AccessTime desc
