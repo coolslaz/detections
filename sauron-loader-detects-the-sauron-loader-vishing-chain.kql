@@ -1,0 +1,22 @@
+// Detects the Sauron Loader social-engineering chain: mass spam influx to a mailbox
+// from many distinct senders, followed shortly after by launch of Quick Assist or
+// AnyDesk remote-access tooling, consistent with a vishing caller posing as IT
+// support instructing the victim to start a remote session.
+let bombing_threshold = 50;
+let distinct_sender_threshold = 15;
+let bombing_window = 1h;
+let followon_window = 2h;
+let SpamBombing = 
+    EmailEvents
+    | where Timestamp > ago(7d)
+    | summarize EmailCount = count(), DistinctSenders = dcount(SenderFromAddress), FirstEmail = min(Timestamp), LastEmail = max(Timestamp) by RecipientEmailAddress, bin(Timestamp, bombing_window)
+    | where EmailCount >= bombing_threshold and DistinctSenders >= distinct_sender_threshold;
+let RemoteAccessLaunch = 
+    DeviceProcessEvents
+    | where Timestamp > ago(7d)
+    | where FileName in~ ("quickassist.exe", "anydesk.exe")
+    | project DeviceId, DeviceName, AccountUpn, LaunchTime = Timestamp, FileName, ProcessCommandLine, InitiatingProcessFileName;
+SpamBombing
+| join kind=inner RemoteAccessLaunch on $left.RecipientEmailAddress == $right.AccountUpn
+| where LaunchTime between (LastEmail .. LastEmail + followon_window)
+| project RecipientEmailAddress, EmailCount, DistinctSenders, FirstEmail, LastEmail, DeviceId, DeviceName, LaunchTime, FileName, ProcessCommandLine, InitiatingProcessFileName
