@@ -1,0 +1,65 @@
+// Detects infostealer behavior (Vidar, Lumma/LummaC2, StealC, RedLine, Acreed, Atomic Stealer) copying or reading
+// saved browser passwords, cookies, and local storage used to steal authenticated session cookies (e.g. Claude sessions)
+// Tightened to exclude known-legitimate password manager, sync, EDR/AV, backup/forensics, updater and browser helper
+// processes, and to require additional suspicious context (unsigned binary, temp/download/appdata execution path,
+// or a subsequent outbound network connection from the same process) rather than access alone.
+let legitimateProcesses = dynamic([
+    "1password.exe", "1passwordbrowserhelper.exe", "1password-browser-support.exe",
+    "lastpass.exe", "lastpasslauncher.exe",
+    "bitwarden.exe", "bitwarden-desktop.exe",
+    "dashlane.exe",
+    "googleupdate.exe", "googlecrashhandler.exe", "googlecrashhandler64.exe",
+    "microsoftedgeupdate.exe", "msedgewebview2.exe", "edgeupdate.exe",
+    "chrome_proxy.exe", "chrome_installer.exe", "setup.exe",
+    "mozillamaintenanceservice.exe", "maintenanceservice.exe", "updater.exe",
+    "msmpeng.exe", "mssense.exe", "sensecncproxy.exe", "sentinelagent.exe", "sentinelserviceagent.exe",
+    "csfalconservice.exe", "csfalconcontainer.exe", "mcshield.exe", "avastsvc.exe", "avastui.exe",
+    "avguard.exe", "egui.exe", "savservice.exe", "cb.exe", "carbonblack.exe", "cyveraservice.exe",
+    "veeamagent.exe", "veeamdeploysvc.exe", "backupclient.exe", "ftkimager.exe", "encase.exe", "axiom.exe",
+    "explorer.exe"
+  ]);
+DeviceFileEvents
+| where Timestamp > ago(1d)
+| where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+| where FolderPath has_any (
+    "\\User Data\\Default\\Cookies",
+    "\\User Data\\Default\\Login Data",
+    "\\User Data\\Default\\Local Storage",
+    "\\User Data\\Default\\Network\\Cookies",
+    "\\Local State",
+    "\\cookies.sqlite",
+    "\\logins.json",
+    "\\key4.db"
+  )
+| where not(InitiatingProcessFolderPath has_any (
+    "\\chrome.exe",
+    "\\msedge.exe",
+    "\\firefox.exe",
+    "\\brave.exe",
+    "\\opera.exe"
+  ))
+| where InitiatingProcessFileName !in~ ("chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe")
+| where not(tolower(InitiatingProcessFileName) in (legitimateProcesses))
+| extend IsUnsigned = InitiatingProcessSignatureStatus !in ("Signed", "ValidSigned") or isempty(InitiatingProcessSignatureStatus)
+| extend IsSuspectPath = InitiatingProcessFolderPath has_any (
+    "\\Temp\\", "\\AppData\\Local\\Temp\\", "\\AppData\\Roaming\\", "\\Downloads\\", "\\Users\\Public\\"
+  )
+| join kind=leftsemi (
+    DeviceNetworkEvents
+    | where Timestamp > ago(1d)
+    | where RemoteIPType == "Public"
+    | project InitiatingProcessId, DeviceId, NetTimestamp = Timestamp
+  ) on DeviceId, InitiatingProcessId
+| extend HasEgress = true
+| where IsUnsigned or IsSuspectPath or HasEgress
+| extend SuspectedFamily = case(
+    InitiatingProcessFileName has_any ("vidar", "Vidar"), "Vidar",
+    InitiatingProcessFileName has_any ("lumma", "LummaC2"), "Lumma",
+    InitiatingProcessFileName has_any ("stealc", "StealC"), "StealC",
+    InitiatingProcessFileName has_any ("redline", "RedLine"), "RedLine",
+    InitiatingProcessFileName has_any ("acreed", "Acreed"), "Acreed",
+    InitiatingProcessFileName has_any ("amos", "AtomicStealer"), "AtomicStealer",
+    "Unknown"
+  )
+| project Timestamp, DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, InitiatingProcessSignatureStatus, IsUnsigned, IsSuspectPath, HasEgress, FolderPath, FileName, ActionType, SuspectedFamily
+| sort by Timestamp desc
