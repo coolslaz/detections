@@ -1,0 +1,33 @@
+// Detects a SKILL.md agent-skill file being accessed by a Claude process, tightly followed by
+// a download-and-execute style command execution on the same device - consistent with poisoned
+// SKILL.md files that silently trigger re-fetch of infostealer payloads.
+// Narrowed to encoded commands, download+execute-in-one-line, staging in temp/appdata paths,
+// and non-standard remote hosts (raw IPs or paste/file-sharing style hosts) rather than generic
+// curl/iwr/certutil usage which is common in legitimate automation and IT scripts.
+let lookback = 5m;
+let legitParents = dynamic(["vscode.exe", "Code.exe", "cursor.exe", "windsurf.exe", "WindowsTerminal.exe", "explorer.exe", "git.exe", "conhost.exe"]);
+let skillFileAccess = DeviceFileEvents
+| where FileName =~ "SKILL.md"
+| where InitiatingProcessFileName has_any ("claude", "Claude", "electron", "node.exe")
+| where not(InitiatingProcessFileName has_any (legitParents))
+| project SkillTime = TimeGenerated, DeviceId, SkillInitiatingProcess = InitiatingProcessFileName, FolderPath;
+let suspiciousCommands = DeviceProcessEvents
+| where FileName has_any ("powershell.exe", "pwsh.exe", "cmd.exe", "bash", "sh", "osascript", "python.exe", "python3")
+| where not(InitiatingProcessFileName has_any (legitParents))
+| where (
+    // encoded/obfuscated invocation
+    ProcessCommandLine has_any ("-EncodedCommand", "-enc ", "FromBase64String", "base64 -d", "base64 --decode")
+    // download cradle piped straight into execution on one line
+    or (ProcessCommandLine has_any ("Invoke-WebRequest", "iwr ", "IEX", "Invoke-Expression", "curl", "wget", "DownloadString", "DownloadFile") and ProcessCommandLine has_any ("|", "iex", "-o -", "-OutFile", "; sh", "&& sh", "&& bash", "&& python"))
+    // staging into temp/appdata/tmp before execution
+    or (ProcessCommandLine has_any ("\\AppData\\Local\\Temp", "\\Windows\\Temp", "/tmp/", "/var/tmp/") and ProcessCommandLine has_any ("curl", "wget", "Invoke-WebRequest", "iwr", "DownloadFile", "DownloadString"))
+    // fetch from raw IP address or non-standard TLD/paste host rather than named vendor domains
+    or ProcessCommandLine matches regex @"https?://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+    or ProcessCommandLine has_any ("pastebin.com/raw", "transfer.sh", "anonfiles", "discord.com/api/webhooks")
+  )
+| project CmdTime = TimeGenerated, DeviceId, FileName, ProcessCommandLine, InitiatingProcessFileName, AccountName;
+skillFileAccess
+| join kind=inner (suspiciousCommands) on DeviceId
+| where CmdTime between (SkillTime .. (SkillTime + lookback))
+| project SkillTime, CmdTime, DeviceId, SkillInitiatingProcess, FolderPath, FileName, ProcessCommandLine, InitiatingProcessFileName, AccountName
+| sort by CmdTime desc
