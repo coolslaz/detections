@@ -1,0 +1,18 @@
+DeviceRegistryEvents
+| where Timestamp > ago(1d)
+| where (RegistryKey has @"Windows Defender" or RegistryKey has "WinDefend")
+| where (RegistryValueName in~ ("DisableAntiSpyware", "DisableRealtimeMonitoring") and RegistryValueData in ("1", "0x1"))
+ or (RegistryValueName =~ "Start" and RegistryKey has "WinDefend" and RegistryValueData in ("4", "0x4"))
+| extend TamperEvidence = strcat(RegistryKey, " -> ", RegistryValueName, " = ", RegistryValueData)
+| join kind=inner (
+    DeviceProcessEvents
+    | where Timestamp > ago(1d)
+    | where (FileName =~ "powershell.exe" or FileName =~ "cmd.exe" or FileName =~ "reg.exe" or FileName =~ "MpCmdRun.exe")
+    | where ProcessCommandLine has "PerfLogs" or ProcessCommandLine has_any ("Add-MpPreference", "Set-MpPreference", "DisableRealtimeMonitoring", "DisableAntiSpyware", "ExclusionPath")
+    // Exclude known enterprise device-management agents that legitimately push Defender policy at scale
+    | where InitiatingProcessFileName !in~ ("CcmExec.exe", "IntuneManagementExtension.exe", "GPScript.exe", "MoUsoCoreWorker.exe")
+    | project DeviceId, ProcessTamperTime = Timestamp, ProcessCommandLine, InitiatingProcessAccountName, InitiatingProcessFileName
+) on DeviceId
+| where TamperEvidence != "" and (Timestamp - ProcessTamperTime) between (-30m .. 30m)
+| project Timestamp, DeviceId, InitiatingProcessAccountName, InitiatingProcessFileName, TamperEvidence, ProcessCommandLine, ProcessTamperTime
+| sort by Timestamp desc
