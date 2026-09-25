@@ -1,0 +1,22 @@
+// Detects the Corp MDM Android implant's concealment routine: MainActivity disables its own
+// launcher component (excluded from Recents) immediately followed by MdmService running as a
+// foreground service under a low-importance channel titled 'System Service' with notification
+// title 'Android System' and text 'System service running.'
+DeviceEvents
+| where ActionType in ("AppComponentDisabled", "NotificationPosted", "ForegroundServiceStarted")
+| where AdditionalFields has "com.corp.mdm"
+ or AdditionalFields has "MdmService"
+ or (AdditionalFields has "MainActivity" and AdditionalFields has "disabled")
+ or (AdditionalFields has "System Service" and AdditionalFields has "Android System" and AdditionalFields has "System service running")
+| extend PackageName = tostring(parse_json(AdditionalFields).PackageName),
+ ComponentName = tostring(parse_json(AdditionalFields).ComponentName),
+ NotificationChannel = tostring(parse_json(AdditionalFields).ChannelName),
+ NotificationTitle = tostring(parse_json(AdditionalFields).NotificationTitle),
+ NotificationText = tostring(parse_json(AdditionalFields).NotificationText),
+ ExcludedFromRecents = tostring(parse_json(AdditionalFields).ExcludedFromRecents)
+| where (ActionType == "AppComponentDisabled" and PackageName == "com.corp.mdm" and ComponentName has "MainActivity" and ExcludedFromRecents =~ "true")
+ or (ActionType == "ForegroundServiceStarted" and PackageName == "com.corp.mdm")
+ or (ActionType == "NotificationPosted" and PackageName == "com.corp.mdm" and NotificationChannel == "System Service" and NotificationTitle == "Android System" and NotificationText has "System service running")
+| summarize Events = make_set(ActionType, 10), FirstSeen = min(Timestamp), LastSeen = max(Timestamp) by DeviceId, PackageName
+| where array_length(Events) >= 1
+| project DeviceId, PackageName, Events, FirstSeen, LastSeen
