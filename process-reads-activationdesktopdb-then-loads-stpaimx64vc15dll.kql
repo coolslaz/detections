@@ -1,0 +1,17 @@
+// Detects the SectopRAT loader sequence: a process reads the payload-carrying
+// Activation.Desktop.db file and then loads stp_aim_x64_vc15.dll (whose license()
+// export triggers EnumSystemCodePagesW() callback shellcode execution)
+let file_reads = DeviceFileEvents
+| where FileName =~ "Activation.Desktop.db"
+| where InitiatingProcessFileName =~ "ReportDump.exe"
+| project DeviceId, FilePath, FileReadTime = Timestamp, ReadingProcessId = InitiatingProcessId, ReadingProcessName = InitiatingProcessFileName;
+let dll_loads = DeviceImageLoadEvents
+| where FileName =~ "stp_aim_x64_vc15.dll"
+| where InitiatingProcessFileName =~ "ReportDump.exe"
+| project DeviceId, DllLoadTime = Timestamp, LoadingProcessId = InitiatingProcessId, LoadingProcessName = InitiatingProcessFileName;
+file_reads
+| join kind=inner (dll_loads) on DeviceId
+| where ReadingProcessId == LoadingProcessId
+| where DllLoadTime between (FileReadTime .. (FileReadTime + 2m))
+| project DeviceId, ReadingProcessName, LoadingProcessName, FilePath, FileReadTime, DllLoadTime
+| sort by FileReadTime desc
