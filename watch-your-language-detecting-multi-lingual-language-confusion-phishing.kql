@@ -1,0 +1,141 @@
+// Title: Watch Your Language: Detecting Multi-Lingual Language-Confusion Phishing
+// Description: Detects phishing messages that deliberately mix writing systems / scripts / homoglyphs in the Subject line as ONE corroborating signal within a broader, multi-signal phishing pattern (mixed-script/homoglyph indicators never alone trigger an alert; they must combine with phishing vocabulary, sender risk, suspicious URLs, risky attachments, or user click activity).
+// Author: Arnold Chan
+// Severity: Medium
+// MITRE ATT&CK: T1566 (Phishing), T1566.001 (Spearphishing Attachment), T1566.002 (Spearphishing Link), T1204.001 (User Execution: Malicious Link), T1204.002 (User Execution: Malicious File), T1583.001 (Acquire Infrastructure: Domains - IDN homograph infrastructure), T1036 (Masquerading), T1684.001 (Impersonation), T1684.002 (Email Spoofing)
+// Tags: phishing, email-security, multilingual, homoglyph
+//
+// IMPORTANT NOTES:
+// - Subject is the only fixed-schema free-text field available in Advanced Hunting for EmailEvents; there is no native full-body-text column, so mixed-script/homoglyph detection is limited to the Subject line.
+// - IdentityInfo (recipient Department/JobTitle enrichment) and OfficeActivity (post-compromise inbox-rule enrichment) are OPTIONAL enrichments that require UEBA and the Office 365 management activity connector respectively to be enabled/ingested; if absent, those lookups simply return no enrichment and related signals remain false.
+// - orgDomains and trustedTranslationOrNewsletterDomains lists MUST be tenant-tuned (accepted org domains, known international partners/translation services/newsletters) before deployment to avoid false positives.
+// - False-positive hardening: brand/product tokens are stripped before the Latin-script check; SuspiciousUrlIndicator requires a high-confidence credential/urgency term (not generic business vocabulary) alongside a link; sender risk requires the domain to be new to BOTH the recipient and the organization; and at least THREE independent signal categories (not two) must corroborate the language-confusion signal before the rule fires.
+let lookback = 1d;
+let baselineWindow = 30d;
+let alertThreshold = 6;
+let orgDomains = dynamic(["contoso.com"]); // TUNE: your accepted domains
+let trustedTranslationOrNewsletterDomains = dynamic(["example-intl-partner.com"]); // TUNE: known intl partners / translation services / newsletters
+let shortenerDomains = dynamic(["bit.ly","tinyurl.com","t.co","goo.gl","ow.ly","is.gd","buff.ly","rebrand.ly","cutt.ly","s.id","shorturl.at","rb.gy","lnkd.in"]);
+let riskyAttachmentExt = dynamic([".html",".htm",".zip",".iso",".img",".svg",".pdf",".js",".hta",".vbs",".one"]);
+let phishTermsRegex = @"(?i)(log[ -]?in|password|passwd|\bmfa\b|multi-factor|verify|verification|\baccount\b|invoice|payment|payroll|voice[ -]?mail|security alert|password reset|reset your|expired|expire[sd]?|urgent|action required|suspend(ed)?|microsoft 365|office 365|sharepoint|onedrive|confirm your|update your|click here|unusual sign-?in|unusual activity|wire transfer)";
+// High-confidence credential-harvesting/urgency terms only -- used to gate SuspiciousUrlIndicator so a
+// mundane business email (e.g. "invoice"/"payment") with a link isn't alone enough to be "suspicious".
+let credAuthTermsRegex = @"(?i)(log[ -]?in|password|passwd|\bmfa\b|multi-factor|verify|verification|password reset|reset your password|reset your account|security alert|confirm your|update your|click here|unusual sign-?in|unusual activity|wire transfer)";
+// Common global brand/product tokens that can legitimately appear embedded in otherwise non-Latin-script
+// correspondence (e.g. a Chinese-language partner email that simply names "Microsoft 365"). Stripped
+// before the Latin-script check so a lone brand mention doesn't itself trigger MixedScriptIndicator.
+let brandTokenRegex = @"(?i)\b(microsoft ?365|office ?365|microsoft|sharepoint|onedrive|outlook|teams|paypal|amazon|apple|google|adobe|dhl|fedex|ups)\b";
+let orgWideDomainBaseline = EmailEvents
+| where Timestamp between (ago(baselineWindow) .. ago(lookback))
+| where EmailDirection == "Inbound"
+| summarize OrgPriorMessageCount = count() by SenderFromDomain;
+let senderBaseline = EmailEvents
+| where Timestamp between (ago(baselineWindow) .. ago(lookback))
+| where EmailDirection == "Inbound"
+| summarize PriorMessageCount = count(), FirstSeen = min(Timestamp) by SenderFromDomain, RecipientEmailAddress;
+let urlSummary = EmailUrlInfo
+| where Timestamp > ago(lookback)
+| summarize UrlDomainsSeen = make_set(UrlDomain, 25), HasShortenedUrl = countif(UrlDomain in (shortenerDomains)) > 0 by NetworkMessageId;
+let attachmentSummary = EmailAttachmentInfo
+| where Timestamp > ago(lookback)
+| extend FileExtension = tolower(extract(@"(\.[A-Za-z0-9]+)$", 1, FileName))
+| summarize RiskyAttachmentTypes = make_set(FileExtension), HasRiskyAttachment = countif(FileExtension in (riskyAttachmentExt)) > 0 by NetworkMessageId;
+let clickSummary = UrlClickEvents
+| where Timestamp > ago(lookback)
+| where ActionType has "Allowed"
+| summarize UserClicked = count() > 0 by NetworkMessageId;
+let postDeliverySummary = EmailPostDeliveryEvents
+| where Timestamp > ago(lookback)
+| summarize PostDeliveryRemediated = count() > 0, PostDeliveryActionTypes = make_set(ActionType) by NetworkMessageId;
+let recipientContext = IdentityInfo
+| summarize arg_max(Timestamp, Department, JobTitle) by AccountUpn
+| project RecipientEmailAddress = AccountUpn, RecipientDept = Department, RecipientTitle = JobTitle;
+let suspiciousRuleActivity = OfficeActivity
+| where TimeGenerated > ago(lookback)
+| where Operation in ("New-InboxRule", "Set-InboxRule", "UpdateInboxRules")
+| where Parameters has_any ("RedirectTo", "ForwardTo", "DeleteMessage", "MoveToFolder")
+| summarize PossiblePostCompromiseActivity = count() > 0 by RecipientEmailAddress = tostring(UserId);
+EmailEvents
+| where Timestamp > ago(lookback)
+| where EmailDirection == "Inbound"
+| extend SubjectText = coalesce(Subject, "")
+| extend SubjectForScriptCheck = replace_regex(SubjectText, brandTokenRegex, "")
+| extend HasLatin      = SubjectForScriptCheck matches regex @"[A-Za-z]"
+| extend HasCyrillic   = SubjectText matches regex @"[\u0400-\u04FF]"
+| extend HasGreek      = SubjectText matches regex @"[\u0370-\u03FF]"
+| extend HasArabic     = SubjectText matches regex @"[\u0600-\u06FF]"
+| extend HasHebrew     = SubjectText matches regex @"[\u0590-\u05FF]"
+| extend HasCJK        = SubjectText matches regex @"[\u4E00-\u9FFF\u3400-\u4DBF]"
+| extend HasKana       = SubjectText matches regex @"[\u3040-\u30FF]"
+| extend HasHangul     = SubjectText matches regex @"[\uAC00-\uD7A3]"
+| extend HasDevanagari = SubjectText matches regex @"[\u0900-\u097F]"
+| extend HasThai       = SubjectText matches regex @"[\u0E00-\u0E7F]"
+| extend ScriptCount = toint(HasLatin) + toint(HasCyrillic) + toint(HasGreek) + toint(HasArabic) + toint(HasHebrew) + toint(HasCJK) + toint(HasKana) + toint(HasHangul) + toint(HasDevanagari) + toint(HasThai)
+| extend NonLatinScriptCount = ScriptCount - toint(HasLatin)
+| extend MixedScriptIndicator = (HasLatin and NonLatinScriptCount >= 1) or (NonLatinScriptCount >= 2)
+| extend DetectedScripts = trim_end(@"[,\s]+", strcat(
+    iff(HasLatin, "Latin,", ""), iff(HasCyrillic, "Cyrillic,", ""), iff(HasGreek, "Greek,", ""),
+    iff(HasArabic, "Arabic,", ""), iff(HasHebrew, "Hebrew,", ""), iff(HasCJK, "CJK,", ""),
+    iff(HasKana, "Hiragana/Katakana,", ""), iff(HasHangul, "Hangul,", ""),
+    iff(HasDevanagari, "Devanagari,", ""), iff(HasThai, "Thai,", "")
+  ))
+| extend HomoglyphIndicator = SubjectText matches regex @"(?:[A-Za-z]+[\u0400-\u04FF\u0370-\u03FF]|[\u0400-\u04FF\u0370-\u03FF]+[A-Za-z])"
+| extend PhishingKeywordMatches = extract_all(phishTermsRegex, SubjectText)
+| extend PhishingKeywordHits = array_length(PhishingKeywordMatches)
+| extend PhishingKeywords = strcat_array(PhishingKeywordMatches, ", ")
+| extend IsExternalSender = SenderFromDomain !in (orgDomains)
+| lookup kind=leftouter (senderBaseline) on SenderFromDomain, RecipientEmailAddress
+| lookup kind=leftouter (orgWideDomainBaseline) on SenderFromDomain
+| extend IsNewSenderDomain = isnull(PriorMessageCount) or PriorMessageCount == 0
+| extend IsNewToOrg = isnull(OrgPriorMessageCount) or OrgPriorMessageCount == 0
+| extend SenderRiskIndicator = IsExternalSender and IsNewSenderDomain and IsNewToOrg
+| lookup kind=leftouter (urlSummary) on NetworkMessageId
+| lookup kind=leftouter (attachmentSummary) on NetworkMessageId
+| lookup kind=leftouter (clickSummary) on NetworkMessageId
+| lookup kind=leftouter (postDeliverySummary) on NetworkMessageId
+| lookup kind=leftouter (recipientContext) on RecipientEmailAddress
+| lookup kind=leftouter (suspiciousRuleActivity) on RecipientEmailAddress
+| extend HasUrls = coalesce(UrlCount, 0) > 0
+| extend CredAuthKeywordHit = SubjectText matches regex credAuthTermsRegex
+| extend SuspiciousUrlIndicator = HasUrls and (coalesce(HasShortenedUrl, false) or CredAuthKeywordHit)
+| extend HasRiskyAttachment = coalesce(HasRiskyAttachment, false)
+| extend UserClicked = coalesce(UserClicked, false)
+| extend PostDeliveryRemediated = coalesce(PostDeliveryRemediated, false)
+| extend PossiblePostCompromiseActivity = coalesce(PossiblePostCompromiseActivity, false)
+| extend MultilingualRoleException = coalesce(RecipientDept, "") has_any (dynamic(["Sales","Localization","Translation","Support","Customer Service","Legal","International"]))
+| where SenderFromDomain !in (trustedTranslationOrNewsletterDomains)
+| extend Sig_MixedScript    = MixedScriptIndicator
+| extend Sig_Homoglyph      = HomoglyphIndicator
+| extend Sig_PhishVocab     = PhishingKeywordHits > 0
+| extend Sig_SenderRisk     = SenderRiskIndicator
+| extend Sig_SuspiciousUrl  = SuspiciousUrlIndicator
+| extend Sig_RiskyAttachment = HasRiskyAttachment
+| extend Sig_UserClicked    = UserClicked
+| extend LanguageConfusionScore =
+    (toint(Sig_MixedScript) * 2) + (toint(Sig_Homoglyph) * 3) + (toint(Sig_PhishVocab) * 2) +
+    (toint(Sig_SenderRisk) * 1) + (toint(Sig_SuspiciousUrl) * 3) + (toint(Sig_RiskyAttachment) * 2) +
+    (toint(Sig_UserClicked) * 3)
+| extend IndependentSignalCount =
+    toint(Sig_MixedScript) + toint(Sig_Homoglyph) + toint(Sig_PhishVocab) + toint(Sig_SenderRisk) +
+    toint(Sig_SuspiciousUrl) + toint(Sig_RiskyAttachment) + toint(Sig_UserClicked)
+| extend LanguageSignalPresent = Sig_MixedScript or Sig_Homoglyph
+| extend DetectionReason = trim_end(@"[;\s]+", strcat(
+    iff(Sig_MixedScript, strcat("Mixed writing systems (", DetectedScripts, "); "), ""),
+    iff(Sig_Homoglyph, "Homoglyph/Unicode character mixed within a Latin word; ", ""),
+    iff(Sig_PhishVocab, strcat("Authentication/phishing vocabulary (", PhishingKeywords, "); "), ""),
+    iff(Sig_SenderRisk, "External sender with no prior history to this recipient; ", ""),
+    iff(Sig_SuspiciousUrl, "Suspicious URL present (shortener and/or auth-themed lure); ", ""),
+    iff(Sig_RiskyAttachment, strcat("Risky attachment type(s) (", tostring(RiskyAttachmentTypes), "); "), ""),
+    iff(Sig_UserClicked, "Recipient subsequently clicked a link in the message; ", "")
+  ))
+| where LanguageSignalPresent
+| where IndependentSignalCount >= 3
+| where LanguageConfusionScore >= alertThreshold
+| where not(MultilingualRoleException) or Sig_UserClicked
+| project
+    Timestamp, RecipientEmailAddress, RecipientDept, SenderFromAddress, SenderFromDomain, SenderDisplayName,
+    Subject, NetworkMessageId, DeliveryAction, DeliveryLocation, ThreatTypes, UrlCount, AttachmentCount,
+    DetectedScripts, HomoglyphIndicator, PhishingKeywords, PhishingKeywordHits, IsExternalSender, IsNewSenderDomain,
+    HasShortenedUrl = coalesce(HasShortenedUrl, false), RiskyAttachmentTypes, UserClicked, PostDeliveryRemediated,
+    PossiblePostCompromiseActivity, LanguageConfusionScore, IndependentSignalCount, DetectionReason
+| sort by LanguageConfusionScore desc
