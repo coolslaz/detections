@@ -1,0 +1,92 @@
+// Exposure-hunting detection: unmanaged/non-compliant OnePlus/OxygenOS BYOD devices accessing enterprise resources
+// Not an exploitation detection - detects device posture/exposure, no Privilege Escalation MITRE mapping
+// Author: Arnold Chan
+let DetectionWindow = 1d;
+let BaselineWindow = 30d;
+let SignInsWindow = SigninLogs
+| where TimeGenerated > ago(DetectionWindow)
+| where ResultType == "0"
+| extend DeviceId_ = tostring(DeviceDetail.deviceId)
+| extend DeviceName_ = tostring(DeviceDetail.displayName)
+| extend OperatingSystem_ = tostring(DeviceDetail.operatingSystem)
+| extend TrustType_ = tostring(DeviceDetail.trustType)
+| extend IsManaged_ = tobool(DeviceDetail.isManaged)
+| extend IsCompliant_ = tobool(DeviceDetail.isCompliant)
+| extend CAStatus_ = tostring(ConditionalAccessStatus)
+| extend ModelHint_ = tostring(DeviceDetail.model)
+| extend VendorHint_ = tostring(DeviceDetail.manufacturer)
+| extend OnePlusConfidence = case(
+    VendorHint_ has "OnePlus" or ModelHint_ has "OnePlus" or DeviceName_ has "OnePlus"
+        or VendorHint_ has "OxygenOS" or ModelHint_ has "OxygenOS" or DeviceName_ has "OxygenOS" or OperatingSystem_ has "OxygenOS"
+        or VendorHint_ has "Oxygen OS" or ModelHint_ has "Oxygen OS" or DeviceName_ has "Oxygen OS" or OperatingSystem_ has "Oxygen OS",
+        "High",
+    ModelHint_ matches regex @"(?i)cph\d{4}" or DeviceName_ matches regex @"(?i)cph\d{4}",
+        "Possible",
+    "")
+| where isnotempty(OnePlusConfidence);
+let BaselineDevices = SigninLogs
+| where TimeGenerated between (ago(BaselineWindow) .. ago(DetectionWindow))
+| extend DeviceId_ = tostring(DeviceDetail.deviceId)
+| where isnotempty(DeviceId_)
+| distinct DeviceId_
+| extend InBaseline = true;
+let DeviceInfoJoin = DeviceInfo
+| summarize arg_max(Timestamp, *) by DeviceId
+| project DefenderDeviceId = DeviceId, AadDeviceId, DefenderDeviceName = DeviceName, DefenderOS = OSPlatform, DefenderOSVersion = OSVersion, DefenderOnboardingStatus = OnboardingStatus;
+SignInsWindow
+| join kind=leftouter (BaselineDevices) on DeviceId_
+| extend NewlyObserved = isnotempty(DeviceId_) and isnull(InBaseline)
+| join kind=leftouter (DeviceInfoJoin) on $left.DeviceId_ == $right.AadDeviceId
+| extend Score_Unmanaged = iff(IsManaged_ == false, 30, 0)
+| extend Score_NonCompliant = iff(IsCompliant_ == false, 25, 0)
+| extend Score_MissingDeviceId = iff(isempty(DeviceId_), 20, 0)
+| extend Score_NewlyObserved = iff(NewlyObserved, 15, 0)
+| extend Score_HighConfidence = iff(OnePlusConfidence == "High", 10, 0)
+| extend Score_BYOD = iff(TrustType_ == "Workplace", 15, 0)
+| extend Score_SuccessfulAuth = 10
+| extend ExposureScore = Score_Unmanaged + Score_NonCompliant + Score_MissingDeviceId + Score_NewlyObserved + Score_HighConfidence + Score_BYOD + Score_SuccessfulAuth
+| extend InvestigationPriority = case(
+    ExposureScore >= 75, "High",
+    ExposureScore >= 45, "Medium",
+    ExposureScore >= 20, "Low",
+    "Informational")
+| where not(IsManaged_ == true and IsCompliant_ == true)
+| where InvestigationPriority in ("High", "Medium")
+| extend ExposureReason = strcat_delim(", ",
+    iff(Score_Unmanaged > 0, "Unmanaged device", ""),
+    iff(Score_NonCompliant > 0, "Non-compliant device", ""),
+    iff(Score_MissingDeviceId > 0, "Missing Entra device ID", ""),
+    iff(Score_NewlyObserved > 0, "Newly observed device", ""),
+    iff(Score_HighConfidence > 0, "High-confidence OnePlus/OxygenOS device", ""),
+    iff(Score_BYOD > 0, "Personal/BYOD trust type", ""),
+    "Successful enterprise authentication")
+| extend ExposureReason = replace_regex(ExposureReason, @"(, )+", ", ")
+| extend ExposureReason = trim(@"^, |, $", ExposureReason)
+| extend OSVersion = coalesce(DefenderOSVersion, "")
+| project
+    TimeGenerated,
+    InvestigationPriority,
+    ExposureScore,
+    ExposureReason,
+    OnePlusConfidence,
+    UserPrincipalName,
+    UserId,
+    IPAddress,
+    AppDisplayName,
+    ResourceDisplayName,
+    DeviceName = DeviceName_,
+    EntraDeviceId = DeviceId_,
+    DefenderDeviceId,
+    Vendor = VendorHint_,
+    Model = ModelHint_,
+    OperatingSystem = OperatingSystem_,
+    OSVersion,
+    IsManaged = IsManaged_,
+    IsCompliant = IsCompliant_,
+    TrustType = TrustType_,
+    NewlyObserved,
+    ConditionalAccessStatus = CAStatus_,
+    ResultType,
+    RiskLevelDuringSignIn,
+    Location
+| order by ExposureScore desc
