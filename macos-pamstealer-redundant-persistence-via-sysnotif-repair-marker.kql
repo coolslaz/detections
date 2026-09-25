@@ -1,0 +1,18 @@
+DeviceFileEvents
+| where Timestamp > ago(14d)
+| where (FolderPath endswith "/Library/LaunchAgents" and FileName =~ "com.apple.finder.agent.plist")
+    or (FolderPath has "Application Support/System" and FileName in~ (".repair-run", "post-checkout", "pre-commit"))
+    or FolderPath has "Application Support/System/.githooks"
+| summarize FilePaths = make_set(FolderPath, 10), FileNames = make_set(FileName, 10), EventTypes = make_set(ActionType, 10) by DeviceId, bin(Timestamp, 1h)
+| where array_length(FileNames) >= 2
+| join kind=inner (
+    DeviceProcessEvents
+    | where Timestamp > ago(14d)
+    | where ProcessCommandLine has "sysnotif-repair"
+        or (ProcessCommandLine has "git" and ProcessCommandLine has "core.hooksPath" and ProcessCommandLine has "Application Support/System/.githooks")
+        or (FileName =~ "launchctl" and ProcessCommandLine has "com.apple.finder.agent")
+    | project DeviceId, Timestamp, ProcessCommandLine, FileName
+) on DeviceId
+| where Timestamp1 between ((Timestamp - 2h) .. (Timestamp + 2h))
+| project Timestamp, DeviceId, FilePaths, FileNames, EventTypes, MatchedCommandLine = ProcessCommandLine, MatchedProcess = FileName
+| sort by Timestamp desc
