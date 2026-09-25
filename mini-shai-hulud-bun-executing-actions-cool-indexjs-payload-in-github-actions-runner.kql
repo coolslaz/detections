@@ -1,0 +1,27 @@
+// Detects the GitHub Actions runner invoking Bun to execute the hidden index.js payload
+// bundled with the compromised actions-cool/issues-helper and actions-cool/maintain-one-comment actions
+// Scoped to Actions runner process context and to index.js paths/workflows tied to those two actions specifically
+DeviceProcessEvents
+| where Timestamp > ago(30d)
+| where FileName in~ ("bun", "bun.exe")
+| where ProcessCommandLine has "run" and ProcessCommandLine has "index.js"
+// require the execution path/context to be tied specifically to the compromised actions-cool actions
+| where ProcessCommandLine has_any ("actions-cool/issues-helper", "actions-cool/maintain-one-comment", "issues-helper", "maintain-one-comment")
+// require GitHub Actions runner process context (runner working directory / action path structure)
+| where ProcessCommandLine has_any ("GITHUB_ACTION_PATH", "_work/_actions", "actions-cool") 
+    or InitiatingProcessCommandLine has_any ("GITHUB_ACTION_PATH", "_work/_actions", "actions-runner", "Runner.Worker")
+    or InitiatingProcessFileName in~ ("Runner.Worker.exe", "Runner.Worker", "Runner.Listener.exe", "Runner.Listener")
+| extend SuspiciousBunExec = (ProcessCommandLine has "$GITHUB_ACTION_PATH/index.js" or ProcessCommandLine has "GITHUB_ACTION_PATH\\index.js")
+    and ProcessCommandLine has_any ("issues-helper", "maintain-one-comment")
+| where SuspiciousBunExec
+// exclude generic/legitimate Bun usage elsewhere in CI that is not scoped to the two compromised actions
+| where not(ProcessCommandLine has_any ("oven-sh/setup-bun", "setup-bun") and not(ProcessCommandLine has_any ("issues-helper", "maintain-one-comment")))
+| join kind=leftouter (
+    DeviceProcessEvents
+    | where Timestamp > ago(30d)
+    | where ProcessCommandLine has_any ("oven-sh/setup-bun", "setup-bun")
+    | project SetupBunTime = Timestamp, DeviceId, InitiatingProcessAccountName
+) on DeviceId
+| where isnull(SetupBunTime) or SetupBunTime <= Timestamp
+| project Timestamp, DeviceId, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, SuspiciousBunExec, SetupBunTime
+| sort by Timestamp desc
