@@ -1,0 +1,9 @@
+// Detects the Corp MDM implant's fake 'System Service' setup flow: the com.corp.mdm package (label 'System Service') is installed/launched and immediately requests RECEIVE_SMS, READ_SMS, and CALL_PHONE (plus POST_NOTIFICATIONS) permissions, matching MainActivity's rapid permission-grab sequence before MdmService starts.
+DeviceEvents
+| where ActionType has_any ("PackageInstalled", "PackageLaunched", "PermissionRequested", "PermissionGranted", "AppInstallation")
+| where AdditionalFields has "com.corp.mdm"
+| extend Permissions = extract_all(@"(RECEIVE_SMS|READ_SMS|CALL_PHONE|POST_NOTIFICATIONS)", AdditionalFields)
+| where array_length(Permissions) >= 2
+| where AdditionalFields has_any ("RECEIVE_SMS", "READ_SMS") and AdditionalFields has "CALL_PHONE"
+| project Timestamp, DeviceId, DeviceName, ActionType, AdditionalFields, Permissions
+| sort by Timestamp asc
