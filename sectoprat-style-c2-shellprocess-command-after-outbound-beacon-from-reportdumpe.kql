@@ -1,0 +1,19 @@
+// Detects the sequence behind SectopRAT's remote control commands (CaptureRequest/StopCapture, ShellJoinCommand, ProcessManager, FileManager):
+// these are JSON 'Type' values decrypted from an AES-encrypted socket, so they are not visible as plaintext in EDR telemetry.
+// What IS observable is the resulting behavior: the compromised process (ReportDump.exe, or any loader-chain process from this family)
+// establishes an outbound C2-style connection and shortly after spawns a shell/process-management child process,
+// matching the ShellJoinCommand/ProcessManager/FileManager command pattern rather than a single isolated indicator.
+let window = 15m;
+DeviceNetworkEvents
+| where InitiatingProcessFileName =~ "ReportDump.exe"
+| where RemoteIP == "98.142.252.140" and RemotePort == 15847
+| project NetTime = Timestamp, DeviceId, DeviceName, RemoteIP, RemotePort, InitiatingProcessId
+| join kind=inner (
+    DeviceProcessEvents
+    | where InitiatingProcessFileName =~ "ReportDump.exe"
+    | where FileName in~ ("cmd.exe", "powershell.exe", "tasklist.exe", "taskkill.exe", "wmic.exe")
+    | project ProcTime = Timestamp, DeviceId, FileName, ProcessCommandLine, InitiatingProcessId
+) on DeviceId, InitiatingProcessId
+| where ProcTime between (NetTime .. (NetTime + window))
+| project NetTime, ProcTime, DeviceName, RemoteIP, RemotePort, FileName, ProcessCommandLine
+| sort by NetTime desc
