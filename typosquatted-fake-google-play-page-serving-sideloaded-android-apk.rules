@@ -1,0 +1,1 @@
+alert http any any -> $HOME_NET any (msg:"Typosquatted fake Google Play page serving sideloaded Android APK"; flow:to_client,established; http.host; content:"playgoogle."; nocase; startswith; fast_pattern; http.uri; content:".apk"; endswith; nocase; classtype:trojan-activity; metadata: attack_id T1566.002, attack_id T1204.002, author Arnold Chan; sid:1000101; rev:1;)
