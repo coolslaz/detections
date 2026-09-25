@@ -1,0 +1,32 @@
+// Detects Max messenger process launching and terminating within seconds of Frida/instrumentation-tooling indicators being present on the device,
+// consistent with the app's Frida-detection self-termination routine, optionally correlated with connection attempts to the GOST-only backend.
+let FridaIndicators = dynamic(["frida", "frida-server", "frida-agent", "gadget.so", "frida-gadget"]);
+let MaxProcessStarts = DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where FileName has_any ("max", "oneme") or FolderPath has_any ("ru.oneme", "com.max")
+| project StartTime = TimeGenerated, DeviceId, ProcessId, InitiatingProcessAccountName, StartFileName = FileName;
+let MaxProcessStops = DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where ActionType == "ProcessTerminated" or ActionType == "ProcessStop"
+| where FileName has_any ("max", "oneme") or FolderPath has_any ("ru.oneme", "com.max")
+| project StopTime = TimeGenerated, DeviceId, ProcessId, StopFileName = FileName;
+let RapidMaxTermination = MaxProcessStarts
+| join kind=inner (MaxProcessStops) on DeviceId, ProcessId
+| where StopTime > StartTime and StopTime - StartTime <= 10s
+| project DeviceId, ProcessId, StartTime, StopTime, DurationSeconds = datetime_diff('second', StopTime, StartTime), StartFileName, StopFileName;
+let FridaOnDevice = DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where FileName has_any (FridaIndicators) or ProcessCommandLine has_any (FridaIndicators) or FolderPath has_any (FridaIndicators)
+| project DeviceId, FridaSeenTime = TimeGenerated, FridaArtifact = FileName;
+let GostBackendAttempts = DeviceNetworkEvents
+| where TimeGenerated > ago(1d)
+| where RemoteUrl has "api-gost.oneme.ru" or RemoteUrl has "oneme.ru"
+| where ActionType == "ConnectionFailed"
+| project DeviceId, ConnTime = TimeGenerated, RemoteUrl, RemotePort, ActionType;
+RapidMaxTermination
+| join kind=leftouter (FridaOnDevice) on DeviceId
+| where isnotempty(FridaArtifact) and abs(datetime_diff('second', StartTime, FridaSeenTime)) <= 30
+| join kind=inner (GostBackendAttempts) on DeviceId
+| where ConnTime between ((StartTime - 5m) .. (StopTime + 5m))
+| project DeviceId, StartTime, StopTime, DurationSeconds, FridaArtifact, FridaSeenTime, RemoteUrl, ConnTime, ActionType
+| sort by StartTime desc
