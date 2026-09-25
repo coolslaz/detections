@@ -1,0 +1,37 @@
+let MaliciousHashes = dynamic([
+  "48D3ECBB9E0B6BABE6E53E2082A076BAD07EF61CCD98DCC8B9E4F390B937788B",
+  "37FCBCB21D16866784050682C58424C91D3A736F6FD599271FA6E53CF5CA8A92",
+  "EFA07701570983909EF923EA79BB032F19FD9DAC0B819FA0E4F6B1161A4CC221",
+  "95F6ABD3C43EF4B33CD61D054527233DD2CE705804D44A04BE96CFB73BB52E3A"
+]);
+let MaliciousIPs = dynamic([
+  "98.142.252.140"
+]);
+let FallbackDomains = dynamic([
+  "bsc-dataseed1.binance.org", "bsc-dataseed2.binance.org", "bsc-dataseed3.binance.org", "bsc-dataseed4.binance.org",
+  "bsc-dataseed1.defibit.io", "bsc-dataseed2.defibit.io", "bsc-dataseed3.defibit.io", "bsc-dataseed4.defibit.io",
+  "bsc-dataseed1.ninicoin.io", "bsc-dataseed2.ninicoin.io", "bsc-dataseed3.ninicoin.io", "bsc-dataseed4.ninicoin.io"
+]);
+let MaliciousURL = "http://98.142.252.140:9000/wmglb";
+let BrowserAndWalletProcesses = dynamic([
+  "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe", "iexplore.exe", "vivaldi.exe", "chromium.exe"
+]);
+let FileHashHits = DeviceFileEvents
+| where SHA256 in~ (MaliciousHashes)
+| project Timestamp, DeviceName, IOCType = "FileHash", IOCValue = SHA256, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, ReportId;
+let NetworkHits = DeviceNetworkEvents
+| where (RemoteIP in (MaliciousIPs) and RemotePort == 15847)
+    or RemoteUrl == MaliciousURL
+    or (RemoteUrl has_any (FallbackDomains) and InitiatingProcessFileName !in~ (BrowserAndWalletProcesses))
+| extend IOCType = case(
+    RemoteIP in (MaliciousIPs) and RemotePort == 15847, "C2_IP",
+    RemoteUrl == MaliciousURL, "C2_URL",
+    "FallbackDomain_NonBrowserProcess")
+| extend IOCValue = case(
+    RemoteIP in (MaliciousIPs) and RemotePort == 15847, RemoteIP,
+    RemoteUrl == MaliciousURL, RemoteUrl,
+    RemoteUrl)
+| project Timestamp, DeviceName, IOCType, IOCValue, RemoteIP, RemoteUrl, RemotePort, InitiatingProcessFileName, InitiatingProcessCommandLine, ReportId;
+FileHashHits
+| union NetworkHits
+| sort by Timestamp desc
