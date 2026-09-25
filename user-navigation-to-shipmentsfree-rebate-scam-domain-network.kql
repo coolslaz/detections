@@ -1,0 +1,15 @@
+// Detects DNS or web requests to the ShipmentsFree family of shipping-rebate scam domains
+// used to lure consumers into undisclosed auto-renewing subscriptions.
+let scam_domains = dynamic(["shipmentsfree.com","freeshipments.com","free-shipments.com","freeshpmts.com","myshipmentsfree.com","shipmentfree.com","shipmentsfreeclub.com","shipmentsfreezone.com"]);
+union isfuzzy=true
+(DeviceNetworkEvents
+| extend Host = tolower(extract(@"^(?:https?://)?([^/:]+)", 1, RemoteUrl))
+| where Host in~ (scam_domains)
+| project Timestamp, DeviceId, DeviceName, RemoteUrl, RemoteIP, InitiatingProcessAccountName, MatchedDomain = Host),
+(DeviceEvents
+| where ActionType == "DnsQueryResponse"
+| extend QueriedDomain = tolower(tostring(parse_json(AdditionalFields).QueryName))
+| where QueriedDomain in~ (scam_domains)
+| project Timestamp, DeviceId, DeviceName, MatchedDomain = QueriedDomain, InitiatingProcessAccountName)
+| where isnotempty(MatchedDomain)
+| summarize FirstSeen = min(Timestamp), LastSeen = max(Timestamp), Hits = count(), SampleRemoteUrl = any(RemoteUrl) by DeviceId, DeviceName, MatchedDomain, InitiatingProcessAccountName
