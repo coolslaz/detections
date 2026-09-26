@@ -1,0 +1,11 @@
+// Detects a download tool (curl/wget) invocation that combines the force=1 URL parameter with an architecture-specific path/string, launched from a shell process consistent with the Macfinger ClickFix -> AMOS Stealer execution chain
+// Requires co-occurrence of all three weak signals (tool, force=1, arch string) rather than matching any single element alone, to avoid legit update/CI scripts
+DeviceProcessEvents
+| where Timestamp > ago(14d)
+| where FileName in~ ("curl", "wget")
+| where InitiatingProcessFileName in~ ("bash", "sh", "zsh", "Terminal")
+| where ProcessCommandLine has "force=1"
+| where ProcessCommandLine matches regex @"(?i)(arm64|x86_64|aarch64|amd64)"
+| where ProcessCommandLine matches regex @"/[a-f0-9]{10,20}\?force=1"
+| project Timestamp, DeviceId, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName, AccountName
+| sort by Timestamp asc
