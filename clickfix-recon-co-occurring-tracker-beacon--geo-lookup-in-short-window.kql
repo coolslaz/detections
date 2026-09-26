@@ -1,0 +1,28 @@
+// Detects host/browser fingerprinting recon tied to the Macfinger ClickFix chain:
+// requires at least two distinct indicator types (tracker domain, ipinfo.io geolocation
+// lookup, or AMOS C2 IP contact) to co-occur on the same device within a tight time
+// window, rather than alerting on any single generic lookup in isolation
+let ClickFixTrackerDomain = "velvet-otter-glacceis.life";
+let AmosC2Ips = dynamic(["45.150.33.128", "95.163.153.80"]);
+let Window = 15m;
+DeviceNetworkEvents
+| where Timestamp > ago(7d)
+| where RemoteUrl has ClickFixTrackerDomain
+    or RemoteUrl has "ipinfo.io"
+    or RemoteIP in (AmosC2Ips)
+| extend IndicatorType = case(
+    RemoteUrl has ClickFixTrackerDomain, "TrackerBeacon",
+    RemoteUrl has "ipinfo.io", "GeoLookup",
+    RemoteIP in (AmosC2Ips), "C2Contact",
+    "Other")
+| extend TimeBucket = bin(Timestamp, Window)
+| summarize
+    DistinctIndicators = dcount(IndicatorType),
+    IndicatorsSeen = make_set(IndicatorType, 5),
+    ContactedHosts = make_set(RemoteUrl, 20),
+    ContactedIPs = make_set(RemoteIP, 20),
+    FirstSeen = min(Timestamp),
+    LastSeen = max(Timestamp)
+    by DeviceId, DeviceName, TimeBucket
+| where DistinctIndicators >= 2
+| project DeviceId, DeviceName, TimeBucket, DistinctIndicators, IndicatorsSeen, ContactedHosts, ContactedIPs, FirstSeen, LastSeen
