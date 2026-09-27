@@ -1,0 +1,52 @@
+// Ledger Google Ads phishing campaign - multi-table IOC hunt
+// Covers: rotating Vercel redirect domains, Google Cloud Storage redirector buckets,
+// and Google Sites phishing landing pages used in the August 2026 ThreatLabz campaign.
+// No malicious IPs or file hashes were supplied by this intel source - the externaldata
+// blocks below are placeholders for an analyst-maintained IOC feed and are no-ops until filled in.
+let vercel_domains = dynamic([
+    "soyyoo-cwpc5n0e.vercel.app",
+    "rpc-gbz5.vercel.app",
+    "whyavc-qwmv6stx.vercel.app",
+    "router-wdoi.vercel.app",
+    "node-f1ey.vercel.app",
+    "wallet-lcbt.vercel.app",
+    "gateway-ch96.vercel.app"
+]);
+let gcs_paths = dynamic([
+    "storage.googleapis.com/apf-leg-ad-23798/",
+    "storage.googleapis.com/ledg-leg1-79230/",
+    "storage.googleapis.com/apf-leg-ad-22076/",
+    "storage.googleapis.com/apf-leg-ad-32595/"
+]);
+let sites_urls = dynamic([
+    "sites.google.com/view/start-ledger-wallet",
+    "sites.google.com/view/apps-ledger-wallet",
+    "sites.google.com/view/download-ledger-wallet-pc",
+    "sites.google.com/view/downloads-ledger-wallet"
+]);
+// --- Placeholder feeds: uncomment and point at a maintained IOC source to extend this hunt ---
+// let ioc_ips = externaldata(IPIndicator:string) [h"https://<analyst-maintained-ip-ioc-feed-url>"] with (format="csv");
+// let ioc_hashes = externaldata(HashIndicator:string) [h"https://<analyst-maintained-hash-ioc-feed-url>"] with (format="csv");
+let all_domains = array_concat(vercel_domains, gcs_paths, sites_urls);
+// DNS query telemetry
+let dns_hits = DnsEvents
+| where TimeGenerated > ago(30d)
+| where Name in~ (vercel_domains)
+| extend MatchedIndicator = Name, IndicatorType = "vercel_redirect_domain"
+| project TimeGenerated, Host = Computer, MatchedIndicator, IndicatorType, SourceTable = "DnsEvents";
+// URL / network connection telemetry - exact host match for Vercel domains, path match only for the highly-specific bucket/site IOCs
+let net_hits = DeviceNetworkEvents
+| where TimeGenerated > ago(30d)
+| extend UrlHost = tostring(parse_url(RemoteUrl).Host)
+| where (UrlHost in~ (vercel_domains)) or (RemoteUrl has_any (gcs_paths)) or (RemoteUrl has_any (sites_urls))
+| extend MatchedIndicator = case(UrlHost in~ (vercel_domains), UrlHost, RemoteUrl), IndicatorType = case(UrlHost in~ (vercel_domains), "vercel_redirect_domain", RemoteUrl has_any (gcs_paths), "gcs_bucket_path", "google_sites_phishing_url")
+| project TimeGenerated, Host = DeviceName, MatchedIndicator, IndicatorType, SourceTable = "DeviceNetworkEvents";
+// File hash telemetry - only fires once an analyst-maintained hash feed is joined in via ioc_hashes above
+let file_hits = DeviceFileEvents
+| where TimeGenerated > ago(30d)
+| where false // placeholder: replace with `| join kind=inner (ioc_hashes) on $left.SHA256 == $right.HashIndicator` once ioc_hashes is populated
+| project TimeGenerated, Host = DeviceName, MatchedIndicator = SHA256, IndicatorType = "file_hash", SourceTable = "DeviceFileEvents";
+dns_hits
+| union net_hits
+| union file_hits
+| sort by TimeGenerated desc
