@@ -1,0 +1,12 @@
+// Detects a service principal issuing a burst of successful Azure Storage ListKeys operations,
+// consistent with post-destruction credential-collection pivot (T1552, T1078.004)
+let KnownBenignCallers = dynamic([]); // populate with known backup/DR/key-rotation automation identities that legitimately retrieve many storage keys in a burst
+AzureActivity
+| where TimeGenerated > ago(1d)
+| where OperationNameValue has "MICROSOFT.STORAGE/STORAGEACCOUNTS/LISTKEYS"
+| where ActivityStatusValue == "Success"
+| extend CallerIdentity = coalesce(Caller, tostring(parse_json(Authorization).action))
+| where CallerIdentity !in (KnownBenignCallers)
+| summarize KeyRetrievals = count(), DistinctAccounts = dcount(Resource), TargetAccounts = make_set(Resource, 200), SiteRecoveryAccounts = countif(Resource has_any ("asr", "siterecovery", "recovery")) by CallerIdentity, TimeGenerated = bin(TimeGenerated, 30m)
+| where KeyRetrievals >= 30 and DistinctAccounts >= 10
+| project TimeGenerated, CallerIdentity, KeyRetrievals, DistinctAccounts, SiteRecoveryAccounts, TargetAccounts
