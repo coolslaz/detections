@@ -1,0 +1,17 @@
+// Detects the Kothamine UAC-bypass chain: fodhelper.exe launched with no arguments
+// (the classic silent fodhelper UAC-bypass trigger) immediately spawning a
+// PowerShell child running elevated.ps1 or referencing TailscalePortable paths
+DeviceProcessEvents
+| where FileName =~ "fodhelper.exe"
+| where isempty(ProcessCommandLine) or ProcessCommandLine matches regex @'(?i)^"?[^"]*fodhelper\.exe"?\s*$'
+| project FodTimestamp = Timestamp, DeviceId, FodProcessId = ProcessId, FodCommandLine = ProcessCommandLine
+| join kind=inner (
+    DeviceProcessEvents
+    | where FileName =~ "powershell.exe"
+    | where ProcessCommandLine has "elevated.ps1" or ProcessCommandLine has "TailscalePortable"
+    | project PsTimestamp = Timestamp, DeviceId, InitiatingProcessId, InitiatingProcessFileName, ProcessCommandLine, ProcessId, AccountName, DeviceName = DeviceName
+) on DeviceId, $left.FodProcessId == $right.InitiatingProcessId
+| where InitiatingProcessFileName =~ "fodhelper.exe"
+| where PsTimestamp - FodTimestamp between (0s .. 5min)
+| project FodTimestamp, PsTimestamp, DeviceId, DeviceName, AccountName, FodCommandLine, ProcessCommandLine, FodProcessId, ProcessId
+| sort by PsTimestamp desc
