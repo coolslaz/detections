@@ -1,0 +1,43 @@
+// Lunex MaaS IOC hunt: known hashes, C2 IPs, phishing/panel domains, payload URL
+let lookback = 30d;
+let lunex_hashes = dynamic([
+ "38e90affe37342ee36917cdc535fe9bf04589afa8430eb8d1ba1016adcfc1878",
+ "bf14cd6c3328ebd08e940478b5d1da04e9e5aa576d045d41950bf4f1e2456dd8",
+ "6e8b49cf70bf854e8c59c7d27cefa89406caf8978461190dabb86dafcd8554e1",
+ "06f434695f93d7fd11eeff71358ff69fed79d310a66d993bbcc4ff979c117c90"
+]);
+let lunex_ips = dynamic(["193.178.159.128","107.175.82.242","193.178.158.61","103.101.85.123"]);
+let lunex_domains = dynamic(["uasputnik.com","account-sams-club.com","teamwork-recover-password.com","namshi-uae.com","whatsappbusineses.com","ibraq-perfumes.com"]);
+let lunex_url = "http://107.175.82.242:9000/wilow/psychedeliclove.exe";
+let file_hits =
+ DeviceFileEvents
+ | where Timestamp > ago(lookback)
+ | where SHA256 in (lunex_hashes)
+ | extend IocType = "hash", IocValue = SHA256, ProcessContext = strcat(InitiatingProcessFileName, " | ", InitiatingProcessCommandLine)
+ | project Timestamp, DeviceId, IocType, IocValue, FileName, FolderPath, ProcessContext;
+let process_hits =
+ DeviceProcessEvents
+ | where Timestamp > ago(lookback)
+ | where SHA256 in (lunex_hashes)
+ | extend IocType = "hash", IocValue = SHA256, ProcessContext = strcat(FileName, " | ", ProcessCommandLine)
+ | project Timestamp, DeviceId, IocType, IocValue, FileName, FolderPath, ProcessContext;
+let network_ip_hits =
+ DeviceNetworkEvents
+ | where Timestamp > ago(lookback)
+ | where RemoteIP in (lunex_ips)
+ | extend IocType = "ip", IocValue = RemoteIP, ProcessContext = strcat(InitiatingProcessFileName, " | ", InitiatingProcessCommandLine)
+ | project Timestamp, DeviceId, IocType, IocValue, FileName = InitiatingProcessFileName, FolderPath = InitiatingProcessFolderPath, ProcessContext;
+let network_domain_hits =
+ DeviceNetworkEvents
+ | where Timestamp > ago(lookback)
+ | where RemoteUrl has_any (lunex_domains)
+ | extend IocType = "domain", IocValue = RemoteUrl, ProcessContext = strcat(InitiatingProcessFileName, " | ", InitiatingProcessCommandLine)
+ | project Timestamp, DeviceId, IocType, IocValue, FileName = InitiatingProcessFileName, FolderPath = InitiatingProcessFolderPath, ProcessContext;
+let network_url_hits =
+ DeviceNetworkEvents
+ | where Timestamp > ago(lookback)
+ | where RemoteUrl == lunex_url or RemoteUrl contains "wilow/psychedeliclove.exe"
+ | extend IocType = "url", IocValue = RemoteUrl, ProcessContext = strcat(InitiatingProcessFileName, " | ", InitiatingProcessCommandLine)
+ | project Timestamp, DeviceId, IocType, IocValue, FileName = InitiatingProcessFileName, FolderPath = InitiatingProcessFolderPath, ProcessContext;
+union file_hits, process_hits, network_ip_hits, network_domain_hits, network_url_hits
+| sort by Timestamp desc
