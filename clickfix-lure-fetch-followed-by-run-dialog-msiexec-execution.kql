@@ -1,0 +1,16 @@
+// Detects the Psychedelic Stealer ClickFix sequence: browser loads the fake Cloudflare CAPTCHA lure page / clipboard command endpoint, followed shortly after by a Windows Run dialog (explorer.exe) launching msiexec.exe
+let lure_events = DeviceNetworkEvents
+| where Timestamp > ago(7d)
+| where RemoteUrl has "uasputnik.com" and (RemoteUrl has "sputnik.html" or RemoteUrl has "admin777111777.php") // anchor path match to the known lure domain, not just the path string
+| project LureTime = Timestamp, DeviceId, DeviceName, RemoteUrl, RemoteIP;
+let msi_events = DeviceProcessEvents
+| where Timestamp > ago(7d)
+| where FileName =~ "msiexec.exe"
+| where InitiatingProcessFileName =~ "explorer.exe"
+| where ProcessCommandLine has_any ("uasputnik.com", "176.53.159.40", "107.175.82.242", "193.178.159.128") // remote MSI fetched from known Psychedelic Stealer infra, not just any http(s) source
+| project MsiTime = Timestamp, DeviceId, ProcessCommandLine, InitiatingProcessFileName, AccountName;
+lure_events
+| join kind=inner (msi_events) on DeviceId
+| where MsiTime between (LureTime .. LureTime + 5m) // tightened from 15m to reduce coincidental pairing
+| project LureTime, MsiTime, DeviceId, DeviceName, RemoteUrl, RemoteIP, ProcessCommandLine, AccountName
+| sort by MsiTime desc
