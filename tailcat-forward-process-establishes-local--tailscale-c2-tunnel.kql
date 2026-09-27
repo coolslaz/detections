@@ -1,0 +1,33 @@
+// Detects the tailcat-based encrypted C2 tunnel setup: a tailcat.exe process running from a non-standard TailscalePortable user-profile path (not the official Tailscale install location) launched with a 'forward' argument and a tc-prefixed local:remote port pair, followed by a loopback connect to the exact port it opened and a subsequent periodic keep-alive loop, all tied to that same process/parent lineage
+let TailcatLaunches =
+    DeviceProcessEvents
+    | where Timestamp > ago(1d)
+    | where FileName =~ "tailcat.exe"
+    | where FolderPath has "TailscalePortable"
+    | where FolderPath !has "Program Files" and FolderPath !has "Tailscale IPN"
+    | where ProcessCommandLine has "forward"
+    | where ProcessCommandLine matches regex @"tc\S*\d{2,5}:\d{2,5}"
+    | extend LocalPort = extract(@"(\d{2,5}):\d{2,5}", 1, ProcessCommandLine)
+    | project DeviceId, DeviceName, TailcatTimestamp = Timestamp, TailcatProcessId = ProcessId, TailcatParentId = InitiatingProcessId, FolderPath, ProcessCommandLine, LocalPort;
+TailcatLaunches
+| join kind=inner (
+    DeviceNetworkEvents
+    | where Timestamp > ago(1d)
+    | where RemoteIP in ("127.0.0.1", "::1")
+    | project DeviceId, LoopbackTimestamp = Timestamp, LoopbackRemotePort = tostring(RemotePort), LoopbackProcessId = InitiatingProcessId, LoopbackParentId = InitiatingProcessParentId, LoopbackProcess = InitiatingProcessFileName, LoopbackProcessPath = InitiatingProcessFolderPath, RemoteIP, RemotePortField = RemotePort
+) on DeviceId
+| where LoopbackRemotePort == LocalPort
+| where LoopbackProcessId == TailcatProcessId or LoopbackParentId == TailcatProcessId or LoopbackProcessId == TailcatParentId
+| where LoopbackTimestamp - TailcatTimestamp between (0s .. 5m)
+| join kind=inner (
+    DeviceNetworkEvents
+    | where Timestamp > ago(1d)
+    | where RemoteIP !in ("127.0.0.1", "::1")
+    | project DeviceId, KeepAliveTimestamp = Timestamp, KeepAliveProcessId = InitiatingProcessId, KeepAliveParentId = InitiatingProcessParentId, KeepAliveRemoteIP = RemoteIP, KeepAliveRemotePort = RemotePort
+) on DeviceId
+| where KeepAliveProcessId == TailcatProcessId or KeepAliveParentId == TailcatProcessId or KeepAliveProcessId == TailcatParentId
+| where KeepAliveTimestamp > LoopbackTimestamp
+| summarize KeepAliveCount = dcount(KeepAliveTimestamp), KeepAliveConnectTimes = make_list(KeepAliveTimestamp, 20), RemoteIPs = make_set(KeepAliveRemoteIP, 20), RemotePorts = make_set(KeepAliveRemotePort, 20)
+    by DeviceId, DeviceName, TailcatTimestamp, TailcatProcessId, TailcatParentId, FolderPath, ProcessCommandLine, LocalPort, LoopbackTimestamp, LoopbackProcess, LoopbackProcessPath
+| where KeepAliveCount >= 2
+| project DeviceId, DeviceName, TailcatTimestamp, FolderPath, ProcessCommandLine, LocalPort, LoopbackTimestamp, LoopbackProcess, LoopbackProcessPath, KeepAliveCount, KeepAliveConnectTimes, RemoteIPs, RemotePorts
