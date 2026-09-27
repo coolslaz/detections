@@ -1,0 +1,11 @@
+// Detects navigation to Google Sites pages abusing the trusted sites.google.com domain
+// to host Ledger-impersonating phishing content, typically reached via a redirect chain
+// (Google ad -> GCS bucket -> rotating Vercel domain -> Google Sites landing page)
+DeviceNetworkEvents
+| where TimeGenerated > ago(14d)
+| extend UrlHost = tostring(parse_url(RemoteUrl).Host), UrlPath = tostring(parse_url(RemoteUrl).Path)
+| where UrlHost =~ "sites.google.com"
+| where UrlPath matches regex @"(?i)^/view/(start-ledger|apps-ledger|download-ledger|downloads-ledger|ledger-wallet|ledger-desktop)(-[a-z0-9]+)?$"
+| extend SitePath = extract(@"/view/([a-z0-9\-]+)", 1, UrlPath)
+| project TimeGenerated, DeviceId, DeviceName, InitiatingProcessAccountName, RemoteUrl, SitePath, InitiatingProcessFileName
+| sort by TimeGenerated desc
