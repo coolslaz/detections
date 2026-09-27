@@ -1,0 +1,19 @@
+// Detects a non-browser process directly modifying Chrome's Secure Preferences file
+// (used to bypass the HMAC integrity check and silently enable/load a malicious extension)
+// followed by developer-mode / extension state file writes in the same profile
+DeviceFileEvents
+| where TimeGenerated > ago(1d)
+| where FolderPath has @"\Google\Chrome\User Data" or FolderPath has @"\Microsoft\Edge\User Data"
+| where FileName =~ "Secure Preferences"
+| where ActionType in ("FileModified", "FileCreated")
+| where InitiatingProcessFileName !in~ ("chrome.exe", "msedge.exe", "GoogleUpdate.exe", "MicrosoftEdgeUpdate.exe")
+| join kind=inner (
+    DeviceFileEvents
+    | where TimeGenerated > ago(1d)
+    | where FolderPath has_any (@"\Extensions\", @"\Extension Rules\", @"\Extension State\")
+    | where ActionType in ("FileCreated", "FileModified")
+    | where InitiatingProcessFileName !in~ ("chrome.exe", "msedge.exe")
+) on DeviceId, InitiatingProcessFileName
+| where abs(datetime_diff('minute', TimeGenerated, TimeGenerated1)) <= 10
+| project TimeGenerated, DeviceId, InitiatingProcessFileName, InitiatingProcessCommandLine, FolderPath, FileName, FolderPath1, FileName1, TimeGenerated1
+| summarize Events = count(), Files = make_set(FileName, 10), ExtensionArtifacts = make_set(FileName1, 10) by DeviceId, InitiatingProcessFileName, InitiatingProcessCommandLine
