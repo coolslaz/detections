@@ -1,0 +1,21 @@
+AzureActivity
+| where TimeGenerated > ago(1d)
+| where OperationNameValue =~ "Microsoft.Storage/storageAccounts/delete"
+| where ActivityStatusValue in ("Success", "Failure") // terminal states only; excluding "Start" avoids double-counting the same operation as two events
+| extend Caller = tostring(Caller)
+| extend ResourceGroup = tostring(split(_ResourceId, "/")[4])
+| summarize
+    DeleteAttempts = count(),
+    SuccessCount = countif(ActivityStatusValue == "Success"),
+    DeniedCount = countif(ActivityStatusValue == "Failure"),
+    DistinctStorageAccounts = dcount(_ResourceId),
+    DistinctResourceGroups = dcount(ResourceGroup),
+    FirstAttempt = min(TimeGenerated),
+    LastAttempt = max(TimeGenerated),
+    SampleResources = make_set(_ResourceId, 20)
+    by Caller, CallerIpAddress, bin(TimeGenerated, 10m)
+| where DeleteAttempts >= 20
+| where datetime_diff('minute', LastAttempt, FirstAttempt) <= 10
+| where DistinctStorageAccounts >= 10
+| where DistinctResourceGroups >= 3 // scoped/planned teardown (e.g. a terraform destroy of one project) typically stays within 1-2 resource groups; indiscriminate destruction spans many
+| sort by DeleteAttempts desc
