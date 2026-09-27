@@ -1,0 +1,9 @@
+DeviceProcessEvents
+| where FileName in~ ("powershell.exe", "powershell_ise.exe", "pwsh.exe", "schtasks.exe")
+| where ProcessCommandLine has "MicrosoftEdgeUpdateTask"
+| where ProcessCommandLine has "MicrosoftEdgeUpdateCore.exe"
+| where ProcessCommandLine has "AppData" and ProcessCommandLine has "Roaming"
+| where ProcessCommandLine has "-AtLogOn" or ProcessCommandLine has "ONLOGON" or ProcessCommandLine has "/sc onlogon" or ProcessCommandLine has "/SC ONLOGON"
+| where (FileName =~ "schtasks.exe" and ProcessCommandLine has "/create")
+ or (FileName in~ ("powershell.exe", "powershell_ise.exe", "pwsh.exe") and ProcessCommandLine has "Register-ScheduledTask" and ProcessCommandLine has "New-ScheduledTaskAction" and ProcessCommandLine has "New-ScheduledTaskTrigger")
+| project Timestamp, DeviceId, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, FolderPath
