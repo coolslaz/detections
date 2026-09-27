@@ -1,0 +1,59 @@
+// Detects a cluster of successful sign-ins from long-dormant accounts, requiring correlation with at least one
+// TeamFiltration-consistent risk indicator: preceding failed attempts (spray pattern), sign-in from a
+// country/ASN never seen for that account historically, or total absence of any prior sign-in activity
+// (success or failure) over an extended dormancy window
+let lookback = 90d;
+let burstWindow = 10m;
+let failWindow = 1h;
+// Users with zero successful sign-ins in the long lookback window (dormant/unmanaged accounts)
+let priorSuccessfulUsers =
+    SigninLogs
+    | where TimeGenerated between (ago(lookback) .. ago(1d))
+    | where ResultType == 0
+    | where isnotempty(UserPrincipalName)
+    | distinct UserPrincipalName;
+// Historical country/ASN footprint per user, from any prior sign-in activity (success or failure)
+let priorLocations =
+    SigninLogs
+    | where TimeGenerated between (ago(lookback) .. ago(1d))
+    | where isnotempty(UserPrincipalName)
+    | extend Country = tostring(LocationDetails.countryOrRegion)
+    | summarize KnownCountries = make_set(Country, 100) by UserPrincipalName;
+// Users with absolutely no sign-in activity at all (success or failure) in the full lookback window
+let neverSeenUsers =
+    SigninLogs
+    | where TimeGenerated between (ago(lookback) .. ago(1d))
+    | where isnotempty(UserPrincipalName)
+    | distinct UserPrincipalName;
+let candidates =
+    SigninLogs
+    | where TimeGenerated > ago(1d)
+    | where ResultType == 0
+    | where isnotempty(UserPrincipalName)
+    | where UserPrincipalName !in (priorSuccessfulUsers)
+    | extend Country = tostring(LocationDetails.countryOrRegion);
+// Signal 1: preceding failed attempts from the same account within the fail window (spray pattern)
+let withFailedPrecursor =
+    candidates
+    | join kind=leftsemi (
+        SigninLogs
+        | where TimeGenerated > ago(1d) - failWindow
+        | where ResultType != 0
+        | where isnotempty(UserPrincipalName)
+        | project UserPrincipalName, FailTime = TimeGenerated
+    ) on UserPrincipalName
+    | extend RiskSignal = "prior_failed_attempts";
+// Signal 2: unfamiliar country never observed for this account historically
+let withUnfamiliarCountry =
+    candidates
+    | join kind=leftouter (priorLocations) on UserPrincipalName
+    | where isnull(KnownCountries) or not(set_has_element(KnownCountries, Country))
+    | extend RiskSignal = "unfamiliar_country";
+// Signal 3: account never observed in logs at all (success or failure) over the full dormancy window
+let withNoHistory =
+    candidates
+    | where UserPrincipalName !in (neverSeenUsers)
+    | extend RiskSignal = "no_prior_signin_history";
+union withFailedPrecursor, withUnfamiliarCountry, withNoHistory
+| summarize RiskSignals = make_set(RiskSignal), SignInCount = count() by UserPrincipalName, bin(TimeGenerated, burstWindow)
+| where SignInCount > 0
