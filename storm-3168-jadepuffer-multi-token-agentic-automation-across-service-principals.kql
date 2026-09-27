@@ -1,0 +1,36 @@
+// Detects the JADEPUFFER/Storm-3168 pattern of multiple unique OAuth tokens issued to the same
+// service principal in a short window, with overlapping token lifetimes, using the automation-tell
+// python-requests/2.34.2 user agent shared across principals -- the token-orchestration signature
+// of scripted/agentic execution rather than manual operator activity.
+// FP tightening: python-requests is a widely-used default UA for legitimate internal automation and
+// SDKs, not just this campaign. Restricting to successful token issuance and excluding known benign
+// automation identities removes the largest source of routine-tooling noise.
+let lookback = 1d;
+let KnownBenignAppIds = dynamic([]); // populate with known Python-based automation/CI-CD service principal AppIds in your tenant
+let signins = AADServicePrincipalSignInLogs
+| where TimeGenerated > ago(lookback)
+| where UserAgent has "python-requests"
+| where ResultType == "0"
+| where AppId !in (KnownBenignAppIds)
+| project ServicePrincipalId, ServicePrincipalName, AppId, TimeGenerated, UniqueTokenIdentifier, IPAddress, ResultType;
+// Selection A: a single service principal issued several distinct tokens in a tight window
+let multi_token_sp = signins
+| summarize TokenCount = dcount(UniqueTokenIdentifier),
+            Tokens = make_set(UniqueTokenIdentifier, 10),
+            IPs = make_set(IPAddress, 10),
+            FirstSeen = min(TimeGenerated),
+            LastSeen = max(TimeGenerated)
+          by ServicePrincipalId, ServicePrincipalName
+| extend WindowSeconds = datetime_diff('second', LastSeen, FirstSeen)
+| where TokenCount >= 4 and WindowSeconds <= 3600;
+// Selection B: two distinct tokens for the same principal active within the same 70-second window
+let overlapping_tokens = signins
+| join kind=inner (signins) on ServicePrincipalId
+| where UniqueTokenIdentifier != UniqueTokenIdentifier1
+| where abs(datetime_diff('second', TimeGenerated, TimeGenerated1)) <= 70
+| summarize OverlapPairs = dcount(strcat(UniqueTokenIdentifier, "-", UniqueTokenIdentifier1)) by ServicePrincipalId, ServicePrincipalName
+| where OverlapPairs > 0;
+multi_token_sp
+| join kind=inner (overlapping_tokens) on ServicePrincipalId
+| project ServicePrincipalId, ServicePrincipalName, TokenCount, WindowSeconds, OverlapPairs, Tokens, IPs, FirstSeen, LastSeen
+| sort by TokenCount desc
