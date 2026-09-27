@@ -1,0 +1,12 @@
+DeviceProcessEvents
+| where FileName =~ "powershell.exe"
+| where ProcessCommandLine has "-NoP" and ProcessCommandLine has "-NonI"
+| where ProcessCommandLine has "-W" and ProcessCommandLine has "Hidden"
+| where ProcessCommandLine has "-Exec" and ProcessCommandLine has "Bypass"
+| where ProcessCommandLine has "Add-MpPreference"
+| where ProcessCommandLine has_any ("-ExclusionPath", "-ExclusionProcess")
+| where ProcessCommandLine has_any ("MicrosoftEdgeUpdateCore.exe", "MicrosoftEdgeUpdateCore.dll")
+| where not(InitiatingProcessFileName has_any ("cmd.exe", "powershell.exe", "pwsh.exe", "msiexec.exe", "services.exe", "sccm.exe", "ccmexec.exe"))
+| where InitiatingProcessFileName !endswith "deploy.exe"
+| where Timestamp - InitiatingProcessCreationTime < 5m
+| project Timestamp, DeviceId, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessId, InitiatingProcessCreationTime
