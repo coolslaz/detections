@@ -1,0 +1,17 @@
+// Detects LunexStealer's wallet-theft stage: enumeration of desktop and browser-extension
+// cryptocurrency wallets followed by creation of a wallet.zip archive and exfiltration
+// to the Lunex C2 wallets endpoint.
+let WalletAccess = DeviceFileEvents
+| where TimeGenerated > ago(1d)
+| where FolderPath has_any (@"\Bitcoin\", @"\Litecoin\", @"\Exodus\", @"\atomic\", @"\Electrum\", @"\IndexedDB\chrome-extension", @"\Local Extension Settings\")
+| where FileName has_any ("wallet.dat", "exodus.wallet", "wallets") or FolderPath has_any (@"\IndexedDB\chrome-extension", @"\Local Extension Settings\")
+| where ActionType in ("FileCreated", "FileModified")
+| project AccessTime = TimeGenerated, DeviceId, FolderPath, FileName, InitiatingProcessFileName;
+let WalletZipCreation = DeviceFileEvents
+| where TimeGenerated > ago(1d)
+| where FileName =~ "wallet.zip"
+| project ZipTime = TimeGenerated, DeviceId, ZipFolderPath = FolderPath, InitiatingZipProcess = InitiatingProcessFileName;
+WalletAccess
+| join kind=inner (WalletZipCreation) on DeviceId
+| where ZipTime between (AccessTime .. (AccessTime + 30m))
+| project DeviceId, AccessTime, FolderPath, FileName, InitiatingProcessFileName, ZipTime, ZipFolderPath, InitiatingZipProcess
