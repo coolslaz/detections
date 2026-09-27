@@ -1,0 +1,38 @@
+// Detects destructive deletion of a Key Vault, Function App, and App Service plan
+// belonging to the same resource group within a short window by the same caller,
+// consistent with the JADEPUFFER destructive-burst pattern (T1485)
+// FP tightening: this exact 3-resource-type deletion pattern is also produced by routine
+// decommissioning of ephemeral app+vault+plan stacks (e.g. terraform destroy). Excluding cases
+// where the same caller also fully deleted the resource group isolates the selective-deletion
+// pattern actually observed in the campaign (the group itself survived; only specific resources
+// were removed, sparing a similarly-named storage account).
+let KnownBenignCallers = dynamic([]); // populate with CI/CD pipeline / IaC deployment identities that routinely tear down ephemeral app+vault+plan stacks
+let rgFullDeletes = AzureActivity
+| where TimeGenerated > ago(1d)
+| where OperationNameValue =~ "MICROSOFT.RESOURCES/SUBSCRIPTIONS/RESOURCEGROUPS/DELETE"
+| where ActivityStatusValue == "Success"
+| project Caller, ResourceGroup;
+AzureActivity
+| where TimeGenerated > ago(1d)
+| where ActivityStatusValue == "Success"
+| where Caller !in (KnownBenignCallers)
+| where OperationNameValue in~ (
+    "MICROSOFT.KEYVAULT/VAULTS/DELETE",
+    "MICROSOFT.WEB/SITES/DELETE",
+    "MICROSOFT.WEB/SERVERFARMS/DELETE"
+)
+| extend ResourceType = case(
+    OperationNameValue =~ "MICROSOFT.KEYVAULT/VAULTS/DELETE", "KeyVault",
+    OperationNameValue =~ "MICROSOFT.WEB/SITES/DELETE", "FunctionApp",
+    OperationNameValue =~ "MICROSOFT.WEB/SERVERFARMS/DELETE", "AppServicePlan",
+    "Other")
+| summarize DistinctResourceTypes = make_set(ResourceType), 
+            DeleteCount = count(),
+            FirstDelete = min(TimeGenerated),
+            LastDelete = max(TimeGenerated)
+    by Caller, ResourceGroupName = ResourceGroup, bin(TimeGenerated, 10m)
+| where array_length(DistinctResourceTypes) >= 3
+| where DistinctResourceTypes has "KeyVault" and DistinctResourceTypes has "FunctionApp" and DistinctResourceTypes has "AppServicePlan"
+| where datetime_diff('minute', LastDelete, FirstDelete) <= 10
+| join kind=leftanti (rgFullDeletes) on Caller, $left.ResourceGroupName == $right.ResourceGroup
+| project Caller, ResourceGroupName, DistinctResourceTypes, DeleteCount, FirstDelete, LastDelete
