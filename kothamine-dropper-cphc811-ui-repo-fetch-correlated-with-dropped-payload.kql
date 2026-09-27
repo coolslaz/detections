@@ -1,0 +1,24 @@
+// Detects the Kothamine dropper chain: a process fetching payloads from the exact
+// cphc811-ui GitHub repository, correlated on the same device with the subsequent
+// drop of a known Kothamine-associated file (tailcat/tailscale portable bundle, injector DLL, or npm-sc-legit.exe)
+let kothamine_dropped_files = dynamic(["tailcat.exe", "tailscale.exe", "tailscaled.exe", "tailscale-ipn.exe", "wintun.dll", "npm-sc-legit.exe", "MicrosoftEdgeUpdateCore.dll", "Stager.dll"]);
+let repo_fetch_network =
+    DeviceNetworkEvents
+    | where RemoteUrl has "github.com/cphc811-ui/new-tails"
+    | project Timestamp, DeviceId, DeviceName, AccountName = InitiatingProcessAccountName, FileName = InitiatingProcessFileName, ProcessCommandLine = InitiatingProcessCommandLine, InitiatingProcessFileName;
+let repo_fetch_cmdline =
+    DeviceProcessEvents
+    | where ProcessCommandLine has "github.com/cphc811-ui/new-tails"
+    | project Timestamp, DeviceId, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName;
+let repo_fetches =
+    union repo_fetch_network, repo_fetch_cmdline
+    | summarize FetchTime = min(Timestamp) by DeviceId, DeviceName;
+let dropped_files =
+    DeviceFileEvents
+    | where FileName in~ (kothamine_dropped_files)
+    | project DropTime = Timestamp, DeviceId, DroppedFileName = FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName = InitiatingProcessAccountName;
+repo_fetches
+| join kind=inner (dropped_files) on DeviceId
+| where DropTime between (FetchTime .. (FetchTime + 1h))
+| project FetchTime, DropTime, DeviceId, DeviceName, AccountName, DroppedFileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine
+| sort by DropTime desc
