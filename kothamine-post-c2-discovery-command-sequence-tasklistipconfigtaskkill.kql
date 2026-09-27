@@ -1,0 +1,19 @@
+// Detects the Kothamine agent's discovery command chain executed via _popen()/cmd
+// after C2 loop establishment: tasklist, ipconfig, taskkill in close succession
+// from the SAME parent process instance, consistent with sysinfo/tasklist/kill/ipconfig commands
+DeviceProcessEvents
+| where Timestamp > ago(1d)
+| where (FileName =~ "tasklist.exe" and ProcessCommandLine has_all ("/FO", "CSV", "/NH"))
+    or (FileName =~ "ipconfig.exe" and ProcessCommandLine has "/all")
+    or (FileName =~ "taskkill.exe" and ProcessCommandLine has_all ("/F", "/PID"))
+| summarize
+    Commands = make_set(ProcessCommandLine, 10),
+    DistinctBehaviors = dcount(FileName),
+    TotalCommands = count(),
+    FirstSeen = min(Timestamp),
+    LastSeen = max(Timestamp)
+    by DeviceId, InitiatingProcessId, InitiatingProcessFileName, InitiatingProcessCreationTime
+| where DistinctBehaviors >= 2
+| where TotalCommands >= 3
+| where LastSeen - FirstSeen <= 5m
+| order by LastSeen desc
