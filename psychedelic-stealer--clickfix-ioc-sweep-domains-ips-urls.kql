@@ -1,0 +1,63 @@
+// IOC Hunt: Psychedelic Stealer / ClickFix campaign (Dark Caracal, РУБЛЁВКА TDS operators)
+// Sweeps Microsoft Defender advanced hunting tables for known-bad hashes, IPs, domains, and URLs
+// from the Arctic Wolf / Blackpoint Cyber reporting. Retrospective hunt, not an alerting rule —
+// widen/narrow the lookback as needed.
+let lookback = 30d;
+let malicious_sha256 = dynamic([
+    "06f434695f93d7fd11eeff71358ff69fed79d310a66d993bbcc4ff979c117c90", // psychedeliclove.exe (final stealer payload)
+    "38e90affe37342ee36917cdc535fe9bf04589afa8430eb8d1ba1016adcfc1878", // elita.msi (first-stage installer)
+    "28f8494b273ed029a75b5491ce24333bf03ddc6c9b312b2fccc845b93dfaff02", // miks.msi
+    "7c132a7a7bdd511b026f1fa5f817880b7063bd454b38f6670410d1e09dd84ec6", // miks.msi (variant)
+    "816cb88f5f5ab81c7178d5c1238ca868468414ad1bd4c0c72a8c0fe895593b29", // sova.msi
+    "1dfa69c3f4255f2b954f2c36bc55e043ca6d1ac92f1d22a4627e5277a416d3b8"  // second-stage payload
+]);
+let malicious_ips = dynamic([
+    "176.53.159.40",   // uasputnik.com A record
+    "107.175.82.242",  // psychedeliclove.exe download host (TCP 9000)
+    "193.178.159.128"  // Psychedelic Stealer C2 (TCP 8080)
+]);
+let malicious_domains = dynamic([
+    "uasputnik.com",
+    "www.uasputnik.com",
+    "fsputnik.com"
+]);
+let malicious_urls = dynamic([
+    "https://fsputnik.com/tds/tracker.js",
+    "http://107.175.82.242:9000/wilow/psychedeliclove.exe",
+    "http://193.178.159.128:8080/",
+    "https://uasputnik.com/sputnik.html",
+    "https://uasputnik.com/elita.msi",
+    "https://uasputnik.com/miks.msi",
+    "https://uasputnik.com/astra.msi",
+    "https://uasputnik.com/harbor.msi",
+    "https://uasputnik.com/neon.msi",
+    "https://uasputnik.com/sova.msi",
+    "https://uasputnik.com/vyse.msi",
+    "https://uasputnik.com/admin777111777.php",
+    "https://www.uasputnik.com/"
+]);
+// Hash matches: on-disk files and executed/spawned processes
+let hash_hits_file = DeviceFileEvents
+    | where Timestamp > ago(lookback)
+    | where SHA256 in (malicious_sha256)
+    | project Timestamp, DeviceId, DeviceName, MatchType = "hash_file", Indicator = SHA256, Detail = FileName, RemoteIP = "";
+let hash_hits_process = DeviceProcessEvents
+    | where Timestamp > ago(lookback)
+    | where SHA256 in (malicious_sha256)
+    | project Timestamp, DeviceId, DeviceName, MatchType = "hash_process", Indicator = SHA256, Detail = ProcessCommandLine, RemoteIP = "";
+// Network matches: exact malicious URL, lure/C2 domain, or raw IP
+let network_hits = DeviceNetworkEvents
+    | where Timestamp > ago(lookback)
+    | where RemoteIP in (malicious_ips)
+        or RemoteUrl has_any (malicious_domains)
+        or RemoteUrl in (malicious_urls)
+    | extend MatchType = case(
+        RemoteUrl in (malicious_urls), "exact_url",
+        RemoteUrl has_any (malicious_domains), "domain",
+        "ip")
+    | extend Indicator = case(
+        MatchType == "ip", RemoteIP,
+        RemoteUrl)
+    | project Timestamp, DeviceId, DeviceName, MatchType, Indicator, Detail = RemoteUrl, RemoteIP;
+union hash_hits_file, hash_hits_process, network_hits
+| sort by Timestamp desc
