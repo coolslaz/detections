@@ -1,0 +1,22 @@
+// Detects reconnaissance probing of Azure App Service instances for web-shell-like,
+// WordPress admin, PHP-CGI, and LangFlow code-validation endpoints consistent with
+// Storm-3168 initial-access reconnaissance, or requests originating from known
+// Storm-3168 attacker infrastructure.
+// FP tightening: WordPress/PHP-CGI path probing is extremely common internet background-scanner
+// noise on any internet-facing App Service. Generic path-pattern matches now require volume AND
+// path diversity; confirmed Storm-3168 IOC IPs remain a high-confidence match at any volume.
+AppServiceHTTPLogs
+| where TimeGenerated > ago(1d)
+| extend UriPath = tostring(CsUriStem)
+| extend IsKnownIOC = CIp in ("45.131.66.106", "34.153.223.102", "64.20.53.230")
+| where UriPath has_any (
+    "/wp-admin",
+    "/wp-login",
+    "php-cgi",
+    "/api/v1/validate/code"
+  )
+  or UriPath matches regex @"(?i)(shell|cmd|eval|backdoor)\.(php|aspx|jsp)"
+  or IsKnownIOC
+| summarize RequestCount = count(), DistinctPaths = dcount(UriPath), Paths = make_set(UriPath, 20), Methods = make_set(CsMethod, 10), MatchedKnownIOC = max(IsKnownIOC) by CIp, CsHost, bin(TimeGenerated, 1h)
+| where MatchedKnownIOC == 1 or (RequestCount >= 5 and DistinctPaths >= 2)
+| sort by RequestCount desc
