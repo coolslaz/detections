@@ -1,0 +1,27 @@
+// Hunt for any activity from published Storm-3168/JADEPUFFER IOC IPs across Azure control-plane, identity, and App Service logs.
+// No domain or file-hash IOCs were published for this campaign (cloud/identity-based activity, not malware-based); this hunt covers IP indicators only.
+let ioc_ips = dynamic(["45.131.66.106", "34.153.223.102", "64.20.53.230"]);
+let lookback = 30d;
+// Sensitive/probing path patterns observed in the campaign (WordPress admin, PHP-CGI, LangFlow code-validation endpoint, web-shell-like paths).
+// AppServiceHTTPLogs hits are scoped to these paths because the source IPs are cloud-hosted addresses that can be reassigned/shared and generate unrelated benign traffic over time.
+let sensitive_path_pattern = @"(?i)(wp-admin|wp-login|xmlrpc\.php|php-cgi|/api/v1/validate/code|/shell|/cmd\.php|/webshell)";
+let arm_activity = AzureActivity
+| where TimeGenerated > ago(lookback)
+| where CallerIpAddress in (ioc_ips)
+| project TimeGenerated, SourceIP = CallerIpAddress, Identity = Caller, TargetResource = ResourceId, Operation = OperationNameValue, ResultStatus = ActivityStatusValue, SourceTable = "AzureActivity";
+let signin_activity = SigninLogs
+| where TimeGenerated > ago(lookback)
+| where IPAddress in (ioc_ips)
+| project TimeGenerated, SourceIP = IPAddress, Identity = UserPrincipalName, TargetResource = AppDisplayName, Operation = ResourceDisplayName, ResultStatus = tostring(ResultType), SourceTable = "SigninLogs";
+let sp_signin_activity = AADServicePrincipalSignInLogs
+| where TimeGenerated > ago(lookback)
+| where IPAddress in (ioc_ips)
+| project TimeGenerated, SourceIP = IPAddress, Identity = ServicePrincipalName, TargetResource = ResourceDisplayName, Operation = tostring(ConditionalAccessStatus), ResultStatus = tostring(ResultType), SourceTable = "AADServicePrincipalSignInLogs";
+let appservice_activity = AppServiceHTTPLogs
+| where TimeGenerated > ago(lookback)
+| where CIp in (ioc_ips)
+| where CsUriStem matches regex sensitive_path_pattern
+| project TimeGenerated, SourceIP = CIp, Identity = CsUsername, TargetResource = CsHost, Operation = CsUriStem, ResultStatus = tostring(ScStatus), SourceTable = "AppServiceHTTPLogs";
+arm_activity
+| union signin_activity, sp_signin_activity, appservice_activity
+| sort by TimeGenerated desc
