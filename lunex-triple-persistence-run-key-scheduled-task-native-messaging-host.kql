@@ -1,0 +1,15 @@
+DeviceRegistryEvents
+| where TimeGenerated > ago(1d)
+| where (RegistryKey has @"Software\Microsoft\Windows\CurrentVersion\Run" and RegistryValueData has "UserStarts")
+ or (RegistryKey has_any (@"Software\Google\Chrome\NativeMessagingHosts\com.lunex.explorer", @"Software\Microsoft\Edge\NativeMessagingHosts\com.lunex.explorer"))
+| summarize PersistenceEvents = count(), Keys = make_set(RegistryKey, 10), Values = make_set(RegistryValueData, 10) by DeviceId, InitiatingProcessFileName, InitiatingProcessCommandLine, WindowTime = bin(TimeGenerated, 1h)
+| join kind=inner (
+    DeviceProcessEvents
+    | where TimeGenerated > ago(1d)
+    | where FileName =~ "schtasks.exe"
+    | where ProcessCommandLine has "psychedelicloveUtils"
+    | project DeviceId, TaskTime = TimeGenerated, TaskCommandLine = ProcessCommandLine
+) on DeviceId
+| where TaskTime between ((WindowTime - 1h) .. (WindowTime + 1h))
+| project WindowTime, DeviceId, InitiatingProcessFileName, InitiatingProcessCommandLine, Keys, Values, TaskCommandLine
+| order by WindowTime desc
