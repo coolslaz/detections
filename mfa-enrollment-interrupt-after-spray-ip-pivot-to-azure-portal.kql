@@ -1,0 +1,32 @@
+// Detects account takeover pattern: an account signs into Azure Portal from an IP that previously conducted a
+// password-spray/VPN-probe pattern (failed auth attempts against multiple distinct accounts) and, shortly after,
+// hits an MFA-enrollment-required interrupt for THIS account - consistent with TeamFiltration/UNK_CondorFiltration
+// post-compromise pivot behavior (T1110.003, T1538, T1078.004).
+let lookback = 1d;
+// Step 1: identify pivot/secondary IPs exhibiting spray/VPN-probe behavior - failed auth against multiple distinct accounts
+let spraySourceIPs = SigninLogs
+| where TimeGenerated > ago(lookback)
+| where ResultType != "0"
+| summarize DistinctTargets = dcount(UserPrincipalName), FailedAttempts = count() by IPAddress
+| where DistinctTargets >= 5 and FailedAttempts >= 5
+| project IPAddress;
+// Step 2: failed authentication events for a specific account from one of those spray IPs
+let priorFailedAuth = SigninLogs
+| where TimeGenerated > ago(lookback)
+| where ResultType != "0"
+| join kind=inner spraySourceIPs on IPAddress
+| project PriorTime = TimeGenerated, IPAddress, UserPrincipalName, PriorApp = AppDisplayName, PriorResultType = ResultType;
+// Step 3: MFA enrollment interruption on Azure Portal
+let mfaEnrollmentInterrupts = SigninLogs
+| where TimeGenerated > ago(lookback)
+| where AppId == "c44b4083-3bb0-49c1-b47d-974e53cbdf3c" // Azure Portal
+| where ResultDescription has "userstrongauthenrollmentrequiredinterrupt" or tostring(Status) has "userstrongauthenrollmentrequiredinterrupt"
+| project InterruptTime = TimeGenerated, IPAddress, UserPrincipalName, InterruptApp = AppDisplayName;
+// Step 4: correlate - same account, same pivot IP, interrupt shortly after the spray-sourced failed auth
+mfaEnrollmentInterrupts
+| join kind=inner priorFailedAuth on IPAddress, UserPrincipalName
+| where InterruptTime - PriorTime between (0s .. 15m)
+| summarize PriorAttempts = count(), FirstPriorTime = min(PriorTime), PriorApps = make_set(PriorApp, 10) by InterruptTime, UserPrincipalName, IPAddress, InterruptApp
+| extend IsKnownPivotIP = IPAddress == "149.88.104.19"
+| project InterruptTime, FirstPriorTime, UserPrincipalName, IPAddress, PriorAttempts, PriorApps, InterruptApp, IsKnownPivotIP
+| sort by InterruptTime desc
