@@ -1,0 +1,23 @@
+// Detects the Kothamine npm postinstall chain: node-spawned PowerShell decodes/loads a Stager .NET assembly in memory, followed by a RuntimeBroker.exe or svchost.exe process spawned by that same PowerShell process where the target has mismatched parent lineage, an unexpected image path, or a missing/anomalous command line for its process name (legitimate svchost.exe always launches with a "-k" service group argument, and legitimate RuntimeBroker.exe/svchost.exe run from System32/SysWOW64 and are spawned by services.exe/svchost.exe/wininit.exe, never by powershell.exe)
+let stagerLoads = DeviceProcessEvents
+| where Timestamp > ago(7d)
+| where FileName =~ "powershell.exe"
+| where InitiatingProcessFileName in~ ("node.exe", "npm.exe", "npm.cmd")
+| where ProcessCommandLine has "System.Reflection.Assembly" and ProcessCommandLine has "::Load"
+| project StagerTime = Timestamp, DeviceId, StagerPid = ProcessId, StagerCmd = ProcessCommandLine, InitiatingProcessFileName;
+let hollowedProcs = DeviceProcessEvents
+| where Timestamp > ago(7d)
+| where FileName in~ ("RuntimeBroker.exe", "svchost.exe")
+| where InitiatingProcessFileName =~ "powershell.exe"
+// mismatched lineage: these processes should never be spawned by powershell.exe in a legitimate chain
+| where InitiatingProcessParentFileName !in~ ("services.exe", "svchost.exe", "wininit.exe", "userinit.exe")
+// unexpected/dropped image path outside the normal system directories, OR a missing service-group argument that a real svchost.exe would always carry
+| where (FolderPath !startswith @"c:\windows\system32" and FolderPath !startswith @"c:\windows\syswow64")
+ or (FileName =~ "svchost.exe" and ProcessCommandLine !has "-k")
+ or (FileName =~ "RuntimeBroker.exe" and isempty(ProcessCommandLine))
+| project HollowTime = Timestamp, DeviceId, InitiatingProcessId, FolderPath, FileName, ProcessCommandLine, InitiatingProcessParentFileName;
+stagerLoads
+| join kind=inner hollowedProcs on DeviceId, $left.StagerPid == $right.InitiatingProcessId
+| where HollowTime between (StagerTime .. (StagerTime + 10m))
+| project DeviceId, StagerTime, StagerCmd, InitiatingProcessFileName, HollowTime, FileName, FolderPath, ProcessCommandLine, InitiatingProcessParentFileName
+| sort by StagerTime desc
