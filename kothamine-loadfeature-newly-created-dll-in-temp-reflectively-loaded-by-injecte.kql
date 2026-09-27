@@ -1,0 +1,46 @@
+// Detects the Kothamine agent load_feature/exec_feature behavior:
+// operator sends a base64 DLL which the agent writes to C:\Windows\Temp
+// (or %TEMP%) and then loads via LoadLibraryA, resolving GetFeatureApi,
+// from within the injected explorer.exe process.
+// Tightened to require: (1) the DLL path is newly created (first observed
+// creation for that path on the device, not an overwrite of a pre-existing
+// file), (2) the write->load sequence happens in a short window, and
+// (3) the loading explorer.exe process was itself recently spawned close to
+// the drop/load time, consistent with process injection rather than a
+// long-running legitimate explorer.exe used by installers/updaters.
+let lookback = 7d;
+let dropped_dlls = DeviceFileEvents
+| where Timestamp > ago(lookback)
+| where ActionType == "FileCreated"
+| where FileName endswith ".dll"
+| where FolderPath has @"Windows\Temp" or FolderPath has @"\AppData\Local\Temp"
+| summarize DropTime = min(Timestamp) by DeviceId, FolderPath, FileName, InitiatingProcessFileName;
+// Exclude paths where a same-named file already existed before this drop
+// (i.e. this is not the first creation event for that path in the window)
+let reused_paths = DeviceFileEvents
+| where Timestamp > ago(lookback)
+| where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+| where FileName endswith ".dll"
+| where FolderPath has @"Windows\Temp" or FolderPath has @"\AppData\Local\Temp"
+| summarize EventCount = count() by DeviceId, FolderPath, FileName;
+let loaded_dlls = DeviceImageLoadEvents
+| where Timestamp > ago(lookback)
+| where FileName endswith ".dll"
+| where InitiatingProcessFileName =~ "explorer.exe"
+| project DeviceId, FileName, FolderPath, LoadTime = Timestamp, LoadingProcessFileName = InitiatingProcessFileName, LoadingProcessId = InitiatingProcessId;
+// The explorer.exe process doing the load must have itself been started
+// recently (short lifetime before the load), a signal of an injected /
+// re-spawned host process rather than the user's original shell instance
+let explorer_starts = DeviceProcessEvents
+| where Timestamp > ago(lookback)
+| where FileName =~ "explorer.exe"
+| project DeviceId, ProcessId, ProcessStartTime = Timestamp;
+dropped_dlls
+| join kind=inner loaded_dlls on DeviceId, FileName, FolderPath
+| where LoadTime between (DropTime .. (DropTime + 5m))
+| where InitiatingProcessFileName =~ "explorer.exe" or LoadingProcessFileName =~ "explorer.exe"
+| join kind=leftanti reused_paths on DeviceId, FolderPath, FileName, $left.EventCount == 1
+| join kind=inner explorer_starts on DeviceId, $left.LoadingProcessId == $right.ProcessId
+| where LoadTime - ProcessStartTime < 10m
+| project DeviceId, FileName, FolderPath, DropTime, LoadTime, ProcessStartTime, InitiatingProcessFileName, LoadingProcessFileName
+| summarize DropTime = min(DropTime), LoadTime = min(LoadTime), ProcessStartTime = min(ProcessStartTime) by DeviceId, FileName, FolderPath, InitiatingProcessFileName, LoadingProcessFileName
