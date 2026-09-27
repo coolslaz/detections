@@ -1,0 +1,25 @@
+// Detects the JADEPUFFER precursor pattern: a failed ListKeys probe against a non-existent storage account,
+// immediately followed by destructive delete operations from the same caller/service principal
+// FP tightening: restricted destructive-op statuses to terminal states only (dropped "Started"/"Accepted"
+// async-acknowledgement events, which otherwise double/triple-count a single logical delete) and require
+// the burst to span multiple distinct resources, not repeated retries against the same one.
+let lookback = 1d;
+let listKeyFailures = AzureActivity
+| where TimeGenerated > ago(lookback)
+| where OperationNameValue has "listKeys"
+| where ActivityStatusValue in ("Failure", "Failed") or Properties has "ResourceNotFound"
+| where Properties has "ResourceNotFound" or ActivitySubstatusValue == "Not Found"
+| project ListKeyTime = TimeGenerated, Caller, CallerIpAddress, OperationNameValue, ResourceId, SubscriptionId;
+let destructiveOps = AzureActivity
+| where TimeGenerated > ago(lookback)
+| where OperationNameValue has_any ("delete") 
+| where OperationNameValue has_any ("storageAccounts", "vaults", "sites", "servers/databases", "serverfarms", "Microsoft.Sql", "Microsoft.KeyVault", "Microsoft.Web")
+| where ActivityStatusValue in ("Succeeded", "Success", "Failed", "Failure")
+| project DeleteTime = TimeGenerated, Caller, DeleteOperation = OperationNameValue, DeleteResourceId = ResourceId, SubscriptionId;
+listKeyFailures
+| join kind=inner (destructiveOps) on Caller, SubscriptionId
+| where DeleteTime > ListKeyTime and DeleteTime - ListKeyTime <= 5m
+| summarize DestructiveOpsCount = count(), DistinctResources = dcount(DeleteResourceId), DestructiveOperations = make_set(DeleteOperation, 20), FirstDelete = min(DeleteTime) by Caller, CallerIpAddress, ListKeyTime, ResourceId, SubscriptionId
+| where DestructiveOpsCount >= 3 and DistinctResources >= 2
+| project Caller, CallerIpAddress, SubscriptionId, FailedListKeyResource = ResourceId, ListKeyTime, FirstDelete, TimeToDestruction = FirstDelete - ListKeyTime, DestructiveOpsCount, DistinctResources, DestructiveOperations
+| sort by ListKeyTime asc
