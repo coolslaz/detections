@@ -1,0 +1,18 @@
+// Detects camera/microphone privacy consent store access from either the disguised Kothamine agent process (masquerading as MicrosoftEdgeUpdateCore.exe under %APPDATA%\Roaming) or an injected explorer.exe, but only on devices that also show the Kothamine injector's dropped file artifacts (MicrosoftEdgeUpdateCore.dll payload and the TailscalePortable\tailcat.exe tunnel binary) in the same time window. This avoids alerting on the legitimate signed explorer.exe or on unrelated apps (Teams, Zoom, browsers) that routinely touch the consent store.
+let lookback = 1d;
+let infected_devices = DeviceFileEvents
+| where Timestamp > ago(lookback)
+| where (FileName =~ "MicrosoftEdgeUpdateCore.dll" and FolderPath has @"\AppData\Roaming")
+    or (FileName =~ "tailcat.exe" and FolderPath has @"\AppData\Roaming\TailscalePortable")
+| summarize by DeviceId;
+DeviceRegistryEvents
+| where Timestamp > ago(lookback)
+| where DeviceId in (infected_devices)
+| where RegistryKey has_any (
+    @"CapabilityAccessManager\ConsentStore\webcam",
+    @"CapabilityAccessManager\ConsentStore\microphone"
+ )
+| where (InitiatingProcessFileName =~ "MicrosoftEdgeUpdateCore.exe" and InitiatingProcessFolderPath has @"\AppData\Roaming")
+    or (InitiatingProcessFileName =~ "explorer.exe" and InitiatingProcessFolderPath !has @"\AppData\Roaming")
+| project Timestamp, DeviceName, InitiatingProcessAccountName, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, RegistryKey, RegistryValueName, RegistryValueData
+| sort by Timestamp desc
