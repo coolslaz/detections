@@ -1,0 +1,24 @@
+// Detects attempts to delete Azure resource locks protecting Site Recovery or Backup-protected resources
+// T1490 - Inhibit System Recovery
+// FP tightening: dropped the generic "terraform" keyword (a common benign IaC-naming convention that
+// caused broad false matches), bounded the lookback window, and excluded noisy "Start"-only events; the
+// ListKeys correlation is now surfaced as an explicit confidence flag rather than a no-op filter.
+AzureActivity
+| where TimeGenerated > ago(1d)
+| where OperationNameValue has "MICROSOFT.AUTHORIZATION/LOCKS/DELETE"
+| where ActivityStatusValue in ("Success", "Failure", "Failed")
+| where isnotempty(ResourceId)
+| where ResourceId has_any ("siterecovery", "recoveryservices", "backup") or Properties has_any ("siterecovery", "recoveryservices", "backup")
+| extend CallerIdentity = tostring(Caller), ActivityStatus = tostring(ActivityStatusValue)
+| project TimeGenerated, Caller, CallerIdentity, ActivityStatus, OperationNameValue, ResourceId, ResourceGroup, SubscriptionId, CorrelationId
+| sort by TimeGenerated asc
+// Correlate with subsequent ListKeys activity by the same caller within a following window to surface the
+// destruction -> credential-collection sequence pattern (lock-deletion attempt followed by key retrieval)
+| join kind=leftouter (
+    AzureActivity
+    | where OperationNameValue has "MICROSOFT.STORAGE/STORAGEACCOUNTS/LISTKEYS/ACTION"
+    | where ActivityStatusValue == "Success"
+    | project ListKeysTime = TimeGenerated, Caller, ListKeysResourceId = ResourceId
+) on Caller
+| extend IsFollowedByListKeys = isnotempty(ListKeysTime) and ListKeysTime between (TimeGenerated .. TimeGenerated + 1h)
+| project TimeGenerated, Caller, ActivityStatus, OperationNameValue, ResourceId, ResourceGroup, SubscriptionId, IsFollowedByListKeys, ListKeysTime, ListKeysResourceId
