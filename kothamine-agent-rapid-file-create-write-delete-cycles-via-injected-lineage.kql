@@ -1,0 +1,31 @@
+// Detects the Kothamine agent's file manipulation command set (writefile_start/chunk/end, readfile, createfile, delfile, download, mkdir/rmdir/cp/mv)
+// as rapid create -> write -> delete cycles on the same file path, restricted to the agent's confirmed process lineage:
+// either explorer.exe with the MicrosoftEdgeUpdateCore.dll agent module loaded into it (reflective DLL injection per the injector log),
+// or the dropped MicrosoftEdgeUpdateCore.exe loader running from its AppData\Roaming staging path.
+// A higher operation-count threshold within a tighter window filters out generic temp-file churn from browsers/installers.
+let InjectedExplorer = DeviceImageLoadEvents
+| where FileName =~ "MicrosoftEdgeUpdateCore.dll"
+| where InitiatingProcessFileName =~ "explorer.exe"
+| project DeviceId, InitiatingProcessId, InjectedTime = Timestamp;
+let DroppedLoader = DeviceProcessEvents
+| where FileName =~ "MicrosoftEdgeUpdateCore.exe"
+| where FolderPath has @"AppData\Roaming"
+| project DeviceId, InitiatingProcessId = ProcessId, LoaderTime = Timestamp;
+let AgentProcesses = InjectedExplorer | project DeviceId, InitiatingProcessId
+| union (DroppedLoader | project DeviceId, InitiatingProcessId);
+DeviceFileEvents
+| where InitiatingProcessFileName in~ ("explorer.exe", "MicrosoftEdgeUpdateCore.exe")
+| where ActionType in ("FileCreated", "FileModified", "FileDeleted", "FileRenamed")
+| join kind=inner AgentProcesses on DeviceId, InitiatingProcessId
+| summarize
+    Actions = make_set(ActionType, 10),
+    ActionCount = count(),
+    FirstSeen = min(Timestamp),
+    LastSeen = max(Timestamp)
+    by DeviceId, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessId
+| extend TimeSpanSeconds = datetime_diff('second', LastSeen, FirstSeen)
+| where TimeSpanSeconds <= 120
+| where ActionCount >= 5
+| where array_length(Actions) >= 2
+| where Actions has "FileCreated" and (Actions has "FileDeleted" or Actions has "FileModified")
+| project DeviceId, InitiatingProcessFileName, InitiatingProcessId, FileName, FolderPath, Actions, ActionCount, FirstSeen, LastSeen, TimeSpanSeconds
