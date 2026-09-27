@@ -1,0 +1,19 @@
+// Detects the TeamFiltration attack-chain pivot: an account authenticates to the Teams enumeration/spray application from known TeamFiltration-associated spray infrastructure (AWS ASN ranges), then within ~2 minutes the same account authenticates to a VPN/SAML service provider from a different (secondary/pivot) IP -- the observed AWS-to-German-VPN-to-corporate-VPN-portal handoff.
+let TeamsAppId = "1fec8e78-bce4-4aaf-ab1b-5451cc387264";
+let TeamFiltrationRanges = dynamic(["3.0.0.0/8","18.144.0.0/14","13.52.0.0/16"]);
+let compromise = AADSignInEventsBeta
+| where Timestamp > ago(14d)
+| where ApplicationId == TeamsAppId
+| where ipv4_is_in_any_range(IPAddress, TeamFiltrationRanges)
+| where ErrorCode == 0
+| project AccountUpn, CompromiseTime = Timestamp, InitialIp = IPAddress, InitialApp = ApplicationId;
+let vpnProbe = AADSignInEventsBeta
+| where Timestamp > ago(14d)
+| where ResourceDisplayName has_any ("VPN", "SAML") or ApplicationId has "SAML"
+| project AccountUpn, ProbeTime = Timestamp, ProbeIp = IPAddress, ProbeApp = ResourceDisplayName, ProbeErrorCode = ErrorCode;
+compromise
+| join kind=inner vpnProbe on AccountUpn
+| where ProbeTime > CompromiseTime and ProbeTime - CompromiseTime <= 2m
+| where ProbeIp != InitialIp
+| project AccountUpn, CompromiseTime, InitialIp, InitialApp, ProbeTime, ProbeIp, ProbeApp, ProbeErrorCode, TimeDeltaSeconds = datetime_diff('Second', ProbeTime, CompromiseTime)
+| sort by CompromiseTime desc
