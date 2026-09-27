@@ -1,0 +1,31 @@
+// Detects the full Kothamine Injector chain requiring ALL stages to co-occur within a short window:
+// 1) PowerShell Add-MpPreference exclusion naming the exact MicrosoftEdgeUpdateCore artifact paths/process,
+// 2) MicrosoftEdgeUpdateCore.exe/.dll dropped under the user's AppData\Roaming profile,
+// 3) that same dropped binary performing the full OpenProcess/VirtualAllocEx/WriteProcessMemory/CreateRemoteThread
+//    injection sequence into explorer.exe.
+// Any single stage alone (e.g. a legitimate injector or unrelated AV exclusion) will not match.
+let window = 15m;
+let exclusion_events = DeviceProcessEvents
+| where FileName =~ "powershell.exe"
+| where ProcessCommandLine has "Add-MpPreference"
+| where ProcessCommandLine has_any ("-ExclusionPath", "-ExclusionProcess")
+| where ProcessCommandLine has "MicrosoftEdgeUpdateCore"
+| project DeviceId, ExclusionTime = Timestamp, ExclusionCmd = ProcessCommandLine;
+let fake_edge_drop = DeviceProcessEvents
+| where FileName =~ "MicrosoftEdgeUpdateCore.exe"
+| where FolderPath has_any ("\\AppData\\Roaming\\", "\\AppData\\roaming\\")
+| project DeviceId, DropTime = Timestamp, DropPath = FolderPath, DropSHA1 = SHA1;
+let injection_chain = DeviceEvents
+| where InitiatingProcessFileName =~ "MicrosoftEdgeUpdateCore.exe"
+| where ActionType in ("OpenProcessApiCall", "VirtualAllocApiCall", "WriteProcessMemoryApiCall", "CreateRemoteThreadApiCall")
+| where AdditionalFields has "explorer.exe"
+| summarize InjectApis = make_set(ActionType), InjectStart = min(Timestamp), InjectEnd = max(Timestamp) by DeviceId, InitiatingProcessFolderPath
+| where array_length(InjectApis) >= 4
+| where InjectApis has "OpenProcessApiCall" and InjectApis has "VirtualAllocApiCall" and InjectApis has "WriteProcessMemoryApiCall" and InjectApis has "CreateRemoteThreadApiCall";
+exclusion_events
+| join kind=inner (fake_edge_drop) on DeviceId
+| where DropTime between (ExclusionTime .. ExclusionTime + window)
+| join kind=inner (injection_chain) on DeviceId
+| where InjectStart between (DropTime .. DropTime + window)
+| project DeviceId, ExclusionTime, ExclusionCmd, DropTime, DropPath, DropSHA1, InjectStart, InjectEnd, InjectApis, InitiatingProcessFolderPath
+| sort by ExclusionTime desc
