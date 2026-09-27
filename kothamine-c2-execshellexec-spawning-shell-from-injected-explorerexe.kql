@@ -1,0 +1,28 @@
+// Detects the Kothamine post-C2 exec/shell_exec command: the agent (injected into explorer.exe
+// via the MicrosoftEdgeUpdateCore.dll payload) runs operator-supplied commands via _popen(),
+// which manifests as cmd.exe/powershell.exe/conhost.exe spawned by explorer.exe shortly after
+// the tailcat.exe C2 tunnel is established on the same device.
+// Mutex creation (Local\\KothamineAgentInstance) is not exposed in available process/image-load
+// telemetry, so lineage is tightened instead by requiring the spawning explorer.exe to be the
+// exact process instance that loaded the injected MicrosoftEdgeUpdateCore.dll module, matched by
+// ProcessId, rather than any explorer.exe child process.
+let tailcat_launches = DeviceProcessEvents
+| where Timestamp > ago(1d)
+| where FileName =~ "tailcat.exe" or ProcessCommandLine has "tailcat.exe"
+| project DeviceId, TailcatTime = Timestamp;
+let injected_explorer = DeviceImageLoadEvents
+| where Timestamp > ago(1d)
+| where FileName =~ "MicrosoftEdgeUpdateCore.dll"
+| where InitiatingProcessFileName =~ "explorer.exe"
+| project DeviceId, InjectedExplorerPid = InitiatingProcessId, InjectTime = Timestamp;
+DeviceProcessEvents
+| where Timestamp > ago(1d)
+| where FileName in~ ("cmd.exe", "powershell.exe", "conhost.exe")
+| where InitiatingProcessFileName =~ "explorer.exe"
+| join kind=inner (injected_explorer) on DeviceId
+| where InitiatingProcessId == InjectedExplorerPid
+| where Timestamp > InjectTime
+| join kind=inner (tailcat_launches) on DeviceId
+| where Timestamp between (TailcatTime .. (TailcatTime + 30m))
+| project Timestamp, DeviceId, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessId, InjectTime, TailcatTime
+| sort by Timestamp asc
