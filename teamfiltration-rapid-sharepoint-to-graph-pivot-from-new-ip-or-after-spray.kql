@@ -1,0 +1,38 @@
+// Detects TeamFiltration's -auto-exfil pattern: SharePoint Online file access immediately
+// followed by a Microsoft Graph token request from the SharePoint Online Web Client
+// Extensibility app for the same account. Tightened beyond simple sequential access:
+// requires an unusually short pivot time AND either a source IP/ASN never previously
+// associated with the account, or a prior failed/spray sign-in for that account.
+let SharePointAppId = "00000003-0000-0ff1-ce00-000000000000";
+let SPOExtensibilityAppId = "08e18876-6177-487e-b8b5-cf950c1e598c";
+let LookbackWindow = 14d;
+let PriorFailWindow = 1h;
+let PivotWindowSeconds = 60;
+let spoAccess = AADSignInEventsBeta
+| where Timestamp > ago(1d)
+| where AppId == SharePointAppId
+| project SpoTime = Timestamp, AccountObjectId, SpoIp = IPAddress;
+let spoTokenRequest = AADSignInEventsBeta
+| where Timestamp > ago(1d)
+| where AppId == SPOExtensibilityAppId
+| project TokenTime = Timestamp, AccountObjectId, TokenIp = IPAddress;
+let knownIps = AADSignInEventsBeta
+| where Timestamp between (ago(LookbackWindow) .. ago(1d))
+| summarize KnownIPs = make_set(IPAddress, 1000) by AccountObjectId;
+let priorFailedSignIns = AADSignInEventsBeta
+| where Timestamp > ago(1d)
+| where ErrorCode != 0
+| project AccountObjectId, FailTime = Timestamp;
+spoAccess
+| join kind=inner (spoTokenRequest) on AccountObjectId
+| where TokenTime between (SpoTime .. (SpoTime + 5m))
+| extend TimeDeltaSeconds = datetime_diff('second', TokenTime, SpoTime)
+| where TimeDeltaSeconds <= PivotWindowSeconds
+| join kind=leftouter (knownIps) on AccountObjectId
+| extend IsNewIp = not(set_has_element(KnownIPs, TokenIp)) and not(set_has_element(KnownIPs, SpoIp))
+| join kind=leftouter (priorFailedSignIns) on AccountObjectId
+| where FailTime < SpoTime and FailTime > (SpoTime - PriorFailWindow) or isnull(FailTime)
+| summarize HadPriorFailedSignIn = countif(isnotnull(FailTime)) > 0, TimeDeltaSeconds = min(TimeDeltaSeconds), SpoTime = min(SpoTime), TokenTime = min(TokenTime), SpoIp = any(SpoIp), TokenIp = any(TokenIp), IsNewIp = any(IsNewIp) by AccountObjectId
+| where IsNewIp or HadPriorFailedSignIn
+| project AccountObjectId, SpoTime, TokenTime, TimeDeltaSeconds, SpoIp, TokenIp, IsNewIp, HadPriorFailedSignIn
+| sort by TimeDeltaSeconds asc
