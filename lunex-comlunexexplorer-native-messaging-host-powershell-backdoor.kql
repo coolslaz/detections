@@ -1,0 +1,20 @@
+// Detects registration and/or execution of the Lunex Native Messaging Host backdoor
+// which registers as com.lunex.explorer and invokes a PowerShell script implementing
+// filesystem/execution actions (list_drives, list_dir, read_file, write, download, run)
+let nmh_registration =
+    DeviceRegistryEvents
+    | where TimeGenerated > ago(1d)
+    | where RegistryKey has @"NativeMessagingHosts\com.lunex.explorer"
+    | project TimeGenerated, DeviceId, ActionType, RegistryKey, RegistryValueName, RegistryValueData, InitiatingProcessFileName, InitiatingProcessCommandLine
+    | extend MatchType = "NativeMessagingHost_Registration";
+let nmh_powershell_exec =
+    DeviceProcessEvents
+    | where TimeGenerated > ago(1d)
+    | where FileName =~ "powershell.exe" or FileName =~ "pwsh.exe"
+    | where InitiatingProcessFileName has_any ("chrome.exe", "msedge.exe")
+    | where ProcessCommandLine has "com.lunex.explorer"
+    | where ProcessCommandLine has_any ("list_drives", "list_dir", "read_file", "write", "download", "run")
+    | project TimeGenerated, DeviceId, ActionType = "ProcessCreated", RegistryKey = "", RegistryValueName = "", RegistryValueData = ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
+    | extend MatchType = "NativeMessagingHost_PowerShellExecution";
+union nmh_registration, nmh_powershell_exec
+| sort by TimeGenerated desc
