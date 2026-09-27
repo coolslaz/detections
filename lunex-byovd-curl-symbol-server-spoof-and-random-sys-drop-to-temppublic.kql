@@ -1,0 +1,27 @@
+let sysDrop = DeviceFileEvents
+| where TimeGenerated > ago(1d)
+| where FolderPath has_any (@"C:\Windows\Temp\", @"C:\Users\Public\")
+| where FileName matches regex @"^[a-f0-9]{11,12}\.sys$"
+| project SysTime = TimeGenerated, DeviceId, SysFolderPath = FolderPath, SysFileName = FileName;
+let curlSymbol = DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where FileName =~ "curl.exe"
+| where ProcessCommandLine has "ntkrnlmp.pdb"
+| where ProcessCommandLine has "Microsoft-Symbol-Server/10.1700.661.0"
+| where ProcessCommandLine has "msdl.microsoft.com"
+| where InitiatingProcessParentFileName !in~ ("windbg.exe", "cdb.exe", "kd.exe", "ntkd.exe", "livekd.exe")
+| project CurlTime = TimeGenerated, DeviceId, CurlCommandLine = ProcessCommandLine;
+let chain = curlSymbol
+| join kind=inner (sysDrop) on DeviceId
+| where SysTime between (CurlTime .. (CurlTime + 30m));
+let serviceStart = DeviceRegistryEvents
+| where TimeGenerated > ago(1d)
+| where RegistryKey has @"SYSTEM\CurrentControlSet\Services"
+| where RegistryValueName =~ "Start"
+| where RegistryValueData == "1"
+| where RegistryKey has_any ("PdFwKrnl", "PDFWKRNL")
+| project DeviceId, SvcTime = TimeGenerated, RegistryKey;
+chain
+| join kind=inner (serviceStart) on DeviceId
+| where SvcTime between (CurlTime .. (CurlTime + 1h))
+| project DeviceId, CurlTime, CurlCommandLine, SysTime, SysFolderPath, SysFileName, SvcTime, RegistryKey
