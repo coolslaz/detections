@@ -1,0 +1,35 @@
+// UNC6240/ShinyHunters PeopleSoft (CVE-2026-35273) IOC sweep
+// Unions known-malicious file hash matches, C2/staging IP connections, and malicious domain lookups
+let known_hashes = dynamic([
+    "48b4a0827da7bbfce9fb52464f8a659dea7a035189c52c506c0bfb4b1c3fe494", // x.jsp
+    "2bee941fb40519d0d1ec52bd79a8f63fc65aac6455c8f2d6b668e3360dfdb5d7", // u.jsp
+    "419c571ee38b7e7266d130c4b6bbc4dd0ef44d6e5f3bc02cc2cf73b762f07c86", // tunnel.jsp
+    "ba14419beb2ec0bb94cab6298c14d7fb3e1d819366fe378290c0c2a4d97f7e07", // tunnel.jspx
+    "3ba215692665513abfffd4e815c5c45f2d41e5dcc4283a2a3b740930c5c417c3"  // Ple64.exe
+]); // full SHA-256 values -- exact match only, no truncated-prefix collision risk
+let known_ips = dynamic(["162.219.30.165","104.219.234.138","5.199.162.157"]);
+let known_domains = dynamic(["winmanage-me.network","azurenetfiles.net","microsoft-entra.net","enroll.azuredevice.cloud"]);
+let hash_hits =
+    DeviceFileEvents
+    | where Timestamp > ago(30d)
+    | where ActionType in ("FileCreated","FileModified","FileRenamed")
+    | where SHA256 in~ (known_hashes)
+    | extend IndicatorType = "FileHash", IndicatorValue = SHA256, MatchedEntity = FileName
+    | project Timestamp, DeviceName, IndicatorType, IndicatorValue, MatchedEntity, FolderPath;
+let ip_hits =
+    DeviceNetworkEvents
+    | where Timestamp > ago(30d)
+    | where RemoteIP in (known_ips)
+    | extend IndicatorType = "C2_IP", IndicatorValue = RemoteIP, MatchedEntity = InitiatingProcessFileName
+    | project Timestamp, DeviceName, IndicatorType, IndicatorValue, MatchedEntity, FolderPath = InitiatingProcessFolderPath;
+let domain_hits =
+    DeviceNetworkEvents
+    | where Timestamp > ago(30d)
+    | extend Host = tostring(parse_url(RemoteUrl).Host)
+    // anchor on a real label boundary (start-of-host or preceding dot) so a lookalike domain
+    // like "notazurenetfiles.net.example.com" cannot match via bare substring
+    | where Host matches regex @"(?i)(^|\.)(winmanage\-me\.network|azurenetfiles\.net|microsoft\-entra\.net|enroll\.azuredevice\.cloud)$"
+    | extend IndicatorType = "C2_Domain", IndicatorValue = Host, MatchedEntity = InitiatingProcessFileName
+    | project Timestamp, DeviceName, IndicatorType, IndicatorValue, MatchedEntity, FolderPath = InitiatingProcessFolderPath;
+union hash_hits, ip_hits, domain_hits
+| sort by Timestamp desc
