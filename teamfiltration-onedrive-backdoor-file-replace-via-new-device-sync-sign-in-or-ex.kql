@@ -1,0 +1,36 @@
+// Detects TeamFiltration's Backdoor module pattern: a sign-in via the OneDrive SyncEngine app followed shortly by
+// modification/overwrite of existing OneDrive or SharePoint files for the same account - consistent with silently
+// replacing legitimate files with malicious versions for later execution.
+// Tightened to exclude routine OneDrive sync overwrite noise: only fires when the SyncEngine sign-in comes from a
+// device/IP not previously associated with the account, or when the replaced file has an executable/script extension.
+let lookback = 44d;
+let newDeviceLookback = 30d;
+let oneDriveSyncEngineAppId = "ab9b8c07-8f02-4f72-87fa-80105867a763";
+let execExtensions = dynamic([".exe", ".dll", ".ps1", ".vbs", ".js", ".jse", ".vbe", ".bat", ".cmd", ".scr", ".hta", ".msi", ".jar", ".wsf", ".sh", ".psm1", ".psd1"]);
+let allSignins = SigninLogs
+| where TimeGenerated > ago(lookback)
+| project TimeGenerated, UserPrincipalName, IPAddress, AppId;
+let syncEngineSignins = allSignins
+| where AppId =~ oneDriveSyncEngineAppId
+| project SigninTime = TimeGenerated, UserPrincipalName, IPAddress;
+let priorSignins = allSignins
+| project HistTime = TimeGenerated, UserPrincipalName, HistIP = IPAddress;
+let syncEngineSigninsWithNoveltyFlag = syncEngineSignins
+| join kind=leftouter (priorSignins) on UserPrincipalName
+| where HistTime < (SigninTime - 24h) and HistTime > (SigninTime - newDeviceLookback)
+| summarize KnownIPs = make_set(HistIP, 1000) by UserPrincipalName, SigninTime, IPAddress
+| extend IsNewDevice = not(set_has_element(KnownIPs, IPAddress))
+| project SigninTime, UserPrincipalName, IPAddress, IsNewDevice;
+let fileReplaceEvents = OfficeActivity
+| where TimeGenerated > ago(lookback)
+| where OfficeWorkload in ("OneDrive", "SharePoint")
+| where Operation in ("FileModified", "FileDeleted", "FileVersionsAllMinorsRecycled", "FileRenamed")
+| project FileEventTime = TimeGenerated, UserId, Operation, OfficeWorkload, SourceFileName, ClientIP, ObjectId, ResultStatus;
+syncEngineSigninsWithNoveltyFlag
+| join kind=inner (fileReplaceEvents) on $left.UserPrincipalName == $right.UserId
+| where FileEventTime between (SigninTime .. (SigninTime + 2h))
+| extend FileExtension = tolower(substring(SourceFileName, indexof(SourceFileName, ".", 0, -1, 1)))
+| extend IsExecReplacement = FileExtension has_any (execExtensions)
+| where IsNewDevice or IsExecReplacement
+| project SigninTime, FileEventTime, UserPrincipalName, IPAddress, IsNewDevice, Operation, OfficeWorkload, SourceFileName, FileExtension, IsExecReplacement, ObjectId, ResultStatus
+| sort by SigninTime asc
