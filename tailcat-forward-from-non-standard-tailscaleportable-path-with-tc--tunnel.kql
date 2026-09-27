@@ -1,0 +1,9 @@
+DeviceProcessEvents
+| where FileName =~ "tailcat.exe"
+| where FolderPath has "TailscalePortable"
+| where not(FolderPath has "Program Files")
+| where FolderPath has_any ("\\AppData\\Roaming\\", "\\AppData\\Local\\", "\\Users\\")
+| where ProcessCommandLine has "forward"
+| where ProcessCommandLine has "tc-"
+| where ProcessCommandLine matches regex @"tc-[A-Za-z0-9]+.*\d{2,5}:\d{2,5}"
+| project Timestamp, DeviceName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, AccountName
