@@ -1,0 +1,49 @@
+// Detects prolonged high-volume Azure resource enumeration by one service principal followed shortly after
+// by a second service principal rapidly enumerating VMs/resource groups from the same source IP across
+// multiple subscriptions -- the discovery pattern preceding Storm-3168 (JADEPUFFER) destructive activity.
+// python-requests/2.34.2 was the shared user agent observed across both principals in this campaign, but
+// that value is not asserted here since it is not a guaranteed AzureActivity schema field.
+// FP tightening: excludes known CSPM/vulnerability-scanner/Azure Policy identities, which routinely
+// perform legitimate broad multi-hour or multi-subscription enumeration sweeps that would otherwise
+// match both legs of this composite.
+let KnownBenignCallers = dynamic([]); // populate with known CSPM/vulnerability-scanner/Azure Policy service principal object IDs
+let enumOps = dynamic([
+    "Microsoft.Compute/virtualMachines/read",
+    "Microsoft.Resources/subscriptions/read",
+    "Microsoft.Resources/subscriptions/resourceGroups/read",
+    "Microsoft.Resources/subscriptions/resources/read"
+]);
+let LongEnumeration =
+    AzureActivity
+    | where TimeGenerated > ago(30d)
+    | where ActivityStatusValue == "Success"
+    | where OperationNameValue in (enumOps)
+    | where Caller !in (KnownBenignCallers)
+    | summarize ReadCount = count(), DistinctSubs = dcount(SubscriptionId), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by Caller, CallerIpAddress
+    | where ReadCount >= 300
+    | where datetime_diff('hour', LastSeen, FirstSeen) >= 10;
+let RapidEnumeration =
+    AzureActivity
+    | where TimeGenerated > ago(30d)
+    | where ActivityStatusValue == "Success"
+    | where OperationNameValue in (enumOps)
+    | where Caller !in (KnownBenignCallers)
+    | summarize ReadCount = count(), DistinctSubs = dcount(SubscriptionId), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by Caller, CallerIpAddress
+    | where DistinctSubs >= 2
+    | where datetime_diff('second', LastSeen, FirstSeen) <= 30;
+LongEnumeration
+| join kind=inner (RapidEnumeration) on CallerIpAddress
+| where Caller != Caller1
+| where FirstSeen1 between (FirstSeen .. datetime_add('hour', 3, FirstSeen))
+| project
+    FirstServicePrincipal = Caller,
+    CallerIpAddress,
+    FirstReadCount = ReadCount,
+    FirstDistinctSubs = DistinctSubs,
+    FirstSeen,
+    LastSeen,
+    SecondServicePrincipal = Caller1,
+    SecondReadCount = ReadCount1,
+    SecondDistinctSubs = DistinctSubs1,
+    SecondFirstSeen = FirstSeen1,
+    SecondLastSeen = LastSeen1
