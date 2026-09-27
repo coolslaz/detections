@@ -1,0 +1,17 @@
+// Detects a service principal issuing multiple failed DeleteSqlDatabase operations,
+// consistent with destructive attempts using an unsupported API version for the
+// SQL database resource type, as observed in Storm-3168 (JADEPUFFER) activity.
+// FP tightening: a stuck/misconfigured IaC pipeline can also repeatedly fail against a bad
+// API version; requiring a tight burst window and multiple distinct databases (not just retries
+// against one) distinguishes destructive intent from a single stuck deployment script.
+AzureActivity
+| where TimeGenerated > ago(1d)
+| where OperationNameValue has "MICROSOFT.SQL/SERVERS/DATABASES/DELETE"
+| where ActivityStatusValue in ("Failed", "Failure", "Error") or ActivityStatusValue !~ "Success"
+| extend SubStatus = tostring(Properties.statusCode), ErrMsg = tostring(Properties.message)
+| where isnotempty(Caller)
+| summarize FailedDeletions = count(), DistinctDatabases = dcount(Resource), Databases = make_set(Resource, 50), Statuses = make_set(SubStatus, 20), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated) by Caller, CallerIpAddress, SubscriptionId
+| where FailedDeletions >= 5 and DistinctDatabases >= 3
+| where datetime_diff('minute', LastSeen, FirstSeen) <= 15
+| project FirstSeen, LastSeen, Caller, CallerIpAddress, SubscriptionId, FailedDeletions, DistinctDatabases, Databases, Statuses
+| sort by FailedDeletions desc
