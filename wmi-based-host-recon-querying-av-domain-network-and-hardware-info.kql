@@ -1,0 +1,41 @@
+// Detects automated WMI reconnaissance sweeps consistent with pre-C2 RAT profiling:
+// AV/Defender product queries, domain/DC enumeration, network adapter/port enumeration,
+// installed software, and hardware fingerprinting executed via wmic.exe or
+// PowerShell Get-WmiObject/Get-CimInstance in short succession from the same process tree.
+// Note: enterprise RMM/inventory agents (SCCM, PDQ, Ninja, Datto, etc.) can legitimately
+// enumerate several of these same WMI classes during routine hardware/software audits -
+// tune by excluding known management process paths if this fires on inventory sweeps.
+DeviceProcessEvents
+| where Timestamp > ago(1d)
+| where FileName in~ ("wmic.exe", "powershell.exe", "pwsh.exe")
+| where ProcessCommandLine has_any (
+    "AntiVirusProduct",
+    "FirewallProduct",
+    "SecurityCenter2",
+    "Win32_ComputerSystem",
+    "Win32_NetworkAdapterConfiguration",
+    "Win32_NetworkAdapter",
+    "Win32_Product",
+    "Win32_InstalledWin32Program",
+    "Win32_OptionalFeature",
+    "Win32_BaseBoard",
+    "Win32_BIOS",
+    "Win32_DiskDrive",
+    "Win32_Processor",
+    "Win32_PortConnector",
+    "Get-WmiObject",
+    "Get-CimInstance"
+  )
+| extend ReconCategory = case(
+    ProcessCommandLine has_any ("AntiVirusProduct", "FirewallProduct", "SecurityCenter2"), "AV/Defender",
+    ProcessCommandLine has_any ("Win32_ComputerSystem"), "Domain/DC",
+    ProcessCommandLine has_any ("Win32_NetworkAdapterConfiguration", "Win32_NetworkAdapter", "Win32_PortConnector"), "Network/Ports",
+    ProcessCommandLine has_any ("Win32_Product", "Win32_InstalledWin32Program", "Win32_OptionalFeature"), "Software/Features",
+    ProcessCommandLine has_any ("Win32_BaseBoard", "Win32_BIOS", "Win32_DiskDrive", "Win32_Processor"), "Hardware Fingerprint",
+    "Other WMI"
+  )
+| summarize RecatCategories = make_set(ReconCategory, 10), QueryCount = count(), FirstSeen = min(Timestamp), LastSeen = max(Timestamp), Commands = make_set(ProcessCommandLine, 20) by DeviceId, InitiatingProcessAccountName, bin(Timestamp, 15m)
+| where array_length(RecatCategories) >= 4
+| where set_has_element(RecatCategories, "AV/Defender")
+| project DeviceId, InitiatingProcessAccountName, FirstSeen, LastSeen, QueryCount, RecatCategories, Commands
+| sort by FirstSeen desc
