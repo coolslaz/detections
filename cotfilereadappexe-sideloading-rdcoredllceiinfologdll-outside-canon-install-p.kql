@@ -1,0 +1,21 @@
+// Detects the Canon-signed COTFileReadApp.exe loading its companion DLLs from a non-standard install path,
+// consistent with DLL sideloading where ISOSimple.msi drops the malicious rdCore.dll/ceiinfolog.dll
+// alongside the legitimate signed binary rather than in Canon's true program directory.
+let known_malicious_hashes = dynamic(["b77575413c0f97eaf31e4a44c884c1ecdc0049ec89916ceb0bf3aaaedc0442fe","e58831766e8d4313db9f8b85f90c3a840aa0d84cfeac285beefa40e39ad0d1fb","9c615db040b88c18ce6b96f30d08797045b7d506f940bea452dc7a6992fdbb8d"]);
+let legit_vendor_paths = dynamic([@"\Program Files\Canon", @"\Program Files (x86)\Canon", @"\ProgramData\Canon", @"\Canon\", @"\Program Files\Stardock", @"\Program Files (x86)\Stardock", @"\ProgramData\Stardock"]);
+DeviceImageLoadEvents
+| where InitiatingProcessFileName =~ "COTFileReadApp.exe"
+| where FileName in~ ("rdCore.dll", "ceiinfolog.dll", "COTFileReadApp.dll")
+| where SHA256 in (known_malicious_hashes)
+    or (not(InitiatingProcessFolderPath has_any (legit_vendor_paths))
+        and InitiatingProcessFolderPath matches regex @"(?i)\\(AppData|Temp|ProgramData|Public|Downloads)\\")
+| summarize LoadedDlls = make_set(FileName, 10), FirstSeen = min(Timestamp), LastSeen = max(Timestamp) by DeviceId, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessSHA256
+// Also flag the parallel later-wave variant where a Stardock-signed binary performs the same sideload pattern
+| union (
+    DeviceImageLoadEvents
+    | where InitiatingProcessFileName in~ ("DeElevate64.exe")
+    | where FileName in~ ("DeElevator64.dll", "I++u.dll")
+    | where not(InitiatingProcessFolderPath has_any (legit_vendor_paths))
+        and InitiatingProcessFolderPath matches regex @"(?i)\\(AppData|Temp|ProgramData|Public|Downloads)\\"
+    | summarize LoadedDlls = make_set(FileName, 10), FirstSeen = min(Timestamp), LastSeen = max(Timestamp) by DeviceId, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessSHA256
+)
