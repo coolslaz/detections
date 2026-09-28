@@ -1,0 +1,30 @@
+// Hunts for published NeedyMantis indicators across file hash, DNS/network, and HTTP telemetry.
+// No malicious IP address has been published for this campaign, so IP-based matching is intentionally not included.
+let KnownHashes = dynamic([
+    "e842dd7642c8e04b5ec20b6393848a9c904e4832930950c16664fe7800ba382e", // WinSparkle.dll first-stage loader
+    "9cb68f986043a576e19d32184c583b7d8f571c7219d8dc0065dced1c13f077ef", // WinSparkle encrypted archive
+    "c82520eb03c084226be4eafbff46f56dca0aa8804a2a7f23a085a96afe71ef77"  // libcurl encrypted archive
+]);
+let C2Domain = "corp.tripswithengine.com";
+let C2Path = "/library/zip/";
+let lookback = 30d;
+let HashHits = DeviceFileEvents
+| where TimeGenerated > ago(lookback)
+| where SHA256 in (KnownHashes)
+| extend IOCType = "FileHashMatch", MatchedIndicator = SHA256
+| project TimeGenerated, DeviceName, IOCType, MatchedIndicator, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine;
+let NetworkParsed = DeviceNetworkEvents
+| where TimeGenerated > ago(lookback)
+| where isnotempty(RemoteUrl)
+| extend ParsedHost = tolower(extract(@"^(?:[a-zA-Z]+://)?([^/:]+)", 1, RemoteUrl))
+| extend ParsedPath = extract(@"^(?:[a-zA-Z]+://)?[^/]+(/.*)?$", 1, RemoteUrl);
+let DomainHits = NetworkParsed
+| where ParsedHost == C2Domain
+| extend IOCType = "C2DomainMatch", MatchedIndicator = C2Domain
+| project TimeGenerated, DeviceName, IOCType, MatchedIndicator, RemoteUrl, RemoteIP, RemotePort, InitiatingProcessFileName, InitiatingProcessCommandLine;
+let UrlHits = NetworkParsed
+| where ParsedHost == C2Domain and ParsedPath startswith C2Path
+| extend IOCType = "C2UrlMatch", MatchedIndicator = strcat("https://", C2Domain, C2Path)
+| project TimeGenerated, DeviceName, IOCType, MatchedIndicator, RemoteUrl, RemoteIP, RemotePort, InitiatingProcessFileName, InitiatingProcessCommandLine;
+union HashHits, DomainHits, UrlHits
+| sort by TimeGenerated desc
