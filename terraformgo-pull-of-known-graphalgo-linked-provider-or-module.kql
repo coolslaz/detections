@@ -1,0 +1,14 @@
+DeviceProcessEvents
+| where Timestamp > ago(14d)
+| where (FileName in~ ("terraform.exe", "terraform") and ProcessCommandLine has "init")
+ or (FileName in~ ("go.exe", "go") and ProcessCommandLine has_any ("get", "install", "run"))
+| where ProcessCommandLine has_any ("kreuzwenker/docker", "gocommunity-io/dockerd", "gocommunity.io/orderedbtree", "gogets.dev/btreex")
+| project Timestamp, DeviceId, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
+| union (
+ DeviceFileEvents
+ | where Timestamp > ago(14d)
+ | where FolderPath has_any ("kreuzwenker", "gocommunity-io", "gocommunity.io", "gogets.dev")
+ | where FileName has_any ("dockerd", "orderedbtree", "btreex")
+ | project Timestamp, DeviceId, DeviceName, AccountName=RequestAccountName, FileName, ProcessCommandLine=FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine
+ )
+| sort by Timestamp desc
