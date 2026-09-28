@@ -1,0 +1,36 @@
+title: Passkey Persistence - Security-Info Registration Following Device-Code Sign-In (Sigma Proxy)
+id: 7a3f9e2c-4b1d-4e6a-9c3f-2d8b6a1e5f70
+status: experimental
+description: >
+  Single-source Sigma proxy for the authentication-persistence stage of the multi-stage
+  device-code-phishing-to-Graph-collection chain (see the companion KQL correlation rule
+  "Passkey Persistence: Device-Code Phishing to MFA Takeover and Graph Collection" for the
+  full, threshold-gated, cross-table detection). Sigma has no join, temporal-windowing, or
+  aggregation support, so this rule fires on the authentication-persistence event alone and
+  does NOT enforce the device-code sign-in precursor or the subsequent Graph-activity burst
+  - both required by the full correlation. Scoped to the two highest-signal operations only
+  (new security-info registration, and any admin-initiated registration on another user's
+  account) to cut noise from routine self-service profile edits.
+logsource:
+    product: azure
+    service: active_directory
+detection:
+    selection:
+        Category: 'AuditLogs'
+        OperationName:
+            - 'User registered security info'
+            - 'Admin registered security info'
+        Result: 'success'
+    condition: selection
+fields:
+    - 'UserId'
+    - 'InitiatedBy'
+    - 'TargetResources'
+falsepositives:
+    - Legitimate self-service registration of a new authenticator or passkey unrelated to any device-code sign-in
+    - Help-desk or admin-initiated MFA resets for users who lost their device
+level: medium
+tags:
+    - attack.t1556.006
+    - attack.t1078.004
+author: Arnold Chan
