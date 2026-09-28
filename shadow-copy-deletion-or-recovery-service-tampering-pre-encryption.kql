@@ -1,0 +1,16 @@
+DeviceProcessEvents
+| where Timestamp > ago(1d)
+| where FileName in~ ("vssadmin.exe", "wmic.exe", "powershell.exe", "cmd.exe", "bcdedit.exe", "net.exe", "net1.exe", "sc.exe", "wbadmin.exe")
+| where not(InitiatingProcessParentFileName in~ ("wbengine.exe", "VeeamAgent.exe", "VeeamDeploymentSvc.exe", "MsMpEng.exe", "sqlservr.exe", "BackupExecPubService.exe", "MsDtsSrvr.exe"))
+| extend Category = case(
+    FileName =~ "vssadmin.exe" and ProcessCommandLine has "delete" and ProcessCommandLine has "shadows", "ShadowCopyDelete",
+    FileName =~ "wmic.exe" and ProcessCommandLine has "shadowcopy" and ProcessCommandLine has "delete", "ShadowCopyDelete",
+    ProcessCommandLine has "bcdedit" and ProcessCommandLine has_any ("recoveryenabled", "bootstatuspolicy") and ProcessCommandLine has_any ("no", "ignoreallfailures"), "BootRecoveryTamper",
+    FileName =~ "wbadmin.exe" and ProcessCommandLine has_any ("delete catalog", "delete systemstatebackup"), "BackupCatalogDelete",
+    FileName in~ ("net.exe", "net1.exe", "sc.exe") and ProcessCommandLine has_any ("stop", "config") and ProcessCommandLine has_any ("vss", "sql", "backup", "veeam", "sophos", "defender", "sense", "mcafee", "symantec", "sepmasterservice", "webroot", "crowdstrike", "sentinelone"), "SecurityBackupServiceStop",
+    "")
+| where isnotempty(Category)
+| summarize RecoveryInhibitionActions = make_set(ProcessCommandLine, 10), Categories = make_set(Category, 10), DistinctCategoryCount = dcount(Category), FirstSeen = min(Timestamp), LastSeen = max(Timestamp) by DeviceId, InitiatingProcessAccountName
+| where DistinctCategoryCount >= 2
+| project FirstSeen, LastSeen, DeviceId, InitiatingProcessAccountName, DistinctCategoryCount, Categories, RecoveryInhibitionActions
+| sort by LastSeen desc
