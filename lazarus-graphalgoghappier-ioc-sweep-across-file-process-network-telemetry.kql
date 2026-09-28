@@ -1,0 +1,58 @@
+// Lazarus Group Graphalgo/GHAPPIER campaign IOC hunt
+let file_hashes = dynamic([
+ "b9966e3762e9a0d5d263b8cb3cca07294f81af9714d40ddf4628cb85d74e8ad5",
+ "5f892a5424e88a21a3eb3d7f82ebf04d8ac31cdb19ada25153be4165df977d0f",
+ "ab01686d87565250fc4989faddb877d793667b07ec217a61cbd798f5695d62f5",
+ "052c278f727292d779e9cf2465c9065a55b49546",
+ "e5af589fcd2bfb7093dd10274161a3c0de42057f",
+ "dbb4031e9bb8f8821a5758a6c308932b88599f18"
+]);
+let c2_ips = dynamic([
+ "193.247.144.38"
+]);
+let c2_domains = dynamic([
+ "gocommunity.io",
+ "gogets.dev",
+ "veltrixcap.org",
+ "veltrixcapital.ai",
+ "codepool.cloud",
+ "aurevian.cloud",
+ "mediumstar.slack.com",
+ "portfolio-devs.slack.com",
+ "portfolio-testers.slack.com"
+]);
+let file_hits =
+ DeviceFileEvents
+ | where Timestamp > ago(90d)
+ | where SHA256 in (file_hashes) or SHA1 in (file_hashes)
+ | extend MatchedIOC = iff(SHA256 in (file_hashes), SHA256, SHA1), IOCType = "file_hash"
+ | project Timestamp, DeviceId, DeviceName, MatchedIOC, IOCType;
+let process_hits =
+ DeviceProcessEvents
+ | where Timestamp > ago(90d)
+ | where SHA256 in (file_hashes) or SHA1 in (file_hashes)
+ or InitiatingProcessSHA256 in (file_hashes) or InitiatingProcessSHA1 in (file_hashes)
+ | extend MatchedIOC = case(
+ SHA256 in (file_hashes), SHA256,
+ SHA1 in (file_hashes), SHA1,
+ InitiatingProcessSHA256 in (file_hashes), InitiatingProcessSHA256,
+ InitiatingProcessSHA1 in (file_hashes), InitiatingProcessSHA1,
+ ""
+ ), IOCType = "process_hash"
+ | project Timestamp, DeviceId, DeviceName, MatchedIOC, IOCType;
+let network_ip_hits =
+ DeviceNetworkEvents
+ | where Timestamp > ago(90d)
+ | where RemoteIP in (c2_ips)
+ | extend MatchedIOC = RemoteIP, IOCType = "c2_ip"
+ | project Timestamp, DeviceId, DeviceName, MatchedIOC, IOCType;
+let network_domain_hits =
+ DeviceNetworkEvents
+ | where Timestamp > ago(90d)
+ | extend RemoteHost = tolower(tostring(parse_url(RemoteUrl).Host))
+ | extend RemoteHost = iff(isempty(RemoteHost), tolower(RemoteUrl), RemoteHost)
+ | where RemoteHost in~ (c2_domains)
+ | extend MatchedIOC = RemoteHost, IOCType = "c2_domain"
+ | project Timestamp, DeviceId, DeviceName, MatchedIOC, IOCType;
+union file_hits, process_hits, network_ip_hits, network_domain_hits
+| sort by Timestamp desc
