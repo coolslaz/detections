@@ -1,0 +1,14 @@
+// Detects creation of a file named dnsapi.dll masquerading as the NeedyMantis C2 configuration file.
+// The real dnsapi.dll only ever lives in System32/SysWOW64; NeedyMantis drops a 3448-byte
+// spoofed copy inside the same ProgramData/ProgramFiles folders used by its sideloading bundles
+// (e.g. %ProgramData%\office, %ProgramData%\broadcom, %ProgramData%\Intel, %ProgramData%\ics,
+// %ProgramFiles%\modifiable) immediately after the first/second-stage loader extracts the archive,
+// right before the main component reads it for C2 host/port/URI configuration.
+DeviceFileEvents
+| where TimeGenerated > ago(30d)
+| where FileName =~ "dnsapi.dll"
+| where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+| where not(FolderPath has_any (@"\Windows\System32\", @"\Windows\SysWOW64\", @"\Windows\WinSxS\"))
+| where FolderPath has_any (@"\ProgramData\office", @"\ProgramData\broadcom", @"\ProgramData\Intel", @"\ProgramData\ics", @"\ProgramData\USOShared", @"\ProgramData\VIM", @"\ProgramData\TightVNC", @"\ProgramFiles\modifiable", @"\Poedit\") and FileSize == 3448
+| project TimeGenerated, DeviceName, FileName, FolderPath, FileSize, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, SHA256
+| order by TimeGenerated desc
