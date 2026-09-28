@@ -1,0 +1,15 @@
+// Detects file creation events characteristic of NeedyMantis first-stage loader unpacking its paired encrypted archive
+// The archive yields a distinctive set of malicious files masquerading as legitimate components, written together in short succession by the same parent process
+let sideload_paths = dynamic([
+  @"\ProgramData\office", @"\ProgramData\broadcom", @"\ProgramData\Intel", @"\ProgramData\ics",
+  @"\ProgramData\USOShared", @"\ProgramData\VIM", @"\ProgramData\TightVNC", @"\ProgramFiles\modifiable", @"\Poedit\"
+]);
+DeviceFileEvents
+| where TimeGenerated > ago(1d)
+| where FileName in~ ("encryptbase64.ps1", "dnsapi.dll", "ws2_32.dll", "msvcrt140.dll")
+| where FolderPath has_any (sideload_paths)
+| where not(FolderPath has_any (@"\Windows\System32", @"\Windows\SysWOW64"))
+| summarize DroppedFiles = make_set(FileName, 10), FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated), Folders = make_set(FolderPath, 10) by DeviceId, InitiatingProcessFileName, InitiatingProcessId
+| where array_length(DroppedFiles) >= 2
+| where datetime_diff('second', LastSeen, FirstSeen) <= 60
+| project DeviceId, InitiatingProcessFileName, InitiatingProcessId, DroppedFiles, Folders, FirstSeen, LastSeen
