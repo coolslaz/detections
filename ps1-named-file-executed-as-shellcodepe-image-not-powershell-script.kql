@@ -1,0 +1,23 @@
+// NeedyMantis second-stage loader: a file with a .ps1 extension (e.g. encryptbase64.ps1)
+// is actually x64 shellcode that resolves APIs via ROR-11 hashing and unpacks a custom PE.
+// It is never interpreted by powershell.exe/pwsh.exe - it is either loaded as an image
+// (mapped like a module) or spawned/created as a process target directly, which is
+// anomalous for a .ps1-named file and generalizes even if the filename rotates.
+let sideload_paths = dynamic([
+  @"\ProgramData\office", @"\ProgramData\broadcom", @"\ProgramData\Intel", @"\ProgramData\ics",
+  @"\ProgramData\USOShared", @"\ProgramData\VIM", @"\ProgramData\TightVNC", @"\ProgramFiles\modifiable", @"\Poedit\"
+]);
+let ps1AsImage = DeviceImageLoadEvents
+| where TimeGenerated > ago(14d)
+| where FileName endswith ".ps1"
+| where FolderPath has_any (sideload_paths)
+| project TimeGenerated, DeviceId, DeviceName, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, DetectionType = "ps1_loaded_as_image";
+let ps1AsProcess = DeviceProcessEvents
+| where TimeGenerated > ago(14d)
+| where FileName endswith ".ps1"
+| where FolderPath has_any (sideload_paths)
+| where InitiatingProcessFileName !~ "powershell.exe" and InitiatingProcessFileName !~ "pwsh.exe" and InitiatingProcessFileName !~ "powershell_ise.exe"
+| project TimeGenerated, DeviceId, DeviceName, FileName, FolderPath, InitiatingProcessFileName, InitiatingProcessCommandLine, DetectionType = "ps1_executed_without_powershell_host";
+ps1AsImage
+| union ps1AsProcess
+| sort by TimeGenerated desc
