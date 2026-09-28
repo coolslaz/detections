@@ -1,0 +1,25 @@
+// Detects the loader sequence: a process hosts the .NET CLR (clr.dll/mscoree.dll) in memory
+// and, within a short window on the same host/process, accesses a storage container file
+// (.raw/.pak) such as monitor.raw \u2014 the pattern used by the WAV-shellcode loader before
+// decrypting the RAT payload. Extension set is intentionally narrow (not .db/.bin/.dat,
+// which are common in ordinary desktop app activity) and common CLR-hosting desktop apps
+// (browsers, chat/collab clients, editors) are excluded to cut routine-usage noise.
+let storageExt = @"\.(raw|pak)$";
+let benignHosts = dynamic(["chrome.exe","msedge.exe","firefox.exe","discord.exe","teams.exe","slack.exe","code.exe","onedrive.exe"]);
+let clrLoads =
+    DeviceImageLoadEvents
+    | where Timestamp > ago(1d)
+    | where FileName in~ ("clr.dll", "mscoree.dll")
+    | where InitiatingProcessFileName !in~ (benignHosts)
+    | project ClrTime = Timestamp, DeviceId, InitiatingProcessId, InitiatingProcessFileName, InitiatingProcessFolderPath, ClrModule = FileName;
+let storageAccess =
+    DeviceFileEvents
+    | where Timestamp > ago(1d)
+    | where FileName matches regex storageExt
+    | project FileTime = Timestamp, DeviceId, InitiatingProcessId, StorageFile = FileName, StorageFolder = FolderPath;
+clrLoads
+| join kind=inner storageAccess on DeviceId, InitiatingProcessId
+| where abs(datetime_diff('second', FileTime, ClrTime)) < 300
+| project ClrTime, FileTime, DeviceId, InitiatingProcessFileName, InitiatingProcessFolderPath, ClrModule, StorageFile, StorageFolder
+| where InitiatingProcessFolderPath has_any (@"\AppData\Local\Temp", @"\ProgramData", @"\Users\Public")
+| sort by ClrTime desc
