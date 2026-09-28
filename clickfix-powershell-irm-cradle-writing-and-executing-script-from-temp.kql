@@ -1,0 +1,7 @@
+DeviceProcessEvents
+| where FileName =~ "powershell.exe"
+| where ProcessCommandLine has "-ExecutionPolicy" and ProcessCommandLine has "Bypass"
+| where ProcessCommandLine has_any ("irm", "Invoke-RestMethod", "iwr", "Invoke-WebRequest")
+| where ProcessCommandLine has "Out-File" and ProcessCommandLine contains "$env:temp"
+| where ProcessCommandLine matches regex @"\\temp\\\d+\.ps1"
+| where ProcessCommandLine matches regex @"[;&]\s*&?\s*\$env:temp\\\d+\.ps1"
