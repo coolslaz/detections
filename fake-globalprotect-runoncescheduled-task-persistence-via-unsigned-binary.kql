@@ -1,0 +1,29 @@
+let UnsignedGlobalProtect =
+    DeviceFileCertificateInfo
+    | where FileName =~ "GlobalProtect.exe"
+    | where IsSigned == false
+    | summarize by DeviceId;
+DeviceRegistryEvents
+| where ActionType == "RegistryValueSet"
+| where RegistryKey has @"\RunOnce" and RegistryValueName =~ "GlobalProtectVPN"
+| where RegistryValueData has "GlobalProtect.exe"
+| where InitiatingProcessFileName in~ ("msiexec.exe", "GlobalProtect.exe")
+| join kind=inner (UnsignedGlobalProtect) on DeviceId
+| project Timestamp, DeviceId, DeviceName, RegistryKey, RegistryValueName, RegistryValueData, InitiatingProcessFileName, InitiatingProcessCommandLine
+| union (
+    DeviceProcessEvents
+    | where FileName in~ ("schtasks.exe")
+    | where ProcessCommandLine has "GlobalProtectVPNUpdate" and ProcessCommandLine has "GlobalProtect.exe"
+    | where InitiatingProcessFileName in~ ("msiexec.exe", "GlobalProtect.exe")
+    | join kind=inner (UnsignedGlobalProtect) on DeviceId
+    | project Timestamp, DeviceId, DeviceName, RegistryKey = "", RegistryValueName = "", RegistryValueData = ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine = ProcessCommandLine
+)
+| union (
+    DeviceEvents
+    | where ActionType in ("ScheduledTaskCreated", "ScheduledTaskUpdated")
+    | where AdditionalFields has "GlobalProtectVPNUpdate" and AdditionalFields has "GlobalProtect.exe"
+    | where InitiatingProcessFileName in~ ("msiexec.exe", "GlobalProtect.exe")
+    | join kind=inner (UnsignedGlobalProtect) on DeviceId
+    | project Timestamp, DeviceId, DeviceName, RegistryKey = "", RegistryValueName = "", RegistryValueData = tostring(AdditionalFields), InitiatingProcessFileName, InitiatingProcessCommandLine
+)
+| sort by Timestamp asc
