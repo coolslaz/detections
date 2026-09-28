@@ -1,0 +1,19 @@
+let names = dynamic(["Canon Configuration Reader", "Stardock DeElevation Tool"]);
+let legit_vendor_paths = dynamic([@"\Program Files\Canon", @"\Program Files (x86)\Canon", @"\ProgramData\Canon", @"\Program Files\Stardock", @"\Program Files (x86)\Stardock", @"\ProgramData\Stardock"]);
+let run_key_events = DeviceRegistryEvents
+| where ActionType in ("RegistryValueSet", "RegistryKeyCreated")
+| where RegistryKey has @"CurrentVersion\Run"
+| where RegistryValueName has_any (names)
+| where not(InitiatingProcessFolderPath has_any (legit_vendor_paths))
+| project TimeGenerated=Timestamp, DeviceId, DeviceName, ActionType, RegistryValueName, InitiatingProcessFileName, InitiatingProcessCommandLine;
+let task_events = DeviceProcessEvents
+| where FileName =~ "schtasks.exe"
+| where ProcessCommandLine has "/create"
+| where ProcessCommandLine has_any (names)
+| where not(InitiatingProcessFolderPath has_any (legit_vendor_paths))
+| project TimeGenerated=Timestamp, DeviceId, DeviceName, ActionType="ScheduledTaskCreated", RegistryValueName=ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine;
+union run_key_events, task_events
+| summarize Events=make_set(ActionType), MechanismCount=dcount(ActionType), FirstSeen=min(TimeGenerated), LastSeen=max(TimeGenerated), Details=make_set(RegistryValueName, 5) by DeviceId, DeviceName
+| where MechanismCount >= 2
+| where (LastSeen - FirstSeen) <= 15m
+| project DeviceId, DeviceName, Events, FirstSeen, LastSeen, Details
