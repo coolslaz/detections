@@ -1,0 +1,30 @@
+// Detects file creation of DLLs at non-standard ProgramData/ProgramFiles paths mirroring NeedyMantis' first-stage loader naming/path convention,
+// CORROBORATED by that exact same DLL actually being loaded by a process within 10 minutes of creation (confirms sideload took effect, not just
+// a dropped/quarantined/backed-up file sitting at the path) - this join is the primary false-positive reduction over a path-only match.
+let suspicious_paths = dynamic([
+    @"\Poedit\WinSparkle.dll",
+    @"\USOShared\libcurl.dll",
+    @"\VIM\vim64.dll",
+    @"\TightVNC\VIM\vim64.dll",
+    @"\office\dbghelp.dll",
+    @"\broadcom\dbghelp.dll",
+    @"\Intel\jli.dll",
+    @"\modifiable\nvml.dll",
+    @"\ics\nvml.dll"
+]);
+let lookback = 14d;
+let dropped = DeviceFileEvents
+| where TimeGenerated > ago(lookback)
+| where ActionType == "FileCreated"
+| where FolderPath has_any (suspicious_paths)
+| project DeviceId, DeviceName, FileCreateTime = TimeGenerated, DroppedFolderPath = FolderPath, DroppedFileName = FileName;
+let loaded = DeviceImageLoadEvents
+| where TimeGenerated > ago(lookback)
+| project DeviceId, LoadTime = TimeGenerated, LoadedFolderPath = FolderPath, LoadedFileName = FileName, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessSHA256;
+dropped
+| join kind=inner loaded on DeviceId
+| where LoadedFolderPath == DroppedFolderPath and LoadedFileName == DroppedFileName
+| where LoadTime between (FileCreateTime .. FileCreateTime + 10m)
+| where InitiatingProcessFolderPath !has "\\Windows\\WinSxS"
+| project FileCreateTime, LoadTime, DeviceName, DroppedFolderPath, DroppedFileName, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessSHA256
+| sort by FileCreateTime desc
