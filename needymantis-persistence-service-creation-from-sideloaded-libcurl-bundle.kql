@@ -1,0 +1,12 @@
+// Older NeedyMantis variant (Oct 2025) creates a Windows service for persistence
+// after the libcurl.dll sideload bundle has landed on disk.
+let sideload_dirs = dynamic([@"\ProgramData\office", @"\ProgramData\broadcom", @"\ProgramData\Intel", @"\ProgramData\ics", @"\ProgramData\USOShared", @"\ProgramData\VIM", @"\ProgramData\TightVNC", @"\ProgramFiles\modifiable", @"\Poedit\"]);
+DeviceProcessEvents
+| where TimeGenerated > ago(14d)
+| where FileName in~ ("sc.exe", "powershell.exe", "powershell_ise.exe", "cmd.exe", "reg.exe")
+| where (ProcessCommandLine has "sc" and ProcessCommandLine has "create")
+  or ProcessCommandLine has "New-Service"
+  or (ProcessCommandLine has_all ("reg", "add") and ProcessCommandLine has @"\Services\")
+| where ProcessCommandLine has_any (dynamic(["libcurl", "WinSparkle", "vim64.dll", "dbghelp.dll", "jli.dll", "nvml.dll"]))
+  or ProcessCommandLine has_any (sideload_dirs)
+| project TimeGenerated, DeviceName, AccountName, FileName, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine
