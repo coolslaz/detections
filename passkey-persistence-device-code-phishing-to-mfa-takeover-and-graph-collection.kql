@@ -1,0 +1,102 @@
+let lookback = 1d;
+let deviceCodeToMfaWindow = 60m;
+let deviceCodeToGraphWindow = 120m;
+let minTotalGraphRequests = 25;
+let minReconRequests = 5;
+let minCollectionRequests = 10;
+let CollectionTokens = dynamic(["messages","mailfolders","attachments","drive","drives","sites","lists","search"]);
+let ReconTokens = dynamic(["users","groups","directoryroles","rolemanagement","applications","serviceprincipals","organization"]);
+let DeviceCodeSignins =
+    SigninLogs
+    | where TimeGenerated > ago(lookback)
+    | where tostring(ResultType) == "0"
+    | where AuthenticationProtocol =~ "deviceCode"
+    | project
+        DeviceCodeTime = TimeGenerated,
+        UserId,
+        UserPrincipalName,
+        DeviceCodeSourceIP = IPAddress,
+        Application = AppDisplayName,
+        ConditionalAccessStatus = tostring(ConditionalAccessStatus),
+        SignInRiskLevel = tostring(RiskLevelDuringSignIn);
+let MfaPersistenceEvents =
+    AuditLogs
+    | where TimeGenerated > ago(lookback)
+    | where Category in~ ("UserManagement", "AuthenticationMethods")
+    | where OperationName has_any (
+        "User registered security info",
+        "User registered all required security info",
+        "User updated security info",
+        "User changed default security info",
+        "Admin registered security info")
+    | where Result =~ "success"
+    | extend TargetUserId = tostring(TargetResources[0].id)
+    | extend MfaRegistrationIP = tostring(InitiatedBy.user.ipAddress)
+    | project
+        MfaTime = TimeGenerated,
+        TargetUserId,
+        MfaRegistrationIP,
+        AuthenticationOperation = OperationName;
+let DeviceCodeToMfa =
+    DeviceCodeSignins
+    | join kind=inner (MfaPersistenceEvents) on $left.UserId == $right.TargetUserId
+    | where MfaTime between (DeviceCodeTime .. (DeviceCodeTime + deviceCodeToMfaWindow))
+    | summarize arg_min(MfaTime, MfaRegistrationIP, AuthenticationOperation) by UserId, UserPrincipalName, DeviceCodeTime, DeviceCodeSourceIP, Application, ConditionalAccessStatus, SignInRiskLevel;
+let GraphActivity =
+    MicrosoftGraphActivityLogs
+    | where TimeGenerated > ago(lookback)
+    | where ResponseStatusCode between (200 .. 299)
+    | where isnotempty(Scopes)
+    | extend GraphPath = tolower(tostring(parse_url(RequestUri).Path))
+    | extend GraphPath = replace_regex(GraphPath, @"^/(v1\.0|beta)", "")
+    | extend IsCollection = GraphPath has_any (CollectionTokens)
+    | extend IsRecon = (not(IsCollection)) and GraphPath has_any (ReconTokens)
+    | project
+        GraphTime = TimeGenerated,
+        UserId,
+        GraphSourceIP = IPAddress,
+        GraphPath,
+        RequestUri,
+        UserAgent,
+        AppId,
+        IsRecon,
+        IsCollection;
+DeviceCodeToMfa
+| join kind=inner (GraphActivity) on UserId
+| where GraphTime between (DeviceCodeTime .. (DeviceCodeTime + deviceCodeToGraphWindow))
+| summarize
+    FirstGraphActivity = min(GraphTime),
+    LastGraphActivity = max(GraphTime),
+    TotalGraphRequests = count(),
+    ReconRequestCount = countif(IsRecon),
+    CollectionRequestCount = countif(IsCollection),
+    GraphSourceIPs = make_set(GraphSourceIP, 25),
+    DistinctGraphResources = make_set(GraphPath, 50),
+    DistinctResourceCount = dcount(GraphPath),
+    GraphUserAgents = make_set(UserAgent, 10),
+    SampleGraphRequestUris = make_set(RequestUri, 10)
+    by UserId, UserPrincipalName, DeviceCodeTime, DeviceCodeSourceIP, MfaTime, MfaRegistrationIP, AuthenticationOperation, Application, ConditionalAccessStatus, SignInRiskLevel
+| where TotalGraphRequests >= minTotalGraphRequests and (ReconRequestCount >= minReconRequests or CollectionRequestCount >= minCollectionRequests) and DistinctResourceCount >= 3
+| extend GraphFromDifferentIP = array_length(set_difference(GraphSourceIPs, pack_array(DeviceCodeSourceIP))) > 0
+| project
+    UserPrincipalName,
+    UserId,
+    DeviceCodeTime,
+    MfaTime,
+    FirstGraphActivity,
+    LastGraphActivity,
+    DeviceCodeSourceIP,
+    MfaRegistrationIP,
+    GraphSourceIPs,
+    Application,
+    AuthenticationOperation,
+    TotalGraphRequests,
+    ReconRequestCount,
+    CollectionRequestCount,
+    DistinctGraphResources,
+    GraphUserAgents,
+    SampleGraphRequestUris,
+    ConditionalAccessStatus,
+    SignInRiskLevel,
+    GraphFromDifferentIP
+| sort by TotalGraphRequests desc
