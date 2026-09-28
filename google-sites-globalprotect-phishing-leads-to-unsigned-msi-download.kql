@@ -1,0 +1,20 @@
+// Correlates a spearphishing link click to a Google Sites landing page impersonating GlobalProtect
+// with a subsequent download/install of an unsigned GlobalProtect.msi on the same device
+let googleSitesClicks = UrlClickEvents
+| where tostring(parse_url(Url).Host) =~ "sites.google.com"
+| where Url has_any ("globalprotect", "GlobalProtect", "paloalto", "PaloAlto")
+| project ClickTime = Timestamp, AccountUpn, NetworkMessageId, ClickedUrl = Url;
+let msiDownloads = DeviceFileEvents
+| where FileName =~ "GlobalProtect.msi"
+| where ActionType in ("FileCreated", "FileRenamed")
+| project DownloadTime = Timestamp, DeviceName, RequestAccountName, FileName, FolderPath, SHA256;
+googleSitesClicks
+| join kind=inner (msiDownloads) on $left.AccountUpn == $right.RequestAccountName
+| where DownloadTime between (ClickTime .. (ClickTime + 30m))
+| join kind=inner (
+    DeviceFileCertificateInfo
+    | project DeviceName, SHA256, IsSigned, Signer, CertificateSigner
+) on DeviceName, SHA256
+| where IsSigned == false or (isnotempty(Signer) and Signer !contains "Palo Alto Networks") or (isnotempty(CertificateSigner) and CertificateSigner !contains "Palo Alto Networks")
+| project ClickTime, AccountUpn, ClickedUrl, DownloadTime, DeviceName, FileName, FolderPath, SHA256, IsSigned, Signer, CertificateSigner
+| sort by ClickTime desc
