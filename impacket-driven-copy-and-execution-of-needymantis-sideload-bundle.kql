@@ -1,0 +1,31 @@
+// Detects hands-on-keyboard Impacket usage to copy a NeedyMantis three-part bundle (legitimate app + malicious DLL + archive) from a network share and execute it
+let needymantis_paths = dynamic([
+  @"Poedit\WinSparkle.dll",
+  @"USOShared\libcurl.dll",
+  @"VIM\vim64.dll",
+  @"TightVNC\VIM\vim64.dll",
+  @"office\dbghelp.dll",
+  @"broadcom\dbghelp.dll",
+  @"Intel\jli.dll",
+  @"modifiable\nvml.dll",
+  @"ics\nvml.dll"
+]);
+let impacket_copies =
+    DeviceFileEvents
+    | where TimeGenerated > ago(14d)
+    | where ActionType in ("FileCreated", "FileModified", "FileRenamed")
+    | where FolderPath has_any (needymantis_paths)
+    | where InitiatingProcessCommandLine has_any ("2>&1", "ADMIN$", "%COMSPEC%") and InitiatingProcessFileName in~ ("cmd.exe", "wmiprvse.exe", "services.exe")
+    | extend BundleFolder = tostring(split(FolderPath, @"\")[-2])
+    | project DeviceId, DeviceName, CopyTime = TimeGenerated, FileName, FolderPath, BundleFolder, InitiatingProcessCommandLine, InitiatingProcessAccountName;
+let impacket_exec =
+    DeviceProcessEvents
+    | where TimeGenerated > ago(14d)
+    | where InitiatingProcessCommandLine has_all ("cmd.exe", "/c") and InitiatingProcessCommandLine has_any ("2>&1", "ADMIN$", "%COMSPEC%")
+    | project DeviceId, DeviceName, ExecTime = TimeGenerated, FileName, FolderPath, ProcessCommandLine, InitiatingProcessCommandLine, InitiatingProcessAccountName;
+impacket_copies
+| join kind=inner (impacket_exec) on DeviceId, DeviceName
+| where ExecTime between (CopyTime .. CopyTime + 15m)
+| where FolderPath has BundleFolder or ProcessCommandLine has BundleFolder
+| project CopyTime, ExecTime, DeviceId, DeviceName, BundleFolder, CopiedFile = FileName, CopiedPath = FolderPath, ExecutedFile = FileName1, ExecutedPath = FolderPath1, ProcessCommandLine, InitiatingProcessCommandLine1, InitiatingProcessAccountName1
+| sort by ExecTime desc
