@@ -1,0 +1,248 @@
+// Title: Silent Departure: Sensitive Data Hoarding and Multi-Channel Exfiltration
+// Author: Arnold Chan
+// Objective: Correlate abnormal bulk-download behavior (data hoarding) with sensitive-data
+// access and multi-channel exfiltration (removable media, cloud, remote, external domain),
+// boosted by archive/staging tool usage, to surface likely insider-threat / departing-employee
+// data theft across CloudAppEvents, DataSecurityEvents, DeviceProcessEvents, and IdentityInfo.
+// MITRE ATT&CK: T1213 Data from Information Repositories, T1213.002 SharePoint,
+// T1005 Data from Local System, T1074 Data Staged, T1052.001 Exfiltration over USB,
+// T1567 Exfiltration Over Web Service, T1567.002 Exfiltration to Cloud Storage
+//
+// Tuning recommendations:
+// - Raise MinRecentDownloads / BaselineMultiplierThreshold for roles with legitimately high
+//   baselines (data engineers, backup/migration/service accounts).
+// - Exclude known-approved bulk-export service accounts via a watchlist join, e.g.:
+//     | join kind=leftanti (_GetWatchlist('ApprovedBulkExportAccounts')) on AccountObjectId
+//   (left disabled by default - enable once that watchlist exists in your workspace).
+// - Validate DeviceDestinationLocationType enum values against your tenant's actual
+//   DataSecurityEvents data before relying on the has_any keyword matches below.
+// - Adjust MinBaselineActiveDaysForTrust for newly onboarded populations that lack 30d history.
+// - False-positive tightening applied in this version: (1) excludes background/automatic sync
+//   download ActionTypes from all counting, (2) requires a higher absolute floor for users
+//   with no trustworthy baseline instead of letting them pass on MinRecentDownloads alone,
+//   (3) requires a minimum distinct-file ratio so repeated re-downloads of the same files
+//   can't inflate the count, (4) requires at least one high-confidence exfil channel
+//   (removable media / external domain) or two corroborating destination events instead of
+//   any single ambiguous cloud/remote match, (5) narrowed cloud-destination matching to
+//   category keywords instead of brand names to avoid misclassifying approved corporate
+//   storage. Re-tune InsufficientBaselineMinDownloads and MinDistinctFileRatio against your
+//   own telemetry before relying on default values.
+let BaselineLookback = 30d;
+let RecentWindow = 1d;
+let MinRecentDownloads = 20;
+let BaselineMultiplierThreshold = 3.0;
+let MinBaselineActiveDaysForTrust = 5;
+// --- False-positive tightening controls ---
+// Users with no trustworthy baseline bypass the multiplier gate (Step 2) but must clear a
+// higher absolute floor than baselined users, since a single legitimate bulk day (onboarding,
+// project handoff, migration) is common for accounts with no established norm.
+let InsufficientBaselineMinDownloads = 40;
+// Require a meaningful fraction of DISTINCT files in the recent download burst, so repeated
+// re-downloads / sync retries of a small file set can't inflate RecentDownloadCount artificially.
+let MinDistinctFileRatio = 0.6;
+// Background/automatic sync action types are excluded from both baseline and recent-window
+// counting - they reflect client-driven replication (e.g. OneDrive/SharePoint sync clients
+// pre-fetching a shared library), not a user intentionally exporting data, and are typically
+// the single largest source of alert noise for this rule.
+let NoisySyncActionTypes = dynamic(['FileSyncDownloadedFull', 'FileSyncDownloadedPartial', 'FileDownloadedForOfflineUse']);
+//
+// STEP 1 - Baseline construction
+// Build a 30-day (excluding most recent 24h) per-user download baseline, resilient across
+// SharePoint/OneDrive/Box/Dropbox/GDrive connector ActionType naming drift via substring match.
+let Baseline =
+    CloudAppEvents
+    | where Timestamp between (ago(BaselineLookback + RecentWindow) .. ago(RecentWindow))
+    | where ActionType has "Download"
+    | where ActionType !in~ (NoisySyncActionTypes)
+    | where isnotempty(AccountObjectId)
+    | summarize BaselineTotalDownloads = count(), BaselineActiveDays = dcount(bin(Timestamp, 1d)) by AccountObjectId
+    | extend HistoricalAvgDailyDownloads = round(1.0 * BaselineTotalDownloads / 30, 2)
+    | extend HasSufficientBaseline = BaselineActiveDays >= MinBaselineActiveDaysForTrust;
+//
+// STEP 2 - Abnormal data-hoarding logic
+// Recent (last 24h) download volume per user, joined against baseline to compute deviation.
+let RecentDownloads =
+    CloudAppEvents
+    | where Timestamp > ago(RecentWindow)
+    | where ActionType has "Download"
+    | where ActionType !in~ (NoisySyncActionTypes)
+    | where isnotempty(AccountObjectId)
+    | extend UncommonForUserFlag = tobool(column_ifexists('UncommonForUser', false))
+    | summarize
+        RecentDownloadCount = count(),
+        DistinctFilesAccessed = dcount(ObjectName),
+        FirstDownloadTime = min(Timestamp),
+        LastDownloadTime = max(Timestamp),
+        SourceIPs = make_set(IPAddress, 20),
+        Countries = make_set(CountryCode, 20),
+        UserAgents = make_set(UserAgent, 10),
+        Applications = make_set(Application, 10),
+        SampleFilenames = make_set(ObjectName, 15),
+        AnyUncommonForUser = max(UncommonForUserFlag),
+        AccountDisplayName = any(AccountDisplayName)
+        by AccountObjectId
+    // Distinct-file ratio guards against sync-retry / repeated-download noise inflating the
+    // raw event count without real additional data acquisition.
+    | extend DistinctFileRatio = round(1.0 * DistinctFilesAccessed / RecentDownloadCount, 2)
+    | where RecentDownloadCount >= MinRecentDownloads and DistinctFileRatio >= MinDistinctFileRatio;
+let HoardingCandidates =
+    RecentDownloads
+    | join kind=leftouter (Baseline) on AccountObjectId
+    | extend HistoricalAvgDailyDownloads = coalesce(HistoricalAvgDailyDownloads, 0.0)
+    | extend HasSufficientBaseline = coalesce(HasSufficientBaseline, false)
+    // Users with no baseline history (new/rarely-active) are PRESERVED, not dropped, but
+    // distinguished via BaselineCoverage so analysts know the multiplier is not trustworthy.
+    | extend BaselineCoverage = iff(HasSufficientBaseline, "Sufficient", "Insufficient/New")
+    | extend BaselineMultiplier = round(RecentDownloadCount / max_of(HistoricalAvgDailyDownloads, 1.0), 2)
+    // Baselined users must clear the multiplier gate. Users with no trustworthy baseline
+    // (new/rarely-active accounts) can't be judged against a personal norm, so instead they
+    // must clear a HIGHER absolute floor (InsufficientBaselineMinDownloads) - tighter than just
+    // reusing MinRecentDownloads, so a one-off legitimate bulk day doesn't fire on volume alone.
+    | where (HasSufficientBaseline and BaselineMultiplier >= BaselineMultiplierThreshold)
+        or (not(HasSufficientBaseline) and RecentDownloadCount >= InsufficientBaselineMinDownloads);
+//
+// STEP 3/4 - Sensitive-data identification and external destination detection
+// Every optional field guarded with column_ifexists since DataSecurityEvents schema varies
+// by tenant/connector version.
+let DsePrepared =
+    DataSecurityEvents
+    | where Timestamp > ago(RecentWindow)
+    | where isnotempty(AccountObjectId)
+    | extend
+        SensitivityLabelId = tostring(column_ifexists('SensitivityLabelId', '')),
+        SensitiveInfoTypeInfo = todynamic(tostring(column_ifexists('SensitiveInfoTypeInfo', dynamic([])))),
+        DlpPolicyMatchInfo = todynamic(tostring(column_ifexists('DlpPolicyMatchInfo', dynamic([])))),
+        DlpPolicyRuleMatchInfo = todynamic(tostring(column_ifexists('DlpPolicyRuleMatchInfo', dynamic([])))),
+        DeviceDestinationLocationType = tostring(column_ifexists('DeviceDestinationLocationType', '')),
+        RemovableMediaSerialNumber = tostring(column_ifexists('RemovableMediaSerialNumber', '')),
+        RemovableMediaManufacturer = tostring(column_ifexists('RemovableMediaManufacturer', '')),
+        RemovableMediaModel = tostring(column_ifexists('RemovableMediaModel', '')),
+        ExternalUrlDomains = todynamic(tostring(column_ifexists('ExternalUrlDomains', dynamic([])))),
+        FileSize = todouble(column_ifexists('FileSize', 0.0)),
+        FileName = tostring(column_ifexists('FileName', '')),
+        DeviceName = tostring(column_ifexists('DeviceName', '')),
+        AccountUpn = tostring(column_ifexists('AccountUPN', ''))
+    | extend
+        IsSensitiveEvent = isnotempty(SensitivityLabelId) or array_length(SensitiveInfoTypeInfo) > 0
+            or array_length(DlpPolicyMatchInfo) > 0 or array_length(DlpPolicyRuleMatchInfo) > 0,
+        IsRemovableMediaEvent = isnotempty(RemovableMediaSerialNumber)
+            or DeviceDestinationLocationType has_any ('Removable', 'USB'),
+        // Match the destination-TYPE category only (not brand/app names - those surface via
+        // ExternalUrlDomains instead). Broad brand substrings here previously risked false
+        // matches against approved corporate storage; validate the exact enum value in your
+        // tenant's DataSecurityEvents data and extend this list deliberately.
+        IsCloudDestinationEvent = DeviceDestinationLocationType has_any ('Cloud', 'CloudStorage'),
+        IsRemoteDestinationEvent = DeviceDestinationLocationType has_any ('Remote', 'Network', 'RDP', 'RemoteSession'),
+        IsExternalDomainEvent = array_length(ExternalUrlDomains) > 0
+    | extend IsExfilEvent = IsRemovableMediaEvent or IsCloudDestinationEvent or IsRemoteDestinationEvent or IsExternalDomainEvent;
+let DseAgg =
+    DsePrepared
+    | summarize
+        SensitiveEventCount = countif(IsSensitiveEvent),
+        TotalSensitiveSizeMB = round(sumif(FileSize, IsSensitiveEvent) / 1048576.0, 2),
+        SensitiveFilenames = set_difference(make_set(iff(IsSensitiveEvent, FileName, ''), 15), dynamic([''])),
+        ExfilEventCount = countif(IsExfilEvent),
+        RemovableMediaEventCount = countif(IsRemovableMediaEvent),
+        CloudDestinationEventCount = countif(IsCloudDestinationEvent),
+        RemoteDestinationEventCount = countif(IsRemoteDestinationEvent),
+        ExternalDomainEventCount = countif(IsExternalDomainEvent),
+        RemovableMediaManufacturers = set_difference(make_set(iff(IsRemovableMediaEvent, RemovableMediaManufacturer, ''), 5), dynamic([''])),
+        RemovableMediaModels = set_difference(make_set(iff(IsRemovableMediaEvent, RemovableMediaModel, ''), 5), dynamic([''])),
+        RemovableMediaSerials = set_difference(make_set(iff(IsRemovableMediaEvent, RemovableMediaSerialNumber, ''), 5), dynamic([''])),
+        DevicesInvolved = make_set(DeviceName, 10),
+        // Conditional-min workaround: sentinel-based minif since KQL has no native minif().
+        FirstExfilEventTime = min(iff(IsExfilEvent, Timestamp, datetime(9999-12-31))),
+        SampleAccountUpn = any(AccountUpn)
+        by AccountObjectId;
+// mv-expand must happen pre-aggregation, so external domains are computed separately.
+let ExternalDomainsAgg =
+    DsePrepared
+    | where array_length(ExternalUrlDomains) > 0
+    | mv-expand Domain = ExternalUrlDomains
+    | summarize ExternalDomainsSample = make_set(tostring(Domain), 15) by AccountObjectId;
+let SensitiveExfilCandidates =
+    HoardingCandidates
+    | join kind=leftouter (DseAgg) on AccountObjectId
+    | extend
+        SensitiveEventCount = coalesce(SensitiveEventCount, 0),
+        TotalSensitiveSizeMB = coalesce(TotalSensitiveSizeMB, 0.0),
+        ExfilEventCount = coalesce(ExfilEventCount, 0),
+        RemovableMediaEventCount = coalesce(RemovableMediaEventCount, 0),
+        CloudDestinationEventCount = coalesce(CloudDestinationEventCount, 0),
+        RemoteDestinationEventCount = coalesce(RemoteDestinationEventCount, 0),
+        ExternalDomainEventCount = coalesce(ExternalDomainEventCount, 0),
+        FirstExfilEventTime = coalesce(FirstExfilEventTime, datetime(9999-12-31))
+    | join kind=leftouter (ExternalDomainsAgg) on AccountObjectId
+    // Sensitive-data access AND an exfil destination are both hard requirements - hoarding
+    // volume alone never alerts. Additionally, a SINGLE low-confidence signal (generic cloud
+    // or remote-session destination match, which can include ambiguous/approved categories)
+    // is not enough on its own - require either one high-confidence channel (removable media
+    // or a resolved external domain) or at least two destination events of any kind together.
+    | extend HighConfidenceExfilEventCount = RemovableMediaEventCount + ExternalDomainEventCount
+    | where SensitiveEventCount >= 2
+        and (HighConfidenceExfilEventCount >= 1 or ExfilEventCount >= 2);
+//
+// STEP 5/6 - Archive/staging correlation - confidence booster, NOT a mandatory gate
+let ArchiveStaging =
+    DeviceProcessEvents
+    | where Timestamp > ago(RecentWindow)
+    | where isnotempty(AccountObjectId)
+    | where FileName has_any ('7z.exe', '7za.exe', 'winrar.exe', 'rar.exe', 'tar.exe', 'makecab.exe')
+        or ProcessCommandLine has_any ('Compress-Archive', 'makecab', '.zip', '.7z', '.rar')
+    | summarize
+        ArchiveStagingEventCount = count(),
+        LastArchiveStagingTime = max(Timestamp),
+        ArchiveTools = make_set(FileName, 10),
+        StagingDevices = make_set(DeviceName, 10)
+        by AccountObjectId;
+let WithArchive =
+    SensitiveExfilCandidates
+    | join kind=leftouter (ArchiveStaging) on AccountObjectId
+    | extend ArchiveStagingEventCount = coalesce(ArchiveStagingEventCount, 0)
+    // Approximation: archive activity occurred at/before the first exfil-flagged event.
+    // Tighten to a bounded pre-exfil window (e.g. 4h) if needed for precision.
+    | extend ArchiveBeforeExfil = ArchiveStagingEventCount > 0 and LastArchiveStagingTime <= FirstExfilEventTime;
+//
+// STEP 7 - Identity enrichment (best-effort; Department may be null if AAD profile incomplete)
+let IdentityEnrichment =
+    IdentityInfo
+    | summarize arg_max(Timestamp, AccountUPN, Department, JobTitle) by AccountObjectId
+    | project-rename IdentityAccountUpn = AccountUPN;
+let Enriched =
+    WithArchive
+    | join kind=leftouter (IdentityEnrichment) on AccountObjectId
+    | extend AccountUpn = coalesce(IdentityAccountUpn, SampleAccountUpn, AccountDisplayName);
+//
+// STEP 8 - Risk scoring - explainable, additive, capped at 100
+Enriched
+| extend
+    Score_BaselineDeviation = iff((HasSufficientBaseline and BaselineMultiplier >= 3.0) or not(HasSufficientBaseline), 25, 0),
+    Score_5x = iff(HasSufficientBaseline and BaselineMultiplier >= 5.0, 15, 0),
+    Score_10x = iff(HasSufficientBaseline and BaselineMultiplier >= 10.0, 25, 0),
+    Score_RemovableMedia = iff(RemovableMediaEventCount > 0, 20, 0),
+    Score_ExternalDomain = iff(ExternalDomainEventCount > 0, 15, 0),
+    Score_CloudDestination = iff(CloudDestinationEventCount > 0, 10, 0),
+    Score_UncommonForUser = iff(AnyUncommonForUser == true, 10, 0),
+    Score_HighSensitiveCount = iff(SensitiveEventCount >= 10, 10, 0),
+    Score_ArchiveStaging = iff(ArchiveBeforeExfil, 15, 0)
+| extend RiskScore = min_of(
+    Score_BaselineDeviation + Score_5x + Score_10x + Score_RemovableMedia + Score_ExternalDomain
+    + Score_CloudDestination + Score_UncommonForUser + Score_HighSensitiveCount + Score_ArchiveStaging,
+    100)
+| extend Severity = case(RiskScore >= 80, "High", RiskScore >= 60, "Medium", "Low")
+//
+// STEP 9 - Narrative field
+| extend InsiderThreatSequence = strcat(
+    "Abnormal Downloading",
+    iff(SensitiveEventCount > 0, " -> Sensitive Data Access", ""),
+    iff(ArchiveStagingEventCount > 0, " -> Data Staging", ""),
+    iff(ExfilEventCount > 0, " -> External Exfiltration", ""))
+| project
+    AccountUpn, AccountObjectId, Department, FirstDownloadTime, LastDownloadTime, RecentDownloadCount,
+    HistoricalAvgDailyDownloads, BaselineCoverage, BaselineMultiplier, DistinctFilesAccessed,
+    SensitiveEventCount, TotalSensitiveSizeMB, ExfilEventCount, RemovableMediaEventCount,
+    CloudDestinationEventCount, RemoteDestinationEventCount, ExternalDomainEventCount,
+    ArchiveStagingEventCount, SourceIPs, Countries, Applications, DevicesInvolved, UserAgents,
+    SensitiveFilenames, SampleFilenames, ExternalDomainsSample, RemovableMediaManufacturers,
+    RemovableMediaModels, RemovableMediaSerials, RiskScore, Severity, InsiderThreatSequence
+| sort by RiskScore desc
