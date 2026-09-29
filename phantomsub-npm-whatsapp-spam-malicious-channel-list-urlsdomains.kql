@@ -1,0 +1,30 @@
+// Detects outbound network activity to PhantomSub campaign remote channel-list URLs/domains
+// used by malicious Baileys-fork npm packages to auto-join WhatsApp spam channels
+// files.gifted.co.ke is a shared/generic file-hosting service, not attacker-owned infra -
+// matched only via its specific malicious file path below, not at the domain level, to avoid
+// flagging unrelated legitimate traffic to that host
+let maliciousDomains = dynamic(["thecortana.tech","fyxzpedia.id"]);
+let maliciousUrlFragments = dynamic([
+ "raw.githubusercontent.com/skyzopedia/Screaper/idChannel.json",
+ "files.gifted.co.ke/file/chJids.json",
+ "raw.githubusercontent.com/LevviCodeID/Levi4than/levvleys.json",
+ "raw.githubusercontent.com/FallEzz/baileys-corp/news.json",
+ "raw.githubusercontent.com/iyedahruss/all-public-db/newsletter.json",
+ "raw.githubusercontent.com/MikuDevReal/V2.0/pepek.json",
+ "raw.githubusercontent.com/budetzz/mazzbudetzzzzz/joinchgua.json",
+ "raw.github.com/skyzopedia/NewsletterID/VIP_Push.json",
+ "raw.githubusercontent.com/DGXeon13/strings/strings.json",
+ "raw.githubusercontent.com/noxXza/data/noxleys.json",
+ "raw.githubusercontent.com/Dayyy-19/Anu/Newsletter.json"
+]);
+DeviceNetworkEvents
+| where RemoteUrl has_any (maliciousDomains) or RemoteUrl has_any (maliciousUrlFragments)
+| project Timestamp, DeviceId, DeviceName, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteUrl, RemoteIP, ActionType
+| union (
+ DeviceProcessEvents
+ | where FileName in~ ("npm", "npm.cmd")
+ | where ProcessCommandLine has_any ("install", "add")
+ | where ProcessCommandLine has_any ("cantarella-baileys", "jexkcode", "spencer-baileys", "neuralwhatsapp", "levvleys", "noxleyss", "@rixxcodex/baileys")
+ | project Timestamp, DeviceId, DeviceName, InitiatingProcessFileName = FileName, InitiatingProcessCommandLine = ProcessCommandLine, RemoteUrl = "", RemoteIP = "", ActionType = "PackageInstallOrRequire"
+ )
+| sort by Timestamp desc
