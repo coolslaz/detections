@@ -1,0 +1,21 @@
+// Detects the CosmicPulse (YESROBOT) backdoor installation chain:
+// registry write of an AES key under HKCU\Software\Classes\.mollis followed within
+// 15 minutes by execution of the bundled Python 3.8 bootstrapper, staged outside a
+// standard Python install path (reduces FPs from generic Python38-64 usage).
+let regWrites =
+    DeviceRegistryEvents
+    | where ActionType in ("RegistryValueSet", "RegistryKeyCreated")
+    | where RegistryKey has @"Software\Classes\.mollis"
+    | where isnotempty(RegistryValueData)
+    | project RegTime = Timestamp, DeviceId, RegistryKey, RegistryValueData, InitiatingProcessFileName, InitiatingProcessCommandLine;
+let pyExec =
+    DeviceProcessEvents
+    | where FileName in~ ("pythonw.exe", "python.exe")
+    | where ProcessCommandLine has "Python38-64"
+    | where FolderPath !has @"Program Files"
+    | where FolderPath has_any (@"AppData", @"ProgramData", @"Temp", @"Users\Public")
+    | project ExecTime = Timestamp, DeviceId, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName;
+regWrites
+| join kind=inner pyExec on DeviceId
+| where ExecTime between (RegTime .. RegTime + 15m)
+| project RegTime, ExecTime, DeviceId, RegistryKey, RegistryValueData, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine
