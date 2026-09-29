@@ -1,0 +1,40 @@
+// Star Blizzard RedFlick campaign - scheduled task persistence masquerading as legitimate network components
+// MITRE ATT&CK: T1053.005, T1036, T1071.001, T1105
+let TaskNames = dynamic(["Internet Quality Test Connection", "Network Configuration Manager", "System Health Monitor"]);
+let SecurityTools = dynamic(["MsMpEng.exe", "MsSense.exe", "SenseIR.exe", "MpCmdRun.exe"]);
+let TaskNameHits =
+    DeviceEvents
+    | where ActionType in ("ScheduledTaskCreated", "ScheduledTaskUpdated")
+    | where AdditionalFields has_any (TaskNames)
+    | where InitiatingProcessFileName !in~ (SecurityTools)
+    | project Timestamp, DeviceName, ActionType, Detail = tostring(AdditionalFields), InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName;
+let SchtasksNamedHits =
+    DeviceProcessEvents
+    | where FileName =~ "schtasks.exe"
+    | where ProcessCommandLine has_any (TaskNames)
+    | where InitiatingProcessFileName !in~ (SecurityTools)
+    | project Timestamp, DeviceName, ActionType = "SchtasksCommandLine", Detail = ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName;
+let RegistryNamedHits =
+    DeviceRegistryEvents
+    | where RegistryKey has "\\Schedule\\TaskCache\\Tree" or RegistryKey has "Task Scheduler"
+    | where RegistryKey has_any (TaskNames) or RegistryValueName has_any (TaskNames)
+    | where InitiatingProcessFileName !in~ (SecurityTools)
+    | project Timestamp, DeviceName, ActionType = "RegistryTaskName", Detail = strcat(RegistryKey, " | ", RegistryValueName), InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName;
+let WebDavControlRunDll =
+    DeviceProcessEvents
+    | where FileName in~ ("rundll32.exe", "control.exe")
+    | where ProcessCommandLine has @"\\\\"
+    | where not(ProcessCommandLine has @"\Windows\System32")
+    | where ProcessCommandLine has "Shell32.dll" and ProcessCommandLine has "Control_RunDLL"
+    | where InitiatingProcessFileName !in~ (SecurityTools)
+    | project Timestamp, DeviceName, ActionType = "WebDavControlRunDll", Detail = ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName;
+let NetUseWebDav =
+    DeviceProcessEvents
+    | where FileName =~ "net.exe"
+    | where ProcessCommandLine has "use" and ProcessCommandLine has @"\\\\"
+    | where ProcessCommandLine has "@SSL"
+    | where InitiatingProcessFileName !in~ (SecurityTools)
+    | project Timestamp, DeviceName, ActionType = "NetUseWebDav", Detail = ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName;
+union TaskNameHits, SchtasksNamedHits, RegistryNamedHits, WebDavControlRunDll, NetUseWebDav
+| summarize FirstSeen = min(Timestamp), LastSeen = max(Timestamp), EventCount = count(), InitiatingProcessFileName = any(InitiatingProcessFileName), InitiatingProcessCommandLine = any(InitiatingProcessCommandLine), AccountName = any(AccountName) by DeviceName, ActionType, Detail
+| sort by LastSeen desc
