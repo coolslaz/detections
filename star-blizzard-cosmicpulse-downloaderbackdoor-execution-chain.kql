@@ -1,0 +1,49 @@
+// Detects Star Blizzard CosmicPulse (NOROBOT/BAITSWITCH) downloader and CosmicPulse (YESROBOT) Python backdoor bootstrap
+// T1218.002 (control.exe/rundll32.exe misuse), T1027 (obfuscation), T1036 (masquerading as CPL), T1105 (ingress tool transfer), T1071.001
+let lookback = 14d;
+let security_tools = dynamic(["MsMpEng.exe","MsSense.exe","SenseIR.exe","MpCmdRun.exe"]);
+// (a) control.exe or rundll32.exe launching a .cpl module via a UNC path, excluding legitimate System32 built-in CPL applets
+let cpl_abuse =
+    DeviceProcessEvents
+    | where Timestamp > ago(lookback)
+    | where FileName in~ ("control.exe", "rundll32.exe")
+    | where ProcessCommandLine has "\\\\"
+    | where ProcessCommandLine has ".cpl"
+    | where not(ProcessCommandLine has @"\Windows\System32")
+    | where not(InitiatingProcessFileName in~ (security_tools))
+    | extend ActionType = "CplAbuseUNC", Detail = ProcessCommandLine
+    | project Timestamp, DeviceName, ActionType, Detail;
+// (b) exact registry value write under HKCU\Software\Classes\.mollis (COM class hijack used by CosmicPulse)
+let registry_write =
+    DeviceRegistryEvents
+    | where Timestamp > ago(lookback)
+    | where RegistryKey =~ @"HKEY_CURRENT_USER\Software\Classes\.mollis"
+    | where not(InitiatingProcessFileName in~ (security_tools))
+    | extend ActionType = "MollisRegistryWrite", Detail = strcat(RegistryKey, " = ", tostring(RegistryValueData))
+    | project Timestamp, DeviceName, ActionType, Detail;
+// (c) python.exe/pythonw.exe spawned from control.exe/rundll32.exe, running from a user-writable location rather than a standard install path
+let python_bootstrap =
+    DeviceProcessEvents
+    | where Timestamp > ago(lookback)
+    | where FileName in~ ("python.exe", "pythonw.exe")
+    | where InitiatingProcessFileName in~ ("control.exe", "rundll32.exe")
+    | where FolderPath has_any (@"\AppData\", @"\Temp\", @"\ProgramData\", @"\Downloads\")
+    | where not(FolderPath has_any (@"\Program Files\", @"\ProgramData\Anaconda"))
+    | where not(InitiatingProcessFileName in~ (security_tools))
+    | extend ActionType = "PythonBootstrapViaCplHost", Detail = ProcessCommandLine
+    | project Timestamp, DeviceName, ActionType, Detail;
+// Correlation signals: cpl_abuse and registry_write are inherently suspicious standalone; python_bootstrap only counts when co-located with one of them on the same device within 10 minutes
+let cpl_and_reg_signals =
+    union
+        (cpl_abuse | project DeviceName, SignalTimestamp = Timestamp, SignalType = ActionType, SignalDetail = Detail),
+        (registry_write | project DeviceName, SignalTimestamp = Timestamp, SignalType = ActionType, SignalDetail = Detail);
+let correlated_python =
+    python_bootstrap
+    | join kind=inner cpl_and_reg_signals on DeviceName
+    | where abs(datetime_diff('minute', Timestamp, SignalTimestamp)) <= 10
+    | extend ActionType = strcat("PythonBootstrapCorrelatedWith_", SignalType)
+    | extend Detail = strcat(Detail, " | correlated_with: ", SignalDetail)
+    | project Timestamp, DeviceName, ActionType, Detail;
+union cpl_abuse, registry_write, correlated_python
+| summarize FirstSeen = min(Timestamp), LastSeen = max(Timestamp), EventCount = count() by DeviceName, ActionType, Detail
+| sort by LastSeen desc
