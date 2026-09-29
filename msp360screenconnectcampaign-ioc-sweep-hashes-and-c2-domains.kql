@@ -1,0 +1,31 @@
+// IOC sweep for MSP360-masqueraded installer / ScreenConnect post-compromise campaign
+// Branch 1: known malicious file hashes (installer + post-compromise utilities transferred via ScreenConnect RunFile)
+// Legitimate MSP360 RMM Agent Service hashes are intentionally excluded to avoid false-positives on normal deployments
+let MaliciousHashes = dynamic([
+ "108ef7e628d7a20bd6241a5b57149e27a6061f467123eb64061975559f8f73dc",
+ "ceb3f7fe9a618ff29a21b126383c23900fad58d6ae2b5552d7e306e4b6acf4b0",
+ "02f2ce03a2650f17bfe6e8744eebbf58522016cbdb92af8f2217b5dd4a1ad550",
+ "499d07894f730fb685ee3cbfc1a933e0da93750c1ed25a49b2eb9c32adef156a",
+ "d49cc01641c3045bf3119f9d71e7ffd29bfce32ca4b27cc96340716ed4d41cdc",
+ "67c979dc13961b09f24f85a801e4c918420adca6117c92efbeeeaa68a6344f55",
+ "6cc665057c4a4fe42a309afd3a7fa96cf1af126e9c6e08e56df5105e05378bcc",
+ "dd434f3ffcafeda538d43226665115ba136ad0fdb43dad8536e1368ca9a17b64",
+ "40f8e774e1e7a484b78c7ae4336bc47aa9cab20dc8e1e67d89838e807975f9b1"
+]);
+let MaliciousDomains = dynamic([
+ "adswre.cfd", "trews.cfd", "adsaw.cfd",
+ "swedcorry.stefneyv.com", "ojsuyw.niyari.org",
+ "bunstar.harej.si", "sdfghj.rd-team.ru"
+]);
+let HashHits = DeviceFileEvents
+| where SHA256 in (MaliciousHashes)
+| extend MatchType = "Hash", MatchedIndicator = SHA256
+| project Timestamp, DeviceId, DeviceName, AccountName = RequestAccountName, MatchType, MatchedIndicator, ProcessOrFile = FileName, RemoteUrlOrIp = "";
+let DomainHits = DeviceNetworkEvents
+| where isnotempty(RemoteUrl)
+| extend RemoteHost = tolower(tostring(parse_url(RemoteUrl).Host))
+| where RemoteHost in (MaliciousDomains)
+| extend MatchType = "Domain", MatchedIndicator = RemoteHost
+| project Timestamp, DeviceId, DeviceName, AccountName = InitiatingProcessAccountName, MatchType, MatchedIndicator, ProcessOrFile = InitiatingProcessFileName, RemoteUrlOrIp = RemoteUrl;
+union HashHits, DomainHits
+| sort by Timestamp desc
