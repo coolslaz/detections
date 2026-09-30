@@ -1,0 +1,20 @@
+// Detects the Zimbra swatchdog->snmptrap SNMP notification shell injection path (CVE-2026-73570)
+// Perl-invoked swatchdog builds a shell command around snmptrap zimbra-MIB::zmServiceName with an
+// attacker-controlled value; injected shell metacharacters escape the intended argument, often using
+// a trailing '#' comment to swallow the remaining legitimate arguments.
+DeviceProcessEvents
+| where Timestamp > ago(14d)
+| where FileName in~ ("sh", "bash", "snmptrap")
+| where ProcessCommandLine has "snmptrap"
+| where ProcessCommandLine has "zimbra-MIB::zmServiceName" or ProcessCommandLine has "zmServiceName"
+| where InitiatingProcessFileName in~ ("perl", "swatch", "swatchdog") or InitiatingProcessCommandLine has ".swatchdog_script" or InitiatingProcessFolderPath has "swatchdog"
+// Require an actual shell-metacharacter escape out of the zmServiceName argument (the real injection
+// signature) rather than matching on generic command names, which are common in benign command lines
+// and drove false positives.
+| where ProcessCommandLine matches regex @"(;|\|\||\||&&|`|\$\()" or ProcessCommandLine matches regex @"#\s*$"
+| where AccountName =~ "zimbra"
+// Exclude routine swatchdog self-restarts / log-rotation invocations that legitimately spawn a shell
+// but never touch snmptrap or the zmServiceName argument (defense in depth; the filters above already
+// require both).
+| where ProcessCommandLine !has "logrotate" and ProcessCommandLine !has "zmswatchwatcher --restart"
+| project Timestamp, DeviceName, AccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, ProcessId, InitiatingProcessId
