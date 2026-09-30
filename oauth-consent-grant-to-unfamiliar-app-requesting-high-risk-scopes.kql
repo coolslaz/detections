@@ -1,0 +1,35 @@
+// Detects consent-phishing pattern: a user authorizes a third-party OAuth app via the
+// standard consent grant prompt, and the app is granted high-risk/persistent-access scopes
+// (mail, files, offline_access). Tightened to cut the two biggest FP sources: (1) routine
+// re-consent to SaaS apps the tenant has already adopted -- only alert the FIRST time an
+// app is seen requesting these scopes anywhere in the tenant in the last 90 days -- and
+// (2) well-known first-party Microsoft client apps, which legitimately request these same
+// scopes on every new-device sign-in and would otherwise dominate the alert volume.
+let LookbackStart = ago(90d);
+let RiskScopes = pack_array("Mail.Read", "Mail.ReadWrite", "Files.ReadWrite.All", "offline_access", "Contacts.Read", "full_access_as_app", "User.Read.All");
+let KnownFirstPartyAppIds = pack_array(
+    "00000002-0000-0ff1-ce00-000000000000", // Office 365 Exchange Online
+    "00000003-0000-0ff1-ce00-000000000000", // Office 365 SharePoint Online
+    "00000006-0000-0ff1-ce00-000000000000", // Microsoft Office 365 Portal
+    "1b730954-1685-4b74-9bfd-dac224a7b894", // Microsoft Azure Active Directory PowerShell
+    "d3590ed6-52b3-4102-aeff-aad2292ab01c", // Microsoft Office
+    "0000000c-0000-0000-c000-000000000000" // Microsoft App Access Panel
+);
+let PriorConsentedApps =
+    CloudAppEvents
+    | where Timestamp between (LookbackStart .. ago(1d))
+    | where ActionType == "Consent to application."
+    | extend AppId = tostring(parse_json(RawEventData).Target[0].ID)
+    | summarize by AppId;
+CloudAppEvents
+| where Timestamp > ago(1d)
+| where ActionType in ("Consent to application.", "Add OAuth2PermissionGrant.")
+| extend RawEvent = parse_json(RawEventData)
+| extend AppDisplayName = tostring(RawEvent.Target[1].ID), AppId = tostring(RawEvent.Target[0].ID)
+| extend GrantedScopes = tostring(RawEvent.ModifiedProperties)
+| where GrantedScopes has_any (RiskScopes)
+| where AppId !in (KnownFirstPartyAppIds)
+| where AppId !in (PriorConsentedApps)
+| summarize FirstSeen = min(Timestamp), ConsentCount = count(), AccountList = make_set(AccountDisplayName, 20) by AppId, AppDisplayName
+| project FirstSeen, AppId, AppDisplayName, ConsentCount, AccountList
+| sort by FirstSeen asc
