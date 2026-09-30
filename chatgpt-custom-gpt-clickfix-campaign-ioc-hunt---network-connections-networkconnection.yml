@@ -1,0 +1,39 @@
+title: ChatGPT Custom GPT ClickFix campaign IOC Hunt - Network Connections
+  (network_connection)
+id: 8b09e5a9-ac77-47cd-a624-af25e5ae1010
+status: experimental
+description: >
+  Detects network connections to known ChatGPT Custom GPT ClickFix campaign
+  infrastructure (IPs and URLs) as reported by Huntress. This rule covers the
+  network_connection logsource only. Domain/DNS matching is covered by a separate
+  dns_query rule, and file-hash matching is covered by a separate process_creation
+  rule, as Sigma only supports one logsource per rule.
+author: Arnold Chan
+references:
+  - https://www.huntress.com/blog/chatgpt-custom-gpts-clickfix-rat
+date: '2026-09-30'
+modified: '2026-09-30'
+tags:
+  - attack.t1105
+  - attack.t1204.002
+logsource:
+  product: windows
+  category: network_connection
+detection:
+  selection_ips:
+    DestinationIp:
+      - 96.62.224.81
+      - 45.140.205.28
+  selection_urls:
+    TargetUrl:
+      - 'https://sites.google.com/view/antibot172881'
+      - 'http://96.62.224.81/app/afafa98279c9/ISOSimple.msi'
+      - 'http://96.62.224.81/s/50d6565cf39e'
+      - 'http://96.62.224.81/app/50d6565cf39e/IconEdit2Turb.msi'
+      - 'http://96.62.224.81/app/a26b67343315/UltraFreeISOCreateWizardSolution.msi'
+  condition: 1 of selection_*
+falsepositives:
+  - Authorized admin tools/scanners on similar infrastructure
+  - Legitimate vendor updates sharing infrastructure
+  - Users accessing non-malicious files on file-sharing services incidentally flagged
+level: medium
