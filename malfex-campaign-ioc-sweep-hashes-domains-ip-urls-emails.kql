@@ -1,0 +1,71 @@
+// Static IOC sweep for the MALFEX npm supply-chain campaign (Overlord/movinlike).
+// These are known-sample indicators tied to a specific campaign snapshot and require periodic refresh as the operator rotates hashes, hosts, and accounts.
+let malfex_hashes = dynamic([
+ "5d69a932a077fee044b193c28e84564143f5c7e51079ab48e88fef74ab0b77b7",
+ "fd199d3977e1a2945b6031fc8696660a980e4f4617899baa045efe7ccbc8de67",
+ "2989244eac2a4bc7a13a09dec003e5c05ef7c80b2afe0958ce25042d5b804210",
+ "c7cf2323e4923428984297db7715d75fec5b964fe65c325b53e3fa360f3b8d86",
+ "4cba0c785e66d517eabd0164f34a9c2d04549da93b5ee3eebdce5558daa2f47c",
+ "c9c374afba4658dff15f71801e88c4d199c91dd2622d72c7b0c55577c8f73437",
+ "d54853d6be467567d9f22d7f22ac48214df52c1f9c7a503930e901286423044a",
+ "886b84f83a0f760e664046ba40d8c800b7d0cf72190e13ca031ee5cf50f45bee",
+ "9aba4685af072231aee049e1a5e294965580001b364d7d00152d84fcec1ce793",
+ "4f4f7d64139bde6d458a061c7fb7dd247f70f60a1ab47d87fd3634656586c106"
+]);
+let malfex_domains = dynamic(["api.imghippo.com", "www.image.com", "cdnzona.discloud.app"]);
+let malfex_ip = "104.234.65.75";
+let malfex_urls = dynamic([
+ "http://104.234.65.75:700/setup.exe",
+ "http://104.234.65.75/setup.exe",
+ "https://cdnzona.discloud.app/node.exe"
+]);
+// Word-boundary anchored domain pattern - prevents generic substrings (esp. "www.image.com") from matching
+// unrelated hosts/paths that merely contain the token, which raw has_any substring matching would catch
+let malfex_domain_pattern = @"(?i)(^|[^a-zA-Z0-9.])(api\.imghippo\.com|www\.image\.com|cdnzona\.discloud\.app)([^a-zA-Z0-9]|$)";
+let malfex_emails = dynamic([
+ "corpmalfex@gmail.com",
+ "pescaria.guinado.3o@icloud.com",
+ "bainha_buzios7d@icloud.com",
+ "lactose_lesmas.2z@icloud.com",
+ "ducz94life@gmail.com"
+]);
+let file_hits = DeviceFileEvents
+| where SHA256 in (malfex_hashes)
+| project Timestamp, DeviceId, DeviceName, IOCType = "sha256", IOCValue = SHA256, Detail = FileName, EventType = "DeviceFileEvents";
+let proc_hash_hits = DeviceProcessEvents
+| where SHA256 in (malfex_hashes)
+| project Timestamp, DeviceId, DeviceName, IOCType = "sha256", IOCValue = SHA256, Detail = ProcessCommandLine, EventType = "DeviceProcessEvents";
+let proc_cmdline_hits = DeviceProcessEvents
+| where ProcessCommandLine matches regex malfex_domain_pattern or ProcessCommandLine has malfex_ip or ProcessCommandLine has_any (malfex_urls)
+| extend IOCValue = case(
+ ProcessCommandLine has_any (malfex_urls), extract(strcat("(", strcat_array(malfex_urls, "|"), ")"), 0, ProcessCommandLine),
+ ProcessCommandLine matches regex malfex_domain_pattern, extract(malfex_domain_pattern, 2, ProcessCommandLine),
+ ProcessCommandLine has malfex_ip, malfex_ip,
+ "unknown"
+)
+| project Timestamp, DeviceId, DeviceName, IOCType = "cmdline_indicator", IOCValue, Detail = ProcessCommandLine, EventType = "DeviceProcessEvents";
+let net_domain_hits = DeviceNetworkEvents
+// Match on the parsed hostname rather than a raw substring, so a domain like "www.image.com"
+// cannot false-positive against an unrelated host that merely contains that text
+| extend ParsedHost = tolower(tostring(parse_url(RemoteUrl).Host))
+| where ParsedHost in (malfex_domains) or RemoteUrl has_any (malfex_urls)
+| extend IOCValue = case(
+ RemoteUrl has_any (malfex_urls), extract(strcat("(", strcat_array(malfex_urls, "|"), ")"), 0, RemoteUrl),
+ ParsedHost in (malfex_domains), ParsedHost,
+ "unknown"
+)
+| project Timestamp, DeviceId, DeviceName, IOCType = "domain_or_url", IOCValue, Detail = RemoteUrl, EventType = "DeviceNetworkEvents";
+let net_ip_hits = DeviceNetworkEvents
+| where RemoteIP == malfex_ip
+| project Timestamp, DeviceId, DeviceName, IOCType = "ip", IOCValue = RemoteIP, Detail = strcat(RemoteIP, ":", tostring(RemoteUrl)), EventType = "DeviceNetworkEvents";
+let email_hits = EmailEvents
+// These addresses are MALFEX operator/publisher identities (senders), not intended recipients -
+// dropping the recipient match removes a match path that added no detective value and only widened FP surface
+| where SenderFromAddress in~ (malfex_emails) or SenderMailFromAddress in~ (malfex_emails)
+| extend IOCValue = coalesce(
+ iff(SenderFromAddress in~ (malfex_emails), SenderFromAddress, ""),
+ iff(SenderMailFromAddress in~ (malfex_emails), SenderMailFromAddress, "")
+)
+| project Timestamp, DeviceId = "", DeviceName = "", IOCType = "email", IOCValue, Detail = Subject, EventType = "EmailEvents";
+union file_hits, proc_hash_hits, proc_cmdline_hits, net_domain_hits, net_ip_hits, email_hits
+| sort by Timestamp desc
