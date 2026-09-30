@@ -1,0 +1,22 @@
+// Detects Antino's abuse of the Scripted Diagnostics framework (sdiageng.dll CScriptedDiag / sdiagnhost.exe) to execute an attacker-written result.ps1 that creates a persistence Run key pointing at a staged payload.
+// Tightened for FP: ties the Run-key write to the same SDIAG_ diagnostic package context (not just device+time proximity), restricts the writing process to the expected proxied-execution chain, and narrows the correlation window.
+let lookback = 1d;
+let sdiag_exec = DeviceProcessEvents
+| where TimeGenerated > ago(lookback)
+| where FileName =~ "sdiagnhost.exe"
+| where ProcessCommandLine has "-Embedding"
+| where FolderPath has "SDIAG_" or ProcessCommandLine has "SDIAG_"
+| project DeviceId, SdiagTime = TimeGenerated, SdiagCommandLine = ProcessCommandLine, SdiagFolderPath = FolderPath;
+let gatherosstatekit_run = DeviceRegistryEvents
+| where TimeGenerated > ago(lookback)
+| where ActionType == "RegistryValueSet"
+| where RegistryKey has @"Software\Microsoft\Windows\CurrentVersion\Run"
+| where RegistryValueData has "GatherOSStateKit"
+| where InitiatingProcessFileName in~ ("powershell.exe", "sdiagnhost.exe", "cmd.exe")
+| where InitiatingProcessFolderPath has "SDIAG_" or InitiatingProcessCommandLine has "SDIAG_"
+| project DeviceId, RunTime = TimeGenerated, RegistryKey, RegistryValueName, RegistryValueData, InitiatingProcessFileName, InitiatingProcessFolderPath;
+sdiag_exec
+| join kind=inner (gatherosstatekit_run) on DeviceId
+| where RunTime between (SdiagTime .. (SdiagTime + 5m))
+| project DeviceId, SdiagTime, SdiagCommandLine, SdiagFolderPath, RunTime, RegistryKey, RegistryValueName, RegistryValueData, InitiatingProcessFileName, InitiatingProcessFolderPath
+| sort by SdiagTime desc
