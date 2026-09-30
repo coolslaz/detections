@@ -1,0 +1,20 @@
+// Detects the LLMShare pattern: a user clicks a shared AI chatbot conversation link
+// (hosted on a trusted domain) and shortly afterward executes a ClickFix-style
+// copy/paste command (mshta/powershell/cmd) on the endpoint.
+// Tightened: the URL match now requires an actual share-link path segment (/share/, /s/, /chatshare/)
+// instead of the bare substrings "s/" and "c/", which matched almost any normal conversation URL on
+// these domains and treated routine, approved chatbot use as if it were a shared-link click.
+let chatbot_share_domains = dynamic(["chat.openai.com","chatgpt.com","claude.ai","gemini.google.com","poe.com","perplexity.ai","copilot.microsoft.com"]);
+let clicks = UrlClickEvents
+| where ActionType == "ClickAllowed"
+| where Url has_any (chatbot_share_domains)
+| where Url has_any ("/share/", "/s/", "/chatshare/")
+| project ClickTime = Timestamp, AccountUpn, Url, NetworkMessageId;
+let clickfix_exec = DeviceProcessEvents
+| where FileName in~ ("mshta.exe", "powershell.exe", "pwsh.exe", "cmd.exe")
+| where ProcessCommandLine has_any ("iex", "downloadstring", "-enc", "-encodedcommand", "mshta http", "curl ", "certutil -decode")
+| project ExecTime = Timestamp, DeviceName, AccountUpn = InitiatingProcessAccountUpn, FileName, ProcessCommandLine;
+clicks
+| join kind=inner (clickfix_exec) on AccountUpn
+| where ExecTime between (ClickTime .. (ClickTime + 15m))
+| project ClickTime, ExecTime, AccountUpn, Url, DeviceName, FileName, ProcessCommandLine, NetworkMessageId
