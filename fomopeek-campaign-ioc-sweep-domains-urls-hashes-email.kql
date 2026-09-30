@@ -1,0 +1,33 @@
+let malDomains = dynamic(["assisaint.com","api-a95f0ed200f.assisaint.com","bp-a95010ced.assisaint.com","admin-e433360cb0e.assisaint.com","customer-c1cb36b5.assisaint.com"]);
+let malUrls = dynamic(["https://api-a95f0ed200f.assisaint.com/api/device/config","https://bp-a95010ced.assisaint.com/","https://admin-e433360cb0e.assisaint.com","https://customer-c1cb36b5.assisaint.com","https://bitbucket.org/discordseven/text/raw/main/xxhVOn"]);
+let malMd5 = dynamic(["fce99b45709a6f8e241175be0c121874","f5bdaed5953033ac8c3256f2933b9a81","38a8a5ddecd9a5626b42dae593ac28f6","645b9053390246995c2cb7a9b9eddf40","03d67a68b5e8507dbbe36f2a4b41aca0"]);
+let malSha256 = dynamic(["d6b6407b4c97697fdde174cbc190b6433315470f58df6b483ac5b806f35e20f9","ca5dfd0fa7a16f26f5b369516f5b8bcac1d5a6fe01a8511a5ededf4cd2c0d042","48f9d5623af1518e774d57c41e6e0b915a7e9f896909bf596a9b27de5022911e","764663ff5c8bd1bdf33bbd1ec352ce262a4fe79695456f2612dc27c35840ab9d","f0b3be01e8597f7f35ca36c009f68e7004527fe4a01d4349a01e211ca16de1e2"]);
+let malEmail = dynamic(["discdseven@outlook.com"]);
+let dns_hits = DnsEvents
+| where TimeGenerated > ago(30d)
+| where Name in~ (malDomains)
+| extend IocType = "DNS", IocValue = Name, Entity = Computer
+| project TimeGenerated, IocType, IocValue, Entity;
+let web_hits = DeviceNetworkEvents
+| where TimeGenerated > ago(30d)
+| where RemoteUrl in~ (malUrls) or RemoteUrl in~ (malDomains)
+| extend IocType = "WebProxy", IocValue = RemoteUrl, Entity = DeviceName
+| project TimeGenerated, IocType, IocValue, Entity;
+let file_hits = DeviceFileEvents
+| where TimeGenerated > ago(30d)
+| where MD5 in~ (malMd5) or SHA256 in~ (malSha256)
+| extend IocType = "FileHash", IocValue = coalesce(SHA256, MD5), Entity = DeviceName
+| project TimeGenerated, IocType, IocValue, Entity;
+let process_hits = DeviceProcessEvents
+| where TimeGenerated > ago(30d)
+| where MD5 in~ (malMd5) or SHA256 in~ (malSha256) or InitiatingProcessMD5 in~ (malMd5) or InitiatingProcessSHA256 in~ (malSha256)
+| extend IocType = "ProcessHash", IocValue = coalesce(SHA256, MD5, InitiatingProcessSHA256, InitiatingProcessMD5), Entity = DeviceName
+| project TimeGenerated, IocType, IocValue, Entity;
+let email_hits = EmailEvents
+| where TimeGenerated > ago(30d)
+| where SenderFromAddress in~ (malEmail) or SenderMailFromAddress in~ (malEmail) or RecipientEmailAddress in~ (malEmail)
+| extend IocType = "Email", IocValue = coalesce(SenderFromAddress, SenderMailFromAddress, RecipientEmailAddress), Entity = RecipientEmailAddress
+| project TimeGenerated, IocType, IocValue, Entity;
+dns_hits
+| union web_hits, file_hits, process_hits, email_hits
+| sort by TimeGenerated desc
