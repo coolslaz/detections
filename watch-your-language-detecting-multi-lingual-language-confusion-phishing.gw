@@ -1,0 +1,36 @@
+// Title: Watch Your Language: Detecting Multi-Lingual Language-Confusion Phishing
+// Description: Detects phishing messages that deliberately mix writing systems / scripts / homoglyphs in the Subject line.
+// Severity: Medium
+// MITRE ATT&CK: T1566, T1566.001, T1566.002, T1204.001, T1204.002, T1583.001, T1036, T1684.001, T1684.002
+
+@baseline{ tag=email json EmailDirection SenderFromDomain RecipientEmailAddress | eval EmailDirection == "Inbound" | stats count() as PriorMessageCount by SenderFromDomain RecipientEmailAddress };
+@orgbaseline{ tag=email json EmailDirection SenderFromDomain | eval EmailDirection == "Inbound" | stats count() as OrgPriorMessageCount by SenderFromDomain };
+
+tag=email start=-1d json NetworkMessageId EmailDirection SenderFromDomain Subject RecipientEmailAddress
+| eval EmailDirection == "Inbound"
+| eval SubjectText = Subject
+| eval HasLatin = $(SubjectText) ~ "[A-Za-z]"
+| eval HasCyrillic = $(SubjectText) ~ "[\u0400-\u04FF]"
+| eval HasGreek = $(SubjectText) ~ "[\u0370-\u03FF]"
+| eval HasArabic = $(SubjectText) ~ "[\u0600-\u06FF]"
+| eval HasHebrew = $(SubjectText) ~ "[\u0590-\u05FF]"
+| eval HasCJK = $(SubjectText) ~ "[\u4E00-\u9FFF]"
+| eval HasKana = $(SubjectText) ~ "[\u3040-\u30FF]"
+| eval HasHangul = $(SubjectText) ~ "[\uAC00-\uD7A3]"
+| eval HasDevanagari = $(SubjectText) ~ "[\u0900-\u097F]"
+| eval HasThai = $(SubjectText) ~ "[\u0E00-\u0E7F]"
+| eval ScriptCount = int(HasLatin) + int(HasCyrillic) + int(HasGreek) + int(HasArabic) + int(HasHebrew) + int(HasCJK) + int(HasKana) + int(HasHangul) + int(HasDevanagari) + int(HasThai)
+| eval NonLatinScriptCount = ScriptCount - int(HasLatin)
+| eval MixedScriptIndicator = (HasLatin && NonLatinScriptCount >= 1) || (NonLatinScriptCount >= 2)
+| eval HomoglyphIndicator = $(SubjectText) ~ "(?:[A-Za-z]+[\u0400-\u04FF\u0370-\u03FF]|[\u0400-\u04FF\u0370-\u03FF]+[A-Za-z])"
+| eval PhishingVocabHit = $(SubjectText) ~ "(?i)(log[ -]?in|password|passwd|\bmfa\b|multi-factor|verify|verification|\baccount\b|invoice|payment|payroll|voice[ -]?mail|security alert|password reset|reset your|expired|expire[sd]?|urgent|action required|suspend(ed)?|microsoft 365|office 365|sharepoint|onedrive|confirm your|update your|click here|unusual sign-?in|unusual activity|wire transfer)"
+| lookup -r @baseline SenderFromDomain RecipientEmailAddress PriorMessageCount
+| lookup -r @orgbaseline SenderFromDomain OrgPriorMessageCount
+| eval IsNewSenderDomain = (PriorMessageCount == 0) || (PriorMessageCount == null)
+| eval IsNewToOrg = (OrgPriorMessageCount == 0) || (OrgPriorMessageCount == null)
+| eval SenderRiskIndicator = IsNewSenderDomain && IsNewToOrg
+| eval LanguageSignalPresent = MixedScriptIndicator || HomoglyphIndicator
+| eval LanguageConfusionScore = (int(MixedScriptIndicator) * 2) + (int(HomoglyphIndicator) * 3) + (int(PhishingVocabHit) * 2) + (int(SenderRiskIndicator) * 1)
+| where LanguageSignalPresent == true
+| where LanguageConfusionScore >= 6
+| table Timestamp RecipientEmailAddress SenderFromDomain Subject LanguageConfusionScore
