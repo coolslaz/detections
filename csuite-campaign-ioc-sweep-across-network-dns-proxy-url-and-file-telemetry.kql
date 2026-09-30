@@ -1,0 +1,75 @@
+// CSuite phishing/RMM campaign IOC sweep
+// Matches known-malicious IPs (exact), domains (exact host or subdomain), exact URLs, and known-malicious file hashes
+// across network, DNS, proxy, email/URL-click, and file telemetry, bounded to a 1-day lookback
+let csuite_ips = dynamic(["64.204.180.203","207.189.19.40","185.174.102.34","91.92.41.114","212.189.40.73","155.254.26.180","188.127.227.18","141.133.174.208","190.123.46.122","31.57.147.133","31.57.38.60","102.67.5.132","191.101.130.42","102.88.167.38"]);
+let csuite_domains = dynamic(["gddfzxa.online","ghs.coorpes.com","greaterheights.sbs","mmswerod.sbs","greenbullet.ba","emsafetoproceedtaward.top","maillive.sbs","arubanetworks-inc.com","sharepointer-dr.com","stubborn-academy.icu","corporate-sync-gate.net","legacy-bridge-node.net","conferenceuniverses.buzz","zerichoproject.org","pdfsecurtoview.sbs","pdfsecurtoview.cfd","pdfsecurtoview.info","pdfsecurtoview365.sbs","pdfsecurtoview365.cfd","pdfsecurtoviewsuite.sbs","pdfsecurtoviewothers.sbs","pdfsecurtoviewothers.cfd","docsendsr.online","docseed.online","docseedn.online","documentsonitustechnologies.sbs","downloaddocumentcontechbuilding.sbs","documentationreviewdocument2026review.sbs","selectivelife01.sbs","pikecac.cfd","qrcoderuser.cfd","fincapitalxcom.cfd","allshore-io.cam","sharerpoint.cam","voicermailsmessager.cam","keepsecurepasserword.cam","giiro.net","expressdocumentdelivery.org","aviationpioneers.info","ambitiousaboutautismorguk.com","solarengyloanfunds.com","checkingweb.net","cellumbio.com","mail.wirsann.com","mail.boratlongyear.com","sqrd.m365.sharedfile.online","sqrd.m36s.sharedfile.tech","shared.file.nn365.cloud","shared.note.nn365.cloud","shared.file.cnrv.tech","file.shared.cnrv.tech","loq.file.cnrv.online","m36nx.file.cnrv.online","file.shared.m36s.site","file.shared.myscript.sbs","usoffweb69.top","netcoxweb.top","coxnetwork.top","doc.lauraice.xyz","docuread.im","docusign.web-viewww.es","instance-t7o41i-relay.screenconnect.com"]);
+let csuite_urls = dynamic(["https://github.com/Ivan3900/test/raw/main/ScreenConnect.ClientSetup.msi","https://app.action1.com/agent/5c2cda44-433f-11f1-9ef8-332f425c6d9a/Windows/agent(My_Organization).msi","https://localcontex.online/AdobecloudReader/pdf_Reader_en_install.msi","https://localcontex.online/review.signal-doc.cloud/.DocuSign/"]);
+let csuite_hashes = dynamic(["ae7af8159f06a059411411e5e816b415e32213371fb085ced1dc5679a0112c48","b59e7cb539c0b81a58f60d5ca0ed3df62d1856b29076720efbb7dd9411d99eec","9a03a0b65b2a2d27b348e583237d512a55f3f8287989abf7ffca0285d5f8e43d","a89a31ec605c0ed9cd263cbdea6ee4a2c6502ec81e5b3e8a3c9fb3de945405f9","842f0236ea2c2b7773054920e7a870e07869c4e99f84bd31ccfd215781b4f267","07682ca34a9bf18beb664088e55035a83306b95b31d4aaba242e9d67f8c378a3","e769b2b4463e7d39320b65a49183ce4ff8c20459fa183e7b03f02e1b44420eb0","41734f8e6cc75b66f51638b76780f61a0b21ad9f77586e2665b7ab8d7e131936","eb9274a1fb6064e784f9c0ce95c78007efcadc279d4ffcac13998a45ebf7b49f","3a8daf4e992ea34b71b259af85d4d12ca52d80b9e2b262bd5aa5922a5a955f9f","c0eb04dcfa745653c466c34978a1f3b4e5041f526be8c2e46b8c722498ca746a","74e306072561731adf55afd4de461ec0736ca22c0b458a78e7512b2701341f28","394d7be5ecbe326062c1de1fb674bdcbb4dbe3ce03b4227994607047b832debd","c5f7083722fc5bee4e7a7109495348d3731e6b077919a6b679b9f5af885923cd","fd98c6881cadc47e7d425bbd4b992237a832e69fdfe872a90ba567ed58a148ad","375e49680fe4b4a62320bdcfd16b7bd75f6223a15d620c475c6988803b67d416","fdd171cc26704218b0762a33650c0d1246c42cbe583a858684e1b6ac12b9bbe7","2b89225801591cd223e0cf0b1faa8e7b12e88d6b6bc6ec9f5e715171137553ac","7b03111fa24ce01054332f013b3fe8189d2b61897e7306666c73b086588a64a5","0d6b451bd58b904e7dd15ce3e28ea129f7f95c9d248944fbdacdf6fb1d2adc99","aac51e4016c50a705a26bd56435f0fd9685e53d6bc0cc6034b7370e76d7cb376","aefd71902453cc83104aa963d8d9051c875d93ddf40680616e8fa5e68565ea69","6f62a8380eb5038e253772033c0ebc1ddb951a042c4a1a90ba8755819dc74e53","d995ea6f1621c29cdd4353cfb8b36cd1336b34bc8b180b73ce52cd939060bf0f","463786717f51b710dbbb013437141e416b98d810dfaa9f4de90a4c4939bc66b9","90f8e6259ce27592c460d235aff104d7507dfff4e7889c34ab714cdb19944473","38ba6bfe0cc2b7c5ff38f1f698e2c9bfdb52dd7937111967fddf785ba001e1f2","a450a84a60ce6646596feb2d6bea4c89a1b5b4e7d6325d5b7c2000982987411c","b1e55c9679f9aca94d66fdb08195cf8752f69f1d6896a5b2e60d979fca5a4036"]);
+let DeviceNetBase = DeviceNetworkEvents
+| where TimeGenerated > ago(1d)
+| extend Host = tostring(parse_url(RemoteUrl).Host)
+| extend HostForMatch = iff(isempty(Host), tostring(RemoteUrl), Host);
+let DeviceNetIpUrl = DeviceNetBase
+| where RemoteIP in (csuite_ips) or RemoteUrl in (csuite_urls)
+| extend MatchType = iff(RemoteIP in (csuite_ips), "IP", "URL")
+| project TimeGenerated, SourceTable = "DeviceNetworkEvents", MatchType, MatchedValue = coalesce(RemoteIP, RemoteUrl), DeviceName, AccountName = InitiatingProcessAccountName, ProcessName = InitiatingProcessFileName;
+let DeviceNetDomain = DeviceNetBase
+| mv-expand Domain = csuite_domains to typeof(string)
+| where HostForMatch == Domain or HostForMatch endswith strcat(".", Domain)
+| extend MatchType = "Domain"
+| project TimeGenerated, SourceTable = "DeviceNetworkEvents", MatchType, MatchedValue = HostForMatch, DeviceName, AccountName = InitiatingProcessAccountName, ProcessName = InitiatingProcessFileName;
+let DeviceNet = union DeviceNetIpUrl, DeviceNetDomain;
+let DnsBase = DnsEvents
+| where TimeGenerated > ago(1d);
+let DnsEv = DnsBase
+| mv-expand Domain = csuite_domains to typeof(string)
+| where Name == Domain or Name endswith strcat(".", Domain)
+| extend MatchType = "Domain"
+| project TimeGenerated, SourceTable = "DnsEvents", MatchType, MatchedValue = Name, DeviceName = Computer, AccountName = "", ProcessName = "";
+let CSLBase = CommonSecurityLog
+| where TimeGenerated > ago(1d)
+| extend Host = tostring(parse_url(RequestURL).Host);
+let CSLIpUrl = CSLBase
+| where DestinationIP in (csuite_ips) or RequestURL in (csuite_urls)
+| extend MatchType = iff(DestinationIP in (csuite_ips), "IP", "URL")
+| project TimeGenerated, SourceTable = "CommonSecurityLog", MatchType, MatchedValue = coalesce(DestinationIP, RequestURL), DeviceName, AccountName = SourceUserName, ProcessName = "";
+let CSLDomain = CSLBase
+| mv-expand Domain = csuite_domains to typeof(string)
+| where Host == Domain or Host endswith strcat(".", Domain)
+| extend MatchType = "Domain"
+| project TimeGenerated, SourceTable = "CommonSecurityLog", MatchType, MatchedValue = Host, DeviceName, AccountName = SourceUserName, ProcessName = "";
+let CSL = union CSLIpUrl, CSLDomain;
+let EmailUrlBase = EmailUrlInfo
+| where TimeGenerated > ago(1d)
+| extend Host = tostring(parse_url(Url).Host);
+let EmailUrlExact = EmailUrlBase
+| where Url in (csuite_urls)
+| extend MatchType = "URL"
+| project TimeGenerated, SourceTable = "EmailUrlInfo", MatchType, MatchedValue = Url, DeviceName = "", AccountName = "", ProcessName = "";
+let EmailUrlDomain = EmailUrlBase
+| mv-expand Domain = csuite_domains to typeof(string)
+| where Host == Domain or Host endswith strcat(".", Domain)
+| extend MatchType = "Domain"
+| project TimeGenerated, SourceTable = "EmailUrlInfo", MatchType, MatchedValue = Url, DeviceName = "", AccountName = "", ProcessName = "";
+let EmailUrl = union EmailUrlExact, EmailUrlDomain;
+let UrlClickBase = UrlClickEvents
+| where TimeGenerated > ago(1d)
+| extend Host = tostring(parse_url(Url).Host);
+let UrlClickExact = UrlClickBase
+| where Url in (csuite_urls)
+| extend MatchType = "URL"
+| project TimeGenerated, SourceTable = "UrlClickEvents", MatchType, MatchedValue = Url, DeviceName = "", AccountName = AccountUpn, ProcessName = "";
+let UrlClickDomain = UrlClickBase
+| mv-expand Domain = csuite_domains to typeof(string)
+| where Host == Domain or Host endswith strcat(".", Domain)
+| extend MatchType = "Domain"
+| project TimeGenerated, SourceTable = "UrlClickEvents", MatchType, MatchedValue = Url, DeviceName = "", AccountName = AccountUpn, ProcessName = "";
+let UrlClick = union UrlClickExact, UrlClickDomain;
+let DeviceFileHash = DeviceFileEvents
+| where Timestamp > ago(1d)
+| where SHA256 in (csuite_hashes)
+| extend MatchType = "Hash"
+| project TimeGenerated = Timestamp, SourceTable = "DeviceFileEvents", MatchType, MatchedValue = SHA256, DeviceName, AccountName = InitiatingProcessAccountName, ProcessName = FileName;
+union DeviceNet, DnsEv, CSL, EmailUrl, UrlClick, DeviceFileHash
+| summarize arg_max(TimeGenerated, *) by SourceTable, MatchedValue, DeviceName, AccountName
+| sort by TimeGenerated desc
