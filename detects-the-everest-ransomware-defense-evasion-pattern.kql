@@ -1,0 +1,27 @@
+// Detects the Everest ransomware defense-evasion pattern: three concurrent
+// background threads repeatedly terminating (1) RE/analysis tools,
+// (2) AV/backup/DB services and processes, and (3) high-memory processes,
+// all within the same short recurring window on a single device.
+let reTools = dynamic(["dnspy.exe","x64dbg.exe","x32dbg.exe","wireshark.exe","idaq.exe","idaq64.exe","ida64.exe","ollydbg.exe","procmon.exe","procmon64.exe","processhacker.exe","de4dot.exe","peid.exe"]);
+let avBackupTools = dynamic(["mcshield.exe","kavfs.exe","veeam.exe","mfemms.exe","savservice.exe","mbamservice.exe","sophosav.exe","sqltelemetry.exe","sqlwriter.exe","sstpsvc.exe"]);
+let maintenanceInitiators = dynamic(["msiexec.exe","trustedinstaller.exe","ccmexec.exe","sccm.exe","wuauclt.exe","usoclient.exe"]);
+DeviceProcessEvents
+| where TimeGenerated > ago(1d)
+| where ActionType in ("ProcessTerminated", "ProcessStopped")
+| where InitiatingProcessFileName !in~ (maintenanceInitiators)
+| extend FileNameLower = tolower(FileName)
+| extend Category = case(
+    FileNameLower in (reTools), "RE_TOOL",
+    FileNameLower in (avBackupTools), "AV_BACKUP",
+    "OTHER")
+| where Category != "OTHER"
+| summarize
+    REKills = countif(Category == "RE_TOOL"),
+    AVKills = countif(Category == "AV_BACKUP"),
+    KillEvents = count(),
+    KilledProcesses = make_set(FileName, 50),
+    FirstKill = min(TimeGenerated),
+    LastKill = max(TimeGenerated)
+  by DeviceId, bin(TimeGenerated, 20s)
+| where REKills >= 1 and AVKills >= 2 and KillEvents >= 4
+| project DeviceId, FirstKill, LastKill, KillEvents, REKills, AVKills, KilledProcesses
