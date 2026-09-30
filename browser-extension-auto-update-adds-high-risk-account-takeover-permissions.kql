@@ -1,0 +1,25 @@
+// Detects a browser extension update event that introduces a permission set
+// capable of account takeover without user interaction (cookies, webRequest,
+// identity, management, downloads, debugger, etc.) - consistent with the
+// pattern of a popular, previously low-risk extension being acquired and
+// later pushed a malicious update once its install base is maximized.
+// Tightened: requires a session-access permission (cookies/identity/debugger) paired with a
+// network-interception permission (webRequest/declarativeNetRequest/<all_urls>/proxy) in the SAME
+// update, rather than any single common permission alone -- "tabs" or "management" by themselves
+// are requested by huge numbers of ordinary extensions and aren't sufficient for account takeover.
+let SessionAccessPerms = pack_array("cookies", "identity", "debugger");
+let NetworkInterceptPerms = pack_array("webRequest", "webRequestBlocking", "declarativeNetRequest", "<all_urls>", "proxy");
+DeviceEvents
+| where ActionType in ("BrowserExtensionUpdateEvent", "BrowserExtensionInstallEvent", "BrowserExtensionUpdated", "BrowserExtensionInstalled")
+| extend Fields = parse_json(AdditionalFields)
+| extend ExtensionName = tostring(Fields.ExtensionName),
+         ExtensionId = tostring(Fields.ExtensionId),
+         Permissions = tostring(Fields.Permissions),
+         HostPermissions = tostring(Fields.HostPermissions),
+         PreviousRiskScore = tostring(Fields.PreviousRiskScore)
+| extend PermissionText = strcat(Permissions, " ", HostPermissions)
+| where PermissionText has_any (SessionAccessPerms) and PermissionText has_any (NetworkInterceptPerms)
+| where ActionType has "Update"
+| where PreviousRiskScore has_any ("Low", "low", "None", "none") or isempty(PreviousRiskScore)
+| project Timestamp, DeviceId, DeviceName, ActionType, ExtensionName, ExtensionId, Permissions, HostPermissions, PreviousRiskScore, AccountName
+| sort by Timestamp desc
