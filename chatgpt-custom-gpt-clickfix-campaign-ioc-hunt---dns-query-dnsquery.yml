@@ -1,0 +1,31 @@
+title: ChatGPT Custom GPT ClickFix campaign IOC Hunt - DNS Query (dns_query)
+id: 7d4a1c2e-9b6f-4a3d-8e2c-5f61a0d9b7c4
+status: experimental
+description: >
+  Detects DNS queries to chattypetty.com, associated with the ChatGPT Custom GPT
+  ClickFix campaign (Huntress reporting).
+  
+  This is one of three logsource-scoped rules split from a combined KQL IOC hunt
+  because Sigma only supports one logsource per rule.
+  
+  IP/URL matching is covered by a separate network_connection rule; file-hash
+  matching is covered by a separate process_creation rule.
+author: Arnold Chan
+references:
+  - https://www.huntress.com/blog/chatgpt-custom-gpts-clickfix-rat
+date: '2026-09-30'
+modified: '2026-09-30'
+tags:
+  - attack.t1105
+  - attack.t1204.002
+logsource:
+  product: windows
+  category: dns_query
+detection:
+  selection:
+    QueryName|contains: 'chattypetty.com'
+  condition: selection
+falsepositives:
+  - Authorized admin tools/scanners using similar domains
+  - Legitimate software updates sharing infrastructure
+level: medium
