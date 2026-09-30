@@ -1,0 +1,40 @@
+// Title: Watch Your Language: Detecting Multi-Lingual Language-Confusion Phishing
+// Description: Detects phishing messages mixing writing systems or using homoglyphs in Subject lines as a corroborating signal.
+// Severity: Medium
+// MITRE ATT&CK: T1566, T1566.001, T1566.002, T1204.001, T1204.002, T1583.001, T1036, T1684.001, T1684.002
+// Tags: phishing, email-security, multilingual, homoglyph
+
+event.type = "Email"
+| let subject_text = email.subject
+| let subject_clean = replace(subject_text, "(?i)\\b(microsoft ?365|office ?365|microsoft|sharepoint|onedrive|outlook|teams|paypal|amazon|apple|google|adobe|dhl|fedex|ups)\\b", "")
+| let has_latin = subject_clean matches "(?i)[A-Za-z]"
+| let has_cyrillic = subject_text matches "[\u0400-\u04FF]"
+| let has_greek = subject_text matches "[\u0370-\u03FF]"
+| let has_arabic = subject_text matches "[\u0600-\u06FF]"
+| let has_hebrew = subject_text matches "[\u0590-\u05FF]"
+| let has_cjk = subject_text matches "[\u4E00-\u9FFF\u3400-\u4DBF]"
+| let has_kana = subject_text matches "[\u3040-\u30FF]"
+| let has_hangul = subject_text matches "[\uAC00-\uD7A3]"
+| let has_devanagari = subject_text matches "[\u0900-\u097F]"
+| let has_thai = subject_text matches "[\u0E00-\u0E7F]"
+| let l = has_latin ? 1 : 0
+| let cy = has_cyrillic ? 1 : 0
+| let gr = has_greek ? 1 : 0
+| let ar = has_arabic ? 1 : 0
+| let he = has_hebrew ? 1 : 0
+| let cjk = has_cjk ? 1 : 0
+| let kana = has_kana ? 1 : 0
+| let hangul = has_hangul ? 1 : 0
+| let dev = has_devanagari ? 1 : 0
+| let thai = has_thai ? 1 : 0
+| let script_count = l + cy + gr + ar + he + cjk + kana + hangul + dev + thai
+| let non_latin_count = script_count - l
+| let mixed_script = (has_latin AND non_latin_count >= 1) OR (non_latin_count >= 2)
+| let homoglyph_indicator = subject_text matches "(?:[A-Za-z]+[\u0400-\u04FF\u0370-\u03FF]|[\u0400-\u04FF\u0370-\u03FF]+[A-Za-z])"
+| let phishing_vocab = subject_text matches "(?i)(log[ -]?in|password|passwd|\\bmfa\\b|multi-factor|verify|verification|\\baccount\\b|invoice|payment|payroll|voice[ -]?mail|security alert|password reset|reset your|expired|expire[sd]?|urgent|action required|suspend(ed)?|microsoft 365|office 365|sharepoint|onedrive|confirm your|update your|click here|unusual sign-?in|unusual activity|wire transfer)"
+| let sig_mixed = mixed_script ? 1 : 0
+| let sig_homoglyph = homoglyph_indicator ? 1 : 0
+| let sig_vocab = phishing_vocab ? 1 : 0
+| let score = (sig_mixed * 2) + (sig_homoglyph * 3) + (sig_vocab * 2)
+| filter (mixed_script OR homoglyph_indicator) AND score >= 6
+| sort -score
