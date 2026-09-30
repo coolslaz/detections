@@ -1,0 +1,31 @@
+rule email_language_confusion_phishing {
+  meta:
+    author = "Arnold Chan"
+    description = "Detects phishing messages that mix writing systems/scripts/homoglyphs in the Subject line as one corroborating signal within a broader, multi-signal phishing pattern."
+    severity = "Medium"
+    mitre_attack_techniques = "T1566, T1566.001, T1566.002, T1204.001, T1204.002, T1583.001, T1036, T1684.001, T1684.002"
+    tags = "phishing, email-security, multilingual, homoglyph"
+    false_positive1 = "A brand/product name mentioned alongside non-Latin script text can still count toward the mixed-script signal (no brand-token stripping in this translation)"
+    false_positive2 = "Newsletters or marketing platforms with localized footers that also use urgency language"
+    false_positive3 = "Employees in Sales/Localization/Translation/Support/Legal/International roles corresponding in mixed languages, if their message also happens to carry strong phishing vocabulary"
+    false_positive4 = "Sender novelty is not tracked in this translation — the 3-signal/score requirement is the primary false-positive control"
+events:
+    $e.metadata.event_type = "EMAIL_TRANSACTION"
+    $e.security_result.action = "ALLOW"
+    $e.network.message_id = $msg_id
+    $e.target.email.subject = $subject
+
+  match:
+    $msg_id over 1h
+
+  condition:
+    #e > 0 and $independent_signal_count >= 3 and $language_confusion_score >= 6
+
+  outcome:
+    $subject_lower = strings.to_lower($subject)
+    $sig_mixed_script = if(strings.length(re.capture($subject, /[\u0400-\u04FF]/)) > 0 or strings.length(re.capture($subject, /[\u0370-\u03FF]/)) > 0 or strings.length(re.capture($subject, /[\u0600-\u06FF]/)) > 0 or strings.length(re.capture($subject, /[\u4E00-\u9FFF]/)) > 0, 1, 0)
+    $sig_phish_vocab = if(strings.contains($subject_lower, "password") or strings.contains($subject_lower, "urgent") or strings.contains($subject_lower, "invoice") or strings.contains($subject_lower, "account") or strings.contains($subject_lower, "click here") or strings.contains($subject_lower, "security alert"), 1, 0)
+    $sig_homoglyph = if(strings.length(re.capture($subject, /[A-Za-z]+[\u0400-\u04FF]|[\u0400-\u04FF]+[A-Za-z]/)) > 0, 1, 0)
+    $language_confusion_score = ($sig_mixed_script * 2) + ($sig_phish_vocab * 2) + ($sig_homoglyph * 3)
+    $independent_signal_count = $sig_mixed_script + $sig_phish_vocab + $sig_homoglyph
+}
