@@ -1,0 +1,33 @@
+// Detects the device-authorization-grant (RFC 8628) phishing sequence:
+// repeated polling sign-in attempts using the deviceCode protocol
+// culminating in a successful token issuance, consistent with
+// device-code phishing kits (e.g. Tycoon2FA-style device code lures).
+// Tightened to cut the dominant FP source: legitimate device-code sign-ins from
+// known first-party Microsoft CLI/dev-tool clients (Azure CLI, Azure PowerShell,
+// Microsoft Graph CLI), which produce the exact same poll-then-succeed pattern as
+// part of normal protocol operation. Tune KnownDeviceCodeAppIds to your tenant's
+// approved device-code tooling. Polling/success counts are also now restricted to
+// the actual device-code protocol codes (0 = success, 70016 = authorization_pending)
+// instead of any unrelated auth failure landing in the same correlation group.
+let KnownDeviceCodeAppIds = pack_array(
+    "04b07795-8ddb-461a-bbee-02f9e1bf7b46", // Microsoft Azure CLI
+    "1950a258-227b-4e31-a9cf-717495945fc2", // Microsoft Azure PowerShell
+    "14d82eec-204b-4c2f-b7e8-296a70dab67e"  // Microsoft Graph Command Line Tools
+);
+SigninLogs
+| where TimeGenerated > ago(1d)
+| where AuthenticationProtocol =~ "deviceCode"
+| where AppId !in (KnownDeviceCodeAppIds)
+| where ResultType == 0 or ResultType == 70016
+| summarize PollingAttempts = countif(ResultType == 70016),
+            SuccessCount = countif(ResultType == 0),
+            FirstSeen = min(TimeGenerated),
+            LastSeen = max(TimeGenerated),
+            IPAddresses = make_set(IPAddress, 10),
+            Apps = make_set(AppDisplayName, 10)
+      by CorrelationId, UserPrincipalName
+| where PollingAttempts >= 5 and SuccessCount >= 1
+| extend PollingWindowSeconds = datetime_diff('second', LastSeen, FirstSeen)
+| where PollingWindowSeconds <= 900
+| project UserPrincipalName, CorrelationId, PollingAttempts, SuccessCount, PollingWindowSeconds, IPAddresses, Apps, FirstSeen, LastSeen
+| sort by PollingAttempts desc
