@@ -1,0 +1,22 @@
+// Detects the crash/hang symptom of the @prime0 typosquat agent: a node.exe
+// process that beacons to the hardcoded C2 (69.48.229.140:8080) and then
+// terminates within ~45 seconds, consistent with an unhandled os.userInfo()
+// exception thrown inside the setInterval timer in index.js.
+// Joins on ProcessId AND process creation time to avoid PID-reuse false positives.
+let c2ip = "69.48.229.140";
+let c2port = 8080;
+DeviceNetworkEvents
+| where RemoteIP == c2ip and RemotePort == c2port
+| where InitiatingProcessFileName has "node"
+| project ConnTime = Timestamp, DeviceId, BeaconProcessId = InitiatingProcessId, BeaconProcessName = InitiatingProcessFileName, BeaconProcessCreationTime = InitiatingProcessCreationTime
+| join kind=inner (
+    DeviceProcessEvents
+    | where ActionType == "ProcessTerminated"
+    | where FileName has "node"
+    | project ExitTime = Timestamp, DeviceId, ProcessId, FileName, ProcessCreationTime
+) on DeviceId
+| where ProcessId == BeaconProcessId
+| where ProcessCreationTime == BeaconProcessCreationTime
+| where ExitTime between (ConnTime .. ConnTime + 45s)
+| project DeviceId, BeaconProcessId, BeaconProcessName, ConnTime, ExitTime, TimeToCrashSeconds = datetime_diff('second', ExitTime, ConnTime)
+| sort by ConnTime desc
