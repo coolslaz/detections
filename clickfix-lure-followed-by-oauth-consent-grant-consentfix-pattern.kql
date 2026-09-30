@@ -1,0 +1,26 @@
+// Detects the ConsentFix pattern: a ClickFix-style local execution lure (Win+R paste into mshta/powershell/cmd)
+// followed shortly after by an OAuth application consent grant or device-code authorization on the same identity.
+// Because the credential/passkey auth step is never touched, this sequence bypasses MFA/passkey protections.
+// Tightened: the lure now requires a paired obfuscation + execution indicator (or a standalone strong
+// signal like an encoded command) instead of firing on any single generic flag, and the consent side
+// is restricted to the two actions an end user actually performs themselves (dropping the admin-driven
+// "Add app role assignment to service principal" action, which the victim rarely triggers directly).
+let lookback = 30m;
+let ObfuscationIndicators = pack_array("-enc", "-encodedcommand", "-w hidden", "-windowstyle hidden", "start /min");
+let ExecutionIndicators = pack_array("iex", "invoke-expression", "downloadstring", "invoke-restmethod", "start-process");
+let clickfix_lures = DeviceProcessEvents
+| where FileName in~ ("mshta.exe", "powershell.exe", "powershell_ise.exe", "cmd.exe")
+| where (ProcessCommandLine has_any (ObfuscationIndicators) and ProcessCommandLine has_any (ExecutionIndicators))
+    or ProcessCommandLine has_any ("-enc", "-encodedcommand")
+    or (FileName =~ "mshta.exe" and ProcessCommandLine has_any ("http://", "https://"))
+| where InitiatingProcessParentFileName in~ ("explorer.exe", "cmd.exe")
+| project LureTime = Timestamp, DeviceId, DeviceName, AccountUpn = InitiatingProcessAccountUpn, LureFile = FileName, LureCommandLine = ProcessCommandLine;
+clickfix_lures
+| join kind=inner (
+ CloudAppEvents
+ | where ActionType in ("Consent to application.", "Add OAuth2PermissionGrant.")
+ | project ConsentTime = Timestamp, AccountUpn = AccountDisplayName, ConsentActionType = ActionType, ConsentApp = tostring(RawEventData.ApplicationDisplayName), RawEventData
+) on AccountUpn
+| where ConsentTime - LureTime between (0min .. lookback)
+| project LureTime, ConsentTime, AccountUpn, DeviceId, DeviceName, LureFile, LureCommandLine, ConsentActionType, ConsentApp
+| sort by LureTime desc
