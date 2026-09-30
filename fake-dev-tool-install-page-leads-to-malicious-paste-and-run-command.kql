@@ -1,0 +1,14 @@
+// Detects the ClickFix/InstallFix pattern: a user pastes a supposed install command for a developer tool
+// (Claude Code, NotebookLM) into Run/terminal, but the pasted text is actually a download-and-execute
+// cradle rather than a legitimate package install. Tightened to exclude commands that reference the
+// vendor's own official install domain -- genuine installs use the same irm/iex-style syntax, so the
+// domain referenced (not the syntax) is what separates a real install from a spoofed one.
+DeviceProcessEvents
+| where FileName in~ ("powershell.exe", "pwsh.exe", "cmd.exe", "mshta.exe")
+| where InitiatingProcessFileName in~ ("explorer.exe", "cmd.exe", "powershell.exe", "pwsh.exe")
+| where ProcessCommandLine has_any ("claude", "claude-code", "notebooklm", "notebook-lm")
+| where ProcessCommandLine has_any ("irm ", "iwr ", "invoke-webrequest", "invoke-restmethod", "curl ", "certutil", "bitsadmin", "downloadstring", "downloadfile")
+| where ProcessCommandLine has_any ("iex", "-encodedcommand", "-enc ", "start-process", "/c ", "invoke-expression")
+| where not(ProcessCommandLine has_any ("claude.ai/install", "anthropic.com", "notebooklm.google.com", "google.com/notebooklm"))
+| project Timestamp, DeviceId, AccountName, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, ProcessCommandLine, InitiatingProcessParentFileName
+| order by Timestamp desc
