@@ -1,0 +1,19 @@
+// Browser sync bridges a compromised personal profile into a corporate session by running personal and corporate
+// browser profiles side-by-side on the same managed endpoint. Native EDR telemetry cannot see which account is
+// signed into a given Chrome/Edge profile, so this uses the observable host artifact: multiple distinct
+// --profile-directory values launched on the same device in a short window, a precondition for cross-profile
+// sync of saved sessions/credentials described in the attack chain.
+// Tightened: fixed a broken final projection (it was re-deriving a bucket from now() instead of
+// referencing the actual grouped bucket), and raised the profile-diversity bar from >1 to >=3.
+// A single extra profile alongside "Default" is normal, common work/personal separation on one
+// machine; requiring at least three distinct profiles active in the same hour is a materially
+// less common pattern and a better proxy for the multi-identity juggling this opportunity targets.
+DeviceProcessEvents
+| where FileName in~ ("chrome.exe", "msedge.exe")
+| where ProcessCommandLine has "profile-directory"
+| extend ProfileDir = extract(@'profile-directory="?([^"\s]+)', 1, ProcessCommandLine)
+| where isnotempty(ProfileDir)
+| summarize ProfileDirs = make_set(ProfileDir, 10), Launches = count() by DeviceId, TimeBucket = bin(Timestamp, 1h)
+| where array_length(ProfileDirs) >= 3
+| project TimeBucket, DeviceId, ProfileDirs, Launches
+| sort by TimeBucket desc
