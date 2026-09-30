@@ -1,0 +1,27 @@
+// Detects reuse of the same Entra ID session by a new, unmanaged/non-compliant device shortly after
+// the account authenticated from a managed device - consistent with an infostealer-stolen session
+// token being replayed by an attacker to bypass authentication and MFA entirely.
+// Tightened to cut the dominant FP source: legitimate BYOD access continuing the same SSO session on
+// an authorized-but-unmanaged personal device (phone/tablet) from the same general location. Now
+// requires BOTH a different device AND a different IP (not just one or the other), AND a country
+// change between the two sign-ins -- same-country device/IP churn from roaming or Wi-Fi handoff no
+// longer matches, while cross-country reuse (consistent with attacker infrastructure) still does.
+// Also migrated off the retiring AADSignInEventsBeta table to its replacement, EntraIdSignInEvents.
+let lookback = 24h;
+EntraIdSignInEvents
+| where Timestamp > ago(2d)
+| where ErrorCode == 0
+| project Timestamp, AccountObjectId, SessionId, DeviceName, IPAddress, IsManaged, IsCompliant, Country, ResourceDisplayName
+| join kind=inner (
+    EntraIdSignInEvents
+    | where Timestamp > ago(2d)
+    | where ErrorCode == 0
+    | where IsManaged == true or IsCompliant == true
+    | project OrigTimestamp = Timestamp, AccountObjectId, SessionId, OrigDeviceName = DeviceName, OrigIPAddress = IPAddress, OrigCountry = Country
+) on AccountObjectId, SessionId
+| where IsManaged == false and IsCompliant == false
+| where DeviceName != OrigDeviceName and IPAddress != OrigIPAddress
+| where Country != OrigCountry
+| where Timestamp > OrigTimestamp and Timestamp - OrigTimestamp <= lookback
+| project AccountObjectId, SessionId, OrigTimestamp, OrigDeviceName, OrigIPAddress, OrigCountry, ReplayTimestamp = Timestamp, ReplayDeviceName = DeviceName, ReplayIPAddress = IPAddress, ReplayCountry = Country, ResourceDisplayName
+| sort by ReplayTimestamp desc
