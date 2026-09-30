@@ -1,0 +1,23 @@
+// Detects the VHX Harvester credential/metadata exfiltration pattern:
+// a fingerprinting probe (/health, /docs, /openapi.json) against a service
+// followed by a request to the unauthenticated artifact-store endpoints
+// (/files or /file?name=) from the same device toward the same remote host.
+// Requires at least 2 distinct fingerprint paths to be hit (to rule out
+// individually-common single endpoint hits) and at least 2 distinct exfil
+// URLs pulled (to distinguish sustained harvesting from one incidental hit).
+let probes = DeviceNetworkEvents
+| where Timestamp > ago(1d)
+| where RemoteUrl has_any ("/health", "/docs", "/openapi.json")
+| extend ProbeHost = tostring(split(RemoteUrl, "/")[2])
+| summarize ProbeTime = min(Timestamp), ProbePaths = make_set(RemoteUrl, 20) by DeviceId, ProbeHost, RemoteIP
+| where array_length(ProbePaths) >= 2;
+let exfil = DeviceNetworkEvents
+| where Timestamp > ago(1d)
+| where RemoteUrl has "/files" or RemoteUrl has "/file?name="
+| project ExfilTime = Timestamp, DeviceId, ExfilHost = tostring(split(RemoteUrl, "/")[2]), RemoteUrl, RemoteIP, InitiatingProcessFileName;
+probes
+| join kind=inner exfil on DeviceId
+| where ProbeHost == ExfilHost and ExfilTime between (ProbeTime .. (ProbeTime + 10m))
+| project ProbeTime, ExfilTime, DeviceId, ExfilHost, RemoteUrl, RemoteIP, InitiatingProcessFileName, ProbePaths
+| summarize FirstProbe = min(ProbeTime), LastExfil = max(ExfilTime), ExfilUrls = make_set(RemoteUrl, 20), ExfilUrlCount = dcount(RemoteUrl), ProbePaths = take_any(ProbePaths) by DeviceId, ExfilHost, RemoteIP
+| where ExfilUrlCount >= 2
