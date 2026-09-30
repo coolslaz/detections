@@ -1,0 +1,33 @@
+// Everest ransomware IOC hunt: known file hashes across DeviceFileEvents/DeviceProcessEvents and known C2/leak-site domains across DeviceNetworkEvents.
+// Hash matching is case-insensitive exact match (in~). Domain matching parses the hostname out of
+// RemoteUrl and requires an exact host or true subdomain match, not a raw substring of the URL,
+// to avoid false hits on unrelated paths/query-strings that happen to contain the same characters.
+// Note: "ntdetect.com" resembles the legacy Windows boot file NTDETECT.COM rather than a typical
+// C2 name; it is matched here strictly as a network hostname (not a filename) to avoid confusing it
+// with the legitimate system file of the same name.
+let sha256_iocs = dynamic(["1df92bf4c967297d8a39fc3f619a56702ee96d5cf9196b8e1d5b3654746c6514","b30b7911b256daeceb631dec923f83c0ef17f34eb46452d5ab32aab2540be361"]);
+let sha1_iocs = dynamic(["1df92bf4c967297d8a39fc3f619a56702ee96d5c"]);
+let md5_iocs = dynamic(["0dd70c334507188714bae0af7229b379"]);
+let domain_iocs = dynamic(["ransomocmou6mnbquqz44ewosbkjk3o5qjsl3orawojexfook2j7esad.onion","ntdetect.com"]);
+let FileHashHits =
+    DeviceFileEvents
+    | where SHA256 in~ (sha256_iocs) or SHA1 in~ (sha1_iocs) or MD5 in~ (md5_iocs)
+    | extend IocType = case(SHA256 in~ (sha256_iocs), "SHA256", SHA1 in~ (sha1_iocs), "SHA1", MD5 in~ (md5_iocs), "MD5", "unknown"),
+             MatchedValue = case(SHA256 in~ (sha256_iocs), SHA256, SHA1 in~ (sha1_iocs), SHA1, MD5 in~ (md5_iocs), MD5, "")
+    | project TimeGenerated, IocType, MatchedValue, DeviceName, InitiatingProcess = InitiatingProcessFileName, SourceTable = "DeviceFileEvents";
+let ProcessHashHits =
+    DeviceProcessEvents
+    | where SHA256 in~ (sha256_iocs) or SHA1 in~ (sha1_iocs) or MD5 in~ (md5_iocs)
+    | extend IocType = case(SHA256 in~ (sha256_iocs), "SHA256", SHA1 in~ (sha1_iocs), "SHA1", MD5 in~ (md5_iocs), "MD5", "unknown"),
+             MatchedValue = case(SHA256 in~ (sha256_iocs), SHA256, SHA1 in~ (sha1_iocs), SHA1, MD5 in~ (md5_iocs), MD5, "")
+    | project TimeGenerated, IocType, MatchedValue, DeviceName, InitiatingProcess = InitiatingProcessFileName, SourceTable = "DeviceProcessEvents";
+let DomainHits =
+    DeviceNetworkEvents
+    | where isnotempty(RemoteUrl)
+    | extend RemoteHost = tolower(tostring(parse_url(RemoteUrl).Host))
+    | mv-expand domain = domain_iocs to typeof(string)
+    | where RemoteHost == domain or RemoteHost endswith strcat(".", domain)
+    | extend IocType = "domain", MatchedValue = domain
+    | project TimeGenerated, IocType, MatchedValue, DeviceName, InitiatingProcess = InitiatingProcessFileName, SourceTable = "DeviceNetworkEvents";
+union FileHashHits, ProcessHashHits, DomainHits
+| sort by TimeGenerated desc
