@@ -1,0 +1,27 @@
+// Detects the sequence: an AI-related browser extension is installed, then the same device's browser process
+// communicates outbound to a known AI-service endpoint shortly after -- consistent with shadow AI extensions
+// transiting corporate browser data to external AI services outside DLP visibility.
+// Tightened: "copilot" dropped from the keyword list (Microsoft/GitHub Copilot are commonly
+// org-sanctioned, not shadow AI); traffic now matches only background API endpoints
+// (api.openai.com etc.), not the user-facing chat websites employees legitimately browse; and
+// the correlation window shrunk from 7 days to 1 hour so it reflects the extension's own
+// outbound call, not coincidental unrelated AI-site browsing sometime that week.
+let aiExtensionKeywords = dynamic(["gpt","chatgpt","openai","claude","gemini","bard","perplexity","poe","jasper","writesonic","ai assistant","ai writer","ai chat"]);
+let approvedAiExtensionNames = dynamic(["microsoft copilot","github copilot"]);
+let aiApiEndpoints = dynamic(["api.openai.com","api.anthropic.com","api.perplexity.ai","api.writesonic.com"]);
+let extensionInstalls = DeviceEvents
+| where ActionType in ("BrowserExtensionInstallationEvent","BrowserExtensionInstalled")
+| extend ExtName = tostring(parse_json(AdditionalFields).ExtensionName)
+| where isnotempty(ExtName)
+| where ExtName has_any (aiExtensionKeywords)
+| where not(ExtName has_any (approvedAiExtensionNames))
+| project InstallTime = Timestamp, DeviceId, DeviceName, ExtName, InstallActionType = ActionType;
+let aiTraffic = DeviceNetworkEvents
+| where InitiatingProcessFileName has_any ("chrome.exe","msedge.exe","firefox.exe","brave.exe","opera.exe")
+| where RemoteUrl has_any (aiApiEndpoints)
+| project TrafficTime = Timestamp, DeviceId, RemoteUrl, InitiatingProcessFileName, RemoteIP;
+extensionInstalls
+| join kind=inner aiTraffic on DeviceId
+| where TrafficTime between (InstallTime .. (InstallTime + 1h))
+| project InstallTime, TrafficTime, DeviceId, DeviceName, ExtName, RemoteUrl, InitiatingProcessFileName, RemoteIP
+| sort by TrafficTime desc
