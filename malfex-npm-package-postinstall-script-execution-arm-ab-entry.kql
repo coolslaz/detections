@@ -1,0 +1,21 @@
+// Detects npm install/postinstall execution of known MALFEX malicious packages
+// which serve as the entry point for either Arm A (image-disguised PE) or Arm B (PNG polyglot) delivery
+DeviceProcessEvents
+| where Timestamp > ago(14d)
+| where (FileName =~ "npm" or FileName =~ "npm.cmd" or FileName =~ "node.exe" or FileName =~ "cmd.exe")
+| where InitiatingProcessFileName has_any ("node.exe", "npm", "npm.cmd", "sh.exe", "bash.exe", "cmd.exe")
+| where ProcessCommandLine has_any ("function-flag", "cdn-img-fetch", "tlxbnhd", "tldriver", "mxdriver", "img-to-native", "native-runner", "function-color")
+| where ProcessCommandLine has "node_modules"
+| where ProcessCommandLine has_any ("install", "postinstall", "preinstall", "npm-lifecycle", "node-gyp")
+| extend MatchedPackage = case(
+    ProcessCommandLine has "function-flag", "function-flag",
+    ProcessCommandLine has "cdn-img-fetch", "cdn-img-fetch",
+    ProcessCommandLine has "tlxbnhd", "tlxbnhd",
+    ProcessCommandLine has "tldriver", "tldriver",
+    ProcessCommandLine has "mxdriver", "mxdriver",
+    ProcessCommandLine has "img-to-native", "img-to-native",
+    ProcessCommandLine has "native-runner", "native-runner",
+    ProcessCommandLine has "function-color", "function-color",
+    "unknown")
+| project Timestamp, DeviceName, AccountName, FileName, ProcessCommandLine, MatchedPackage, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName
+| sort by Timestamp desc
