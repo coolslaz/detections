@@ -1,0 +1,33 @@
+// Detects the ClickFix pattern: explorer.exe (Win+R Run dialog) directly spawning
+// PowerShell, cmd, or mshta with a paste-and-run command that pairs an
+// obfuscation/hidden-window indicator with a network-download or inline-execution
+// indicator (rather than firing on any single generic flag), then confirms the
+// chain by requiring that same process to itself launch a further payload
+// (true parent-child link via ProcessId, not just co-occurrence on the device).
+// This filters out one-off benign hidden-window or encoded-command usage that
+// never leads to a second-stage execution.
+let ObfuscationIndicators = pack_array("-w hidden", "-windowstyle hidden", "-enc", "-encodedcommand", "start /min");
+let ExecutionIndicators = pack_array("iex", "invoke-expression", "invoke-restmethod", "downloadstring", "downloadfile", "certutil -decode", "bitsadmin /transfer");
+DeviceProcessEvents
+| where InitiatingProcessFileName =~ "explorer.exe"
+| where FileName has_any ("powershell.exe", "powershell_ise.exe", "mshta.exe", "cmd.exe")
+| where
+    (ProcessCommandLine has_any (ObfuscationIndicators) and ProcessCommandLine has_any (ExecutionIndicators))
+    or ProcessCommandLine has_any ("-enc", "-encodedcommand")
+    or (FileName =~ "mshta.exe" and ProcessCommandLine has "http")
+| project
+    Timestamp, DeviceId, DeviceName, AccountName,
+    InitiatingProcessFileName, FileName, ProcessCommandLine,
+    StageOneProcessId = ProcessId
+| join kind=inner (
+    DeviceProcessEvents
+    | project
+        StageTwoTimestamp = Timestamp, DeviceId,
+        StageOneProcessId = InitiatingProcessId,
+        SubsequentFileName = FileName, SubsequentCommandLine = ProcessCommandLine
+) on DeviceId, StageOneProcessId
+| where StageTwoTimestamp between (Timestamp .. (Timestamp + 10m))
+| project
+    Timestamp, DeviceName, AccountName, InitiatingProcessFileName, FileName,
+    ProcessCommandLine, StageTwoTimestamp, SubsequentFileName, SubsequentCommandLine
+| sort by Timestamp desc
