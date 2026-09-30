@@ -1,0 +1,55 @@
+// RedFlick phishing delivery chain: VHDX/LNK and PDF-embedded PowerShell variants
+// T1566.001, T1204.002, T1059.001, T1027.003, T1027, T1105, T1218.002
+let sshLocalCommand = DeviceProcessEvents
+| where Timestamp > ago(14d)
+| where FileName =~ "ssh.exe"
+| where ProcessCommandLine has "PermitLocalCommand=yes" and ProcessCommandLine has "LocalCommand=cmd.exe"
+| where InitiatingProcessFileName !in~ ("MsMpEng.exe", "MsSense.exe", "SenseIR.exe", "MpCmdRun.exe")
+| extend StageIndicator = "ssh.exe PermitLocalCommand/LocalCommand MSI download";
+let curlPdfDownload = DeviceProcessEvents
+| where Timestamp > ago(14d)
+| where FileName =~ "curl.exe"
+| where InitiatingProcessFileName =~ "conhost.exe"
+| where InitiatingProcessParentFileName =~ "explorer.exe"
+| where FolderPath has "\\Downloads\\" or FolderPath has "\\Temp\\" or FolderPath has "AppData\\Local\\Temp"
+| where ProcessCommandLine has ".pdf" and (ProcessCommandLine has "http://" or ProcessCommandLine has "https://")
+| where InitiatingProcessFileName !in~ ("MsMpEng.exe", "MsSense.exe", "SenseIR.exe", "MpCmdRun.exe")
+| extend StageIndicator = "conhost/curl download of remote PDF from freshly-extracted archive context";
+let psPdfBase64 = DeviceProcessEvents
+| where Timestamp > ago(14d)
+| where FileName has "powershell"
+| where ProcessCommandLine has ".pdf" and ProcessCommandLine has "cAB" and (ProcessCommandLine has "FromBase64String" or ProcessCommandLine has "[regex]::Matches")
+| where InitiatingProcessFileName !in~ ("MsMpEng.exe", "MsSense.exe", "SenseIR.exe", "MpCmdRun.exe")
+| extend StageIndicator = "PowerShell PDF magic-header (cAB) extraction/Base64 decode";
+let correlationEvents = union sshLocalCommand, curlPdfDownload, psPdfBase64
+| project DeviceName, CorrelatedTime = Timestamp, CorrelatedStage = StageIndicator;
+let msiRemoteInstall = DeviceProcessEvents
+| where Timestamp > ago(14d)
+| where FileName =~ "msiexec.exe"
+| where (ProcessCommandLine has "/q" or ProcessCommandLine has "/quiet") and ProcessCommandLine has "/i" and (ProcessCommandLine has "http://" or ProcessCommandLine has "https://")
+| where InitiatingProcessFileName !in~ ("MsMpEng.exe", "MsSense.exe", "SenseIR.exe", "MpCmdRun.exe")
+| join kind=inner (correlationEvents) on DeviceName
+| where abs(datetime_diff('minute', Timestamp, CorrelatedTime)) <= 10
+| extend StageIndicator = strcat("msiexec silent install from remote URL, correlated with ", CorrelatedStage)
+| project Timestamp, DeviceName, ActionType, ProcessCommandLine, FileName, InitiatingProcessFileName, InitiatingProcessParentFileName, FolderPath, AccountName, StageIndicator;
+let mountDiskImage = DeviceProcessEvents
+| where Timestamp > ago(14d)
+| where FileName has "powershell"
+| where ProcessCommandLine has "Mount-DiskImage"
+| where ProcessCommandLine has_any ("\\Downloads\\", "\\Temp\\", "AppData\\Local\\Temp")
+| where InitiatingProcessFileName !in~ ("MsMpEng.exe", "MsSense.exe", "SenseIR.exe", "MpCmdRun.exe")
+| extend StageIndicator = "PowerShell Mount-DiskImage cmdlet targeting Downloads/Temp path";
+let vhdxMount = DeviceFileEvents
+| where Timestamp > ago(14d)
+| where FileName endswith ".vhdx"
+| where ActionType == "FileCreated"
+| where FolderPath has "\\Downloads\\" or FolderPath has "\\Temp\\" or FolderPath has "\\INetCache\\" or FolderPath has "\\Content.Outlook\\"
+| where not(FolderPath has "\\AppData\\Local\\Packages\\" and FolderPath has "\\LocalState\\")
+| where not(FolderPath has "Docker")
+| where not(FolderPath has "Windows Sandbox" or FolderPath has "\\WindowsSandbox\\")
+| where InitiatingProcessFileName !in~ ("MsMpEng.exe", "MsSense.exe", "SenseIR.exe", "MpCmdRun.exe")
+| extend StageIndicator = "VHDX file created in Downloads/Temp/INetCache/Outlook attachment path"
+| project Timestamp, DeviceName, ActionType, ProcessCommandLine = "", FileName, InitiatingProcessFileName, InitiatingProcessParentFileName = "", FolderPath, AccountName = InitiatingProcessAccountName, StageIndicator;
+union sshLocalCommand, curlPdfDownload, psPdfBase64, msiRemoteInstall, mountDiskImage, vhdxMount
+| summarize FirstSeen = min(Timestamp), LastSeen = max(Timestamp), EventCount = count(), ProcessCommandLine = any(ProcessCommandLine), FileName = any(FileName), FolderPath = any(FolderPath), AccountName = any(AccountName) by DeviceName, StageIndicator
+| sort by LastSeen desc
