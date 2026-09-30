@@ -1,0 +1,38 @@
+let lookback = 30d;
+let ip_iocs = dynamic(["103.245.231.248","2.57.241.246","89.125.209.168","103.245.231.79","45.84.59.66","103.160.59.97","103.245.213.217"]);
+let domain_iocs = dynamic(["etia.ca","groy.cc","gliderrompercycl.com","muvb.net","divekickspolic.org","matjk.click","bpdaersa.click","stuseamandesilt.org","itechx.tel","guach.net","ruten.observer","byveo.org","secure-dns-hub.com","qumel.link","cyrna.top","drasw.club"]);
+let hash_iocs = dynamic(["9707a8694e954e9ee13e839d6e5905ce626c0837c7c90da6d1025bfbe152866b","1f2096ff906915fbf80778f0636446206197351f7e271af97936eeb6f32c179d","699e92a9e0edf7835879d5697bc67138c0b137117f459caf1a44df357407cad9","24b6e36a09eb2acfc2a95478ca685acb7593b1689be6a4a639fe0d222393cfa7","dd98dbc1a55afe6fd0ed2ed53a79c76f6bde15081a0060422185b74eb1799ee4"]);
+let domain_regex = strcat(@"(\.|^)(", strcat_array(domain_iocs, "|"), ")$");
+let security_tools = dynamic(["MsMpEng.exe","MsSense.exe","SenseIR.exe","MpCmdRun.exe"]);
+let net_events = DeviceNetworkEvents
+| where Timestamp > ago(lookback)
+| where not(InitiatingProcessFileName in~ (security_tools))
+| extend Host = tostring(parse_url(RemoteUrl).Host)
+| where RemoteIP in (ip_iocs) or Host in~ (domain_iocs) or Host matches regex domain_regex
+| extend MatchedIndicator = iff(RemoteIP in (ip_iocs), RemoteIP, Host)
+| extend IndicatorType = iff(RemoteIP in (ip_iocs), "ip", "domain")
+| project Timestamp, DeviceName, MatchedIndicator, IndicatorType, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteIP, RemoteUrl, RemotePort;
+let file_events = DeviceFileEvents
+| where Timestamp > ago(lookback)
+| where not(InitiatingProcessFileName in~ (security_tools))
+| where SHA256 in (hash_iocs)
+| extend MatchedIndicator = SHA256
+| extend IndicatorType = "hash"
+| project Timestamp, DeviceName, MatchedIndicator, IndicatorType, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, FolderPath, SHA256;
+let process_events = DeviceProcessEvents
+| where Timestamp > ago(lookback)
+| where not(InitiatingProcessFileName in~ (security_tools))
+| where SHA256 in (hash_iocs)
+| extend MatchedIndicator = SHA256
+| extend IndicatorType = "hash"
+| project Timestamp, DeviceName, MatchedIndicator, IndicatorType, InitiatingProcessFileName, InitiatingProcessCommandLine=ProcessCommandLine, FileName=FileName, FolderPath=FolderPath, SHA256;
+let email_events = EmailAttachmentInfo
+| where Timestamp > ago(lookback)
+| where SHA256 in (hash_iocs)
+| extend MatchedIndicator = SHA256
+| extend IndicatorType = "hash"
+| extend DeviceName = RecipientEmailAddress, InitiatingProcessFileName = "", InitiatingProcessCommandLine = ""
+| project Timestamp, DeviceName, MatchedIndicator, IndicatorType, InitiatingProcessFileName, InitiatingProcessCommandLine, FileName, SHA256;
+union isfuzzy=true net_events, file_events, process_events, email_events
+| summarize FirstSeen = min(Timestamp), LastSeen = max(Timestamp), EventCount = count(), SampleProcess = any(InitiatingProcessFileName), SampleCommandLine = any(InitiatingProcessCommandLine), SampleContext = any(coalesce(RemoteUrl, FileName, FolderPath)) by DeviceName, MatchedIndicator, IndicatorType
+| sort by LastSeen desc
