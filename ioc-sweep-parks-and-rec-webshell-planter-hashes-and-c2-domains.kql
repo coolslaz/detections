@@ -1,0 +1,32 @@
+let iocHashes = dynamic(["0d8f7bf30aa1ac95d59fed24c433dd2b3d57767f38c088721699c841c6e861d3","5f69ff7a2e024f94cc5f816fa16c90054b09d9ac430b1f8b0631dfdd4472905e","e9dee286069afb6b411febb96b91a963cd16baffbf8b6aa951e0ef1a7e0e3879","0d93c3a8ded46887f79ac4ca7f238c458de2231243176f6c05062e34f238d19a","b06b581d91f4108900d188c3ee1af18502a8cb65d4e101663b791bd670867485","7bb594a77f726bf21a49f717024f2915f82f47eb623d2ad305259301de1f1ab4"]);
+let iocDomains = dynamic(["ririmochii.workers.dev","bubuneeko.workers.dev"]);
+let iocUrls = dynamic(["chat.ririmochii.workers.dev/core.js","fk.bubuneeko.workers.dev/_cf/rel","fk.bubuneeko.workers.dev/_cf/ice"]);
+let rootPaths = dynamic(["C:\\inetpub\\wwwroot","C:\\sites","C:\\www","C:\\wwwroot","C:\\WebSites","C:\\inetpub\\temp\\appPools","E:\\Content\\info\\App_Code"]);
+union
+(
+    DeviceFileEvents
+    | where SHA256 in~ (iocHashes)
+    | extend MatchType = "FileHash", MatchValue = SHA256
+    | project Timestamp, DeviceId, DeviceName, ActionType, FileName, FolderPath, SHA256, MatchType, MatchValue
+),
+(
+    DeviceFileEvents
+    | where FolderPath has_any (rootPaths)
+    | where FileName in~ ("plant_ccrtc_mousewheel.ps1","plant_ccrtc_mousewheel.ps1.b64","plant_ccrtc_fast.ps1","plant_ccrtc_fast.ps1.b64","ccrtc_sdk_init.js","ccrtc_sdk_init.js.b64")
+    | extend MatchType = "StagingFileName", MatchValue = FileName
+    | project Timestamp, DeviceId, DeviceName, ActionType, FileName, FolderPath, SHA256, MatchType, MatchValue
+),
+(
+    DeviceNetworkEvents
+    | where RemoteUrl has_any (iocDomains) or RemoteUrl has_any (iocUrls)
+    | extend MatchType = "NetworkIOC", MatchValue = RemoteUrl
+    | project Timestamp, DeviceId, DeviceName, ActionType, InitiatingProcessFileName, RemoteUrl, RemoteIP, MatchType, MatchValue
+),
+(
+    DeviceProcessEvents
+    | where ProcessCommandLine has_any (iocDomains) or ProcessCommandLine has_any (iocUrls) or ProcessCommandLine has_any (iocHashes)
+    | where FileName !in~ ("chrome.exe","msedge.exe","firefox.exe")
+    | extend MatchType = "ProcessCommandLineIOC", MatchValue = ProcessCommandLine
+    | project Timestamp, DeviceId, DeviceName, ActionType, FileName, ProcessCommandLine, MatchType, MatchValue
+)
+| sort by Timestamp desc
