@@ -1,0 +1,13 @@
+// Detects new .aspx files, or files renamed to .aspx from another extension, within the member file-upload directory.
+// Tightened: drops plain FileModified touches, only flags renames where the extension actually changed to .aspx,
+// requires non-zero file size, requires exact w3wp.exe process match.
+DeviceFileEvents
+| where ActionType in ("FileCreated", "FileRenamed")
+| where FolderPath has "\\documents\\MemberFiles\\" or FolderPath has "/documents/MemberFiles/"
+| where FileName endswith ".aspx"
+| where ActionType == "FileCreated" or (ActionType == "FileRenamed" and PreviousFileName !endswith ".aspx")
+| where FileSize > 0
+| extend ProcessName = tostring(InitiatingProcessFileName)
+| where ProcessName =~ "w3wp.exe"
+| project Timestamp, DeviceName, FileName, FolderPath, PreviousFileName, ActionType, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName, SHA256, FileSize
+| sort by Timestamp asc
