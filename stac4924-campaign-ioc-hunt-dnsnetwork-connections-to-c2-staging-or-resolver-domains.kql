@@ -1,0 +1,87 @@
+// Hunts DNS lookups and outbound network connections to STAC4924 campaign infrastructure
+// Tags matches as C2, Staging, or Dead-Drop-Resolver (lower confidence context indicator)
+// Precise host matching: the queried DNS Name, or the host extracted from RemoteUrl via parse_url(),
+// must equal a listed domain exactly or be a subdomain of it (host endswith '.' + domain).
+// This avoids false positives from substring/has_any matches against unrelated domains or URL paths
+// that happen to contain one of the listed domain strings as a token.
+let domains_tbl = datatable(Domain:string, Category:string) [
+    "webfeedonline.com", "C2",
+    "fish-planet.online", "C2",
+    "forest-pet.com", "C2",
+    "yellow-tree.online", "C2",
+    "cave-discovery.online", "C2",
+    "bestsocialmedianewspapper.com", "C2",
+    "fixdocumentview.com", "C2",
+    "offlineupdater.com", "C2",
+    "opendocumentnowforfree.com", "C2",
+    "openlockeddocuments.com", "C2",
+    "ourpersonalsecurity.com", "C2",
+    "viewpublicdocuments.com", "C2",
+    "yourappdoctor.com", "C2",
+    "yourprettylittlepicture.com", "C2",
+    "firstapphelp.com", "C2",
+    "goodfoodrecipients.com", "C2",
+    "languageupgrader.com", "C2",
+    "biblegodlike.com", "C2",
+    "valueurban.com", "C2",
+    "graburban.com", "C2",
+    "documentthis.art", "C2",
+    "peekyourphoto.com", "C2",
+    "topphotoalbum.com", "C2",
+    "newpopularimages.com", "C2",
+    "opendocumentonline.com", "C2",
+    "editdocumentfree.com", "C2",
+    "bestpopularimages.com", "C2",
+    "documentsphotos.com", "C2",
+    "openpdfanywhere.com", "C2",
+    "openandopen.com", "C2",
+    "lookforimages.com", "C2",
+    "freeshareyourimage.com", "C2",
+    "freecatimages.com", "C2",
+    "imageuploaderfree.com", "C2",
+    "sharingclick.com", "C2",
+    "searchdocumentsfree.com", "C2",
+    "openanyworddocument.com", "C2",
+    "kittyfreespace.com", "C2",
+    "oceansecretlife.com", "C2",
+    "grapesinlife.com", "C2",
+    "capturethes.com", "C2",
+    "loginrestforest.com", "C2",
+    "reeeeealy.com", "C2",
+    "semigoddess.com", "C2",
+    "imagethere.info", "C2",
+    "placebetweenphotos.us", "C2",
+    "openimagesworld.us", "C2",
+    "ghostproc.com", "Staging",
+    "assetsoftgo.com", "Staging",
+    "autorelaylab.com", "Staging",
+    "adstatli.com", "Staging",
+    "metricgw.com", "Staging",
+    "platformco-hub.com", "Staging",
+    "swiftcurrento.net", "Staging",
+    "cronverta.net", "Staging",
+    "letsdiskuss.com", "DeadDropResolver_LowConfidence"
+]
+| extend DomainLower = tolower(Domain), k = 1;
+let dns_hits =
+    DnsEvents
+    | where TimeGenerated > ago(14d)
+    | extend HostLower = tolower(tostring(Name))
+    | extend k = 1
+    | join kind=inner (domains_tbl) on k
+    | where HostLower == DomainLower or HostLower endswith strcat(".", DomainLower)
+    | extend EventTime = TimeGenerated, SourceTable = "DnsEvents", NetworkIndicator = Computer,
+             MatchedDomain = HostLower, DomainCategory = Category;
+let net_hits =
+    DeviceNetworkEvents
+    | where Timestamp > ago(14d)
+    | extend ParsedHost = tostring(parse_url(RemoteUrl).Host)
+    | extend HostLower = tolower(iff(isnotempty(ParsedHost), ParsedHost, RemoteUrl))
+    | extend k = 1
+    | join kind=inner (domains_tbl) on k
+    | where HostLower == DomainLower or HostLower endswith strcat(".", DomainLower)
+    | extend EventTime = Timestamp, SourceTable = "DeviceNetworkEvents", NetworkIndicator = DeviceName,
+             MatchedDomain = HostLower, DomainCategory = Category;
+union dns_hits, net_hits
+| project EventTime, SourceTable, NetworkIndicator, MatchedDomain, DomainCategory
+| sort by EventTime desc
