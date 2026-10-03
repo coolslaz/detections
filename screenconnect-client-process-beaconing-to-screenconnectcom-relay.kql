@@ -1,0 +1,9 @@
+// Detects a ScreenConnect client component establishing outbound network connections to a ScreenConnect cloud relay instance, consistent with a preconfigured client reading its embedded system.config and calling back to an attacker-controlled relay
+// Scoped to unmanaged installs (outside Program Files) to reduce noise from IT-managed ScreenConnect deployments that legitimately call back to their own relay instance
+DeviceNetworkEvents
+| where InitiatingProcessFileName in~ ("ScreenConnect.WindowsClient.exe", "ScreenConnect.ClientService.exe", "ScreenConnect.Client.exe", "ScreenConnect.WindowsBackstageShell.exe", "ScreenConnect.WindowsFileManager.exe")
+| where RemoteUrl has "-relay.screenconnect.com"
+| where RemotePort == 443
+| where InitiatingProcessFolderPath !has @"\Program Files"
+| project Timestamp, DeviceName, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine, RemoteUrl, RemoteIP, RemotePort, InitiatingProcessAccountName
+| sort by Timestamp desc
