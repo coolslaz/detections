@@ -1,0 +1,21 @@
+let PoperBlockerDomains = dynamic(["pbapi.xyz", "poperblocker.com"]);
+let PoperBlockerExtensionIds = dynamic(["bkkbcggnhapdmkeljlodobbkopceiche", "baplddocidbpmmneofgnhkjojmibmpck"]);
+union
+(
+    DeviceNetworkEvents
+    | where TimeGenerated > ago(30d)
+    | extend Host = tostring(parse_url(RemoteUrl).Host)
+    | where Host in (PoperBlockerDomains) or Host endswith ".pbapi.xyz" or Host endswith ".poperblocker.com"
+    | extend IOCType = "network_domain", MatchedIOC = Host
+    | project TimeGenerated, DeviceName, IOCType, MatchedIOC
+),
+(
+    DeviceEvents
+    | where TimeGenerated > ago(30d)
+    | where ActionType in ("BrowserExtensionInstalled", "BrowserExtensionLoad")
+    | extend ExtensionId = tostring(parse_json(AdditionalFields).ExtensionId)
+    | where ExtensionId in (PoperBlockerExtensionIds)
+    | extend IOCType = "extension_id", MatchedIOC = ExtensionId
+    | project TimeGenerated, DeviceName, IOCType, MatchedIOC
+)
+| sort by TimeGenerated desc
