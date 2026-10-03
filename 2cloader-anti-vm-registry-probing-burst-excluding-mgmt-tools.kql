@@ -1,0 +1,45 @@
+// Detects a single process querying several distinct VM-detection registry keys
+// (VirtualBox/VMware/Wine) in a tight burst window, consistent with 2CLoader's
+// score-based hypervisor/environment profiling performed before AES-GCM payload decryption.
+// Raises the distinct-key threshold and tightens the burst window to reduce noise from
+// legitimate inventory/management/virtualization agents, and excludes known such tools by name.
+DeviceRegistryEvents
+| where Timestamp > ago(1d)
+| where ActionType in ("RegistryKeyAccessed", "RegistryValueSet", "RegistryKeyCreated")
+| where RegistryKey has_any (
+    @"SOFTWARE\Oracle\VirtualBox Guest Additions",
+    @"HARDWARE\ACPI\DSDT\VBOX__",
+    @"SYSTEM\ControlSet001\Services\VBoxGuest",
+    @"SYSTEM\ControlSet001\Services\VBoxMouse",
+    @"SOFTWARE\VMware, Inc.\VMware Tools",
+    @"SYSTEM\ControlSet001\Services\vmdebug",
+    @"SYSTEM\ControlSet001\Services\vmmouse",
+    @"SYSTEM\ControlSet001\Services\VMTools",
+    @"SOFTWARE\Wine",
+    @"SOFTWARE\Classes\Wine"
+)
+// Exclude known legitimate processes that routinely enumerate these same keys
+// (VMware Tools, Hyper-V integration services, common asset/inventory management agents)
+| where InitiatingProcessFileName !in~ (
+    "vmtoolsd.exe",
+    "VMwareTray.exe",
+    "VMwareUser.exe",
+    "vm3dservice.exe",
+    "VGAuthService.exe",
+    "vmicsvc.exe",
+    "vmicvss.exe",
+    "vmiccss.exe",
+    "vmcompute.exe",
+    "CcmExec.exe",
+    "CcmRepair.exe",
+    "SCNotification.exe",
+    "InventoryAgent.exe",
+    "SMSAgentHost.exe",
+    "LTSVC.exe",
+    "AeXNSAgent.exe",
+    "BigFixAgent.exe"
+)
+| summarize DistinctVmKeys = dcount(RegistryKey), KeysSeen = make_set(RegistryKey, 10), FirstSeen = min(Timestamp), LastSeen = max(Timestamp) by DeviceId, InitiatingProcessId, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessSHA256
+| where DistinctVmKeys >= 4
+| where LastSeen - FirstSeen <= 1m
+| project DeviceId, InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessSHA256, DistinctVmKeys, KeysSeen, FirstSeen, LastSeen
