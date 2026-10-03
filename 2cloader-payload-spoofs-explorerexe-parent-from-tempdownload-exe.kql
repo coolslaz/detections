@@ -1,0 +1,14 @@
+// Detects 2CLoader launching its optional dropped payload with a spoofed
+// parent-process lineage (reported parent explorer.exe) while the real
+// initiating process is not explorer.exe itself, combined with the payload
+// executing from a user-writable temp/download path consistent with the
+// delete-on-reboot dropped blob behavior. Both the PPID-spoof signal and the
+// temp/download location are required together to cut noise from legitimate
+// explorer-launched installers.
+DeviceProcessEvents
+| where FileName endswith ".exe"
+| where FolderPath has_any (@"\AppData\Local\Temp\", @"\Temp\", @"\AppData\Roaming\", @"\Downloads\")
+| where InitiatingProcessParentFileName =~ "explorer.exe"
+| where InitiatingProcessFileName !~ "explorer.exe"
+| where not(FileName has_any ("setup.exe", "install.exe", "installer.exe", "update.exe", "updater.exe", "chrome_installer.exe", "chromesetup.exe", "firefox installer.exe", "edgesetup.exe", "teamviewer_setup.exe", "zoominstaller.exe", "javaupdate.exe", "adobe_installer.exe", "msedge_installer.exe"))
+| project Timestamp, DeviceId, InitiatingProcessFileName, InitiatingProcessParentFileName, InitiatingProcessId, FileName, FolderPath, ProcessCommandLine, AccountName
