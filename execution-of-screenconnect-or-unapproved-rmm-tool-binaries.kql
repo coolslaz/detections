@@ -1,0 +1,30 @@
+DeviceProcessEvents
+| where Timestamp > ago(1d)
+| where (FileName has_any (
+    "ScreenConnect.WindowsClient.exe",
+    "ScreenConnect.ClientService.dll",
+    "ScreenConnect.WindowsBackstageShell.exe",
+    "ScreenConnect.WindowsFileManager.exe",
+    "AnyDesk.exe",
+    "TeamViewer.exe",
+    "LogMeIn.exe",
+    "Bomgar.exe",
+    "ZohoAssist.exe",
+    "rutserv.exe",
+    "NetSupportManager.exe"
+) or (FileName =~ "client32.exe" and FolderPath has "SimpleHelp"))
+| where FolderPath !has @"\Program Files" and FolderPath !has @"\ProgramData"
+| extend RMMProduct = case(
+    FileName has "ScreenConnect", "ScreenConnect",
+    FileName =~ "AnyDesk.exe", "AnyDesk",
+    FileName =~ "TeamViewer.exe", "TeamViewer",
+    FileName =~ "LogMeIn.exe", "LogMeIn",
+    FileName =~ "Bomgar.exe", "Bomgar",
+    FileName =~ "ZohoAssist.exe", "Zoho Assist",
+    FileName =~ "rutserv.exe", "Remote Utilities",
+    FileName =~ "NetSupportManager.exe", "NetSupport Manager",
+    FileName =~ "client32.exe", "SimpleHelp",
+    "Unknown"
+)
+| project Timestamp, DeviceName, AccountName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, RMMProduct
+| sort by Timestamp desc
