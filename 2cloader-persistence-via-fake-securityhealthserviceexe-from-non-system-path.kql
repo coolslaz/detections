@@ -1,0 +1,61 @@
+let SuspiciousPath = @"(\\Temp\\|\\AppData\\|\\Downloads\\|\\ProgramData\\)";
+let LegitSystemDirs = @"(\\Windows\\System32\\|\\Windows\\SysWOW64\\)";
+let UnsignedBinaries =
+    DeviceFileCertificateInfo
+    | where IsSigned == false or SignatureStatus != "Valid"
+    | project SHA256, IsSigned, SignatureStatus;
+DeviceRegistryEvents
+| where ActionType in ("RegistryValueSet", "RegistryKeyCreated")
+| where RegistryKey has_any (
+    @"Software\Microsoft\Windows\CurrentVersion\Run",
+    @"Software\Microsoft\Windows\CurrentVersion\RunOnce",
+    @"Software\Microsoft\Windows NT\CurrentVersion\Windows",
+    @"Software\Microsoft\Windows NT\CurrentVersion\Winlogon",
+    @"Environment"
+)
+| where RegistryValueName in~ ("SecurityHealthService.exe", "Load", "UserInitMprLogonScript")
+    or RegistryValueData has "SecurityHealthService.exe"
+// Exclude legitimate Windows system paths for the creating process
+| where not(InitiatingProcessFolderPath matches regex LegitSystemDirs)
+// Require the creating process or referenced value to live in a user-writable/suspicious location
+| where InitiatingProcessFolderPath matches regex SuspiciousPath
+    or RegistryValueData matches regex SuspiciousPath
+| join kind=inner UnsignedBinaries on $left.InitiatingProcessSHA256 == $right.SHA256
+| summarize Timestamp = max(Timestamp), RegistryKeys = make_set(RegistryKey, 10), RegistryValues = make_set(RegistryValueData, 10) by DeviceId, DeviceName, RegistryValueName, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessSHA256, SignatureStatus
+| join kind=inner (
+    DeviceProcessEvents
+    | where FileName =~ "schtasks.exe"
+    | where ProcessCommandLine has "SecurityHealthService.exe" and ProcessCommandLine has_any ("/create", "-create")
+    | where not(InitiatingProcessFolderPath matches regex LegitSystemDirs)
+    | where InitiatingProcessFolderPath matches regex SuspiciousPath or ProcessCommandLine matches regex SuspiciousPath
+    | join kind=inner UnsignedBinaries on $left.InitiatingProcessSHA256 == $right.SHA256
+    | project DeviceId, SchtaskTime = Timestamp, SchtaskCommandLine = ProcessCommandLine, SchtaskSHA256 = InitiatingProcessSHA256
+) on DeviceId
+| project Timestamp, DeviceId, DeviceName, RegistryValueName, RegistryKeys, RegistryValues, InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessSHA256, SignatureStatus, SchtaskTime, SchtaskCommandLine
+// Fallback: match either persistence mechanism alone when the correlated pair above has no hits, still gated on path + signature
+| union (
+    DeviceRegistryEvents
+    | where ActionType in ("RegistryValueSet", "RegistryKeyCreated")
+    | where RegistryKey has_any (
+        @"Software\Microsoft\Windows\CurrentVersion\Run",
+        @"Software\Microsoft\Windows\CurrentVersion\RunOnce",
+        @"Software\Microsoft\Windows NT\CurrentVersion\Windows",
+        @"Software\Microsoft\Windows NT\CurrentVersion\Winlogon",
+        @"Environment"
+    )
+    | where RegistryValueName in~ ("SecurityHealthService.exe", "Load", "UserInitMprLogonScript")
+        or RegistryValueData has "SecurityHealthService.exe"
+    | where not(InitiatingProcessFolderPath matches regex LegitSystemDirs)
+    | where InitiatingProcessFolderPath matches regex SuspiciousPath or RegistryValueData matches regex SuspiciousPath
+    | join kind=inner UnsignedBinaries on $left.InitiatingProcessSHA256 == $right.SHA256
+    | project Timestamp, DeviceId, DeviceName, RegistryValueName, RegistryKeys = pack_array(RegistryKey), RegistryValues = pack_array(RegistryValueData), InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessSHA256, SignatureStatus, SchtaskTime = datetime(null), SchtaskCommandLine = ""
+)
+| union (
+    DeviceProcessEvents
+    | where FileName =~ "schtasks.exe"
+    | where ProcessCommandLine has "SecurityHealthService.exe" and ProcessCommandLine has_any ("/create", "-create")
+    | where not(InitiatingProcessFolderPath matches regex LegitSystemDirs)
+    | where InitiatingProcessFolderPath matches regex SuspiciousPath or ProcessCommandLine matches regex SuspiciousPath
+    | join kind=inner UnsignedBinaries on $left.InitiatingProcessSHA256 == $right.SHA256
+    | project Timestamp, DeviceId, DeviceName, RegistryValueName = "", RegistryKeys = dynamic([]), RegistryValues = dynamic([]), InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessSHA256, SignatureStatus, SchtaskTime = Timestamp, SchtaskCommandLine = ProcessCommandLine
+)
