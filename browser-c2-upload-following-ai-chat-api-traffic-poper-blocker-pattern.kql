@@ -1,0 +1,23 @@
+// Detects a browser process (Chrome/Edge/Safari) visiting an AI chat platform's
+// conversation API, closely followed (within 5 minutes, same device AND same
+// browser process) by a network request to the Poper Blocker C2 infrastructure -
+// matching the claudeai_con_fetch / chatgpt / gemini exfiltration pattern of
+// intercepting chat_conversations API responses and uploading them to api.pbapi.xyz.
+let AiChatTraffic =
+    DeviceNetworkEvents
+    | where TimeGenerated > ago(1d)
+    | where InitiatingProcessFileName in~ ("chrome.exe", "msedge.exe", "safari")
+    | where RemoteUrl has_any ("claude.ai", "chatgpt.com", "chat.openai.com", "gemini.google.com")
+    | where RemoteUrl matches regex @"(chat_conversations|conversation|backend-api/conversation)"
+    | project DeviceId, AiChatTime = TimeGenerated, AiChatUrl = RemoteUrl, InitiatingProcessFileName;
+let C2Upload =
+    DeviceNetworkEvents
+    | where TimeGenerated > ago(1d)
+    | where InitiatingProcessFileName in~ ("chrome.exe", "msedge.exe", "safari")
+    | where RemoteUrl has "api.pbapi.xyz"
+    | project DeviceId, UploadTime = TimeGenerated, UploadUrl = RemoteUrl, InitiatingProcessFileName;
+AiChatTraffic
+| join kind=inner (C2Upload) on DeviceId, InitiatingProcessFileName
+| where UploadTime between (AiChatTime .. AiChatTime + 5m)
+| project DeviceId, InitiatingProcessFileName, AiChatTime, AiChatUrl, UploadTime, UploadUrl
+| sort by AiChatTime desc
