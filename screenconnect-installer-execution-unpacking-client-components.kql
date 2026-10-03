@@ -1,0 +1,15 @@
+// Detects execution of the ScreenConnect installer followed by its client components being spawned on the same device
+// Captures the install->unpack relationship rather than matching a single filename
+let installerEvents = DeviceProcessEvents
+| where FileName =~ "ScreenConnect.ClientSetup.exe"
+| where FolderPath has_any (@"\Downloads\", @"\Desktop\", @"\AppData\Local\Temp\", @"\Users\Public\")
+| project DeviceId, InstallTime = Timestamp, InstallerSHA256 = SHA256, InstallerCmdLine = ProcessCommandLine, InstallerFolderPath = FolderPath;
+let clientEvents = DeviceProcessEvents
+| where FileName in~ ("ScreenConnect.WindowsClient.exe", "ScreenConnect.ClientService.exe")
+ or ProcessCommandLine has "ScreenConnect.Client.dll"
+| project DeviceId, ClientTime = Timestamp, ClientFileName = FileName, ClientCmdLine = ProcessCommandLine;
+installerEvents
+| join kind=inner clientEvents on DeviceId
+| where ClientTime between (InstallTime .. InstallTime + 30m)
+| project DeviceId, InstallTime, InstallerCmdLine, InstallerFolderPath, InstallerSHA256, ClientTime, ClientFileName, ClientCmdLine
+| sort by InstallTime desc
