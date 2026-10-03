@@ -1,0 +1,17 @@
+// Detects phishing emails using payment-receipt / EFT wire transfer lures that embed a link to an executable file disguised as a document (e.g., PDF)
+let luredSubjects = dynamic(["eft wire transfer", "payment received", "paid invoice", "invoice receipt"]);
+let lureBody = dynamic(["paid invoice receipt", "payment of", "was received", "click here to view", "order information in pdf"]);
+EmailEvents
+| where Timestamp > ago(14d)
+| where DeliveryLocation == "Inbox"
+| where Subject has_any (luredSubjects)
+| join kind=inner (
+    EmailUrlInfo
+    | where Url matches regex @"(?i)\.exe($|\?)"
+) on NetworkMessageId
+| join kind=leftouter (
+    EmailAttachmentInfo
+) on NetworkMessageId
+| extend LureMatchedBody = SenderFromAddress has_any (dynamic(["contact@mejuri.com"])) or Subject has_any (lureBody)
+| project Timestamp, NetworkMessageId, SenderFromAddress, SenderDisplayName, RecipientEmailAddress, Subject, Url, LureMatchedBody
+| where isnotempty(Url)
