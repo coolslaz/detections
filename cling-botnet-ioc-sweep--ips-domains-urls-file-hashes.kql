@@ -1,0 +1,27 @@
+// Cling botnet IOC sweep across network connection, DNS, HTTP/proxy, and file-hash telemetry
+// Bare-IP match restricted to dedicated STUN C2 infrastructure only -- payload-staging IPs are matched
+// by full URL (below) instead of bare IP, since flagging the whole host would catch unrelated traffic
+// on shared/compromised hosting. The spoofed-origin IP (74.125.250.129) is included here, not as a
+// domain match on stun.l.google.com -- that domain is legitimate Google infrastructure used ubiquitously
+// by WebRTC/VoIP/Chrome, so matching on it directly would be a major false-positive source.
+let cling_ips = dynamic(["145.249.115.184","74.125.250.129","216.93.246.18","85.17.88.164","77.72.169.213","77.72.169.211","5.39.72.109","81.187.30.115","212.227.67.34","212.227.67.33","207.38.82.134","83.211.9.232","212.53.40.43"]);
+let cling_urls = dynamic(["http://118.45.196.225:800/mipsel","http://120.193.219.210:800/mipsel","http://58.211.144.243:800/mipsel"]);
+let cling_hashes = dynamic(["90d738a8d650e3fefda9d7efa4baa11bd89ab05fcf0eb173e04aa01a52b465e2","3a6927a3399f2a10bb2e2229482e5096e5f1c3401a87f7f1730db11243531e28"]);
+let net_hits = DeviceNetworkEvents
+| where RemoteIP in (cling_ips)
+| extend IOCType = "IP", IOCValue = RemoteIP, SourceTable = "DeviceNetworkEvents"
+| project Timestamp, DeviceName, IOCType, IOCValue, SourceTable;
+let http_hits = DeviceNetworkEvents
+| where isnotempty(RemoteUrl) and RemoteUrl has_any (cling_urls)
+| extend IOCType = "URL", IOCValue = RemoteUrl, SourceTable = "DeviceNetworkEvents"
+| project Timestamp, DeviceName, IOCType, IOCValue, SourceTable;
+let hash_hits = DeviceFileEvents
+| where SHA256 in (cling_hashes)
+| extend IOCType = "SHA256", IOCValue = SHA256, SourceTable = "DeviceFileEvents"
+| project Timestamp, DeviceName, IOCType, IOCValue, SourceTable;
+let proc_hash_hits = DeviceProcessEvents
+| where SHA256 in (cling_hashes)
+| extend IOCType = "SHA256", IOCValue = SHA256, SourceTable = "DeviceProcessEvents"
+| project Timestamp, DeviceName, IOCType, IOCValue, SourceTable;
+union net_hits, http_hits, hash_hits, proc_hash_hits
+| sort by Timestamp desc
